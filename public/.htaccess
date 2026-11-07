@@ -1,0 +1,22 @@
+# Serves the built SPA from a plain Apache/LiteSpeed web root.
+# Real files (the hashed JS/CSS in assets/) are served as-is; every other
+# request goes to index.html so client-side routes survive a refresh.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    # Hashed asset names are immutable, so they can be cached for a long time.
+    <FilesMatch "\.(js|css|png|jpg|jpeg|webp|svg|woff2?)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    <FilesMatch "index\.html$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>

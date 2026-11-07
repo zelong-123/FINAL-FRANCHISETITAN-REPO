@@ -1,0 +1,14 @@
+project_id = "franchisetitan"
+
+[auth]
+# Accounts are created by Admin through the app (or by the applicant workflow), never by self sign-up.
+enable_signup = false
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+
+[auth.email]
+enable_signup = false
+
+[functions.api]
+# The function verifies tokens itself so /health and /auth/login can stay public.
+verify_jwt = false

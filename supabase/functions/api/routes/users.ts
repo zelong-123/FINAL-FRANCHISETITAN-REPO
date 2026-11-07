@@ -1,0 +1,157 @@
+// UserController and AuditLogController. Admin only, enforced where these are mounted.
+import { Hono } from 'hono';
+import type { AppEnv } from '../lib/env.ts';
+import { fail, intParam, ok, paginate, perPage, pick, routeId, updateRow, manilaToday } from '../lib/http.ts';
+import type { Row } from '../lib/db.ts';
+import { readInput, validate } from '../lib/validate.ts';
+import { requireFound } from '../lib/middleware.ts';
+import { audit, createAccount, liftExpiredSuspensions, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
+import { forUsers } from '../services/presence.ts';
+
+export const userRoutes = new Hono<AppEnv>();
+const USER = 'App\\Models\\User';
+const STAFF = ['admin', 'sales', 'marketing', 'logistics'];
+const AUDIT_KEYS = ['full_name', 'email', 'phone', 'role_id', 'account_status', 'suspended_from', 'suspended_until'];
+
+userRoutes.get('/users', async (c) => {
+  const { db } = c.get('deps');
+  await liftExpiredSuspensions(db);
+
+  const q = c.req.query();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (q.role === 'staff') { params.push(`{${STAFF.join(',')}}`); where.push(`r.name = any($${params.length}::text[])`); }
+  else if (q.role) { params.push(q.role); where.push(`r.name = $${params.length}`); }
+  if (q.status) { params.push(q.status); where.push(`u.account_status = $${params.length}`); }
+  if (q.search) {
+    params.push(`%${q.search}%`);
+    where.push(`(u.full_name ilike $${params.length} or u.email ilike $${params.length} or u.user_code ilike $${params.length})`);
+  }
+
+  const page = await paginate(c, db, {
+    columns: `u.*, to_jsonb(r) as role`,
+    from: 'users u left join roles r on r.id = u.role_id',
+    where, params, orderBy: 'u.full_name', perPage: perPage(c, 20), map: publicUser,
+  });
+  const body = await page.json();
+  const presence = await forUsers(db, body.data);
+  body.data = body.data.map((user: Row) => ({ ...user, presence: presence[user.id] ?? null }));
+  return c.json(body);
+});
+
+userRoutes.post('/users', async (c) => {
+  const { db } = c.get('deps');
+  const v = await validate(db, await readInput(c), {
+    full_name: ['required', 'string', 'max:255'],
+    email: ['required', 'email', 'max:255', 'unique:users,email'],
+    phone: ['required', /^[0-9]{11}$/],
+    password: ['required', 'string', 'min:8', 'max:15'],
+    confirm_password: ['required', 'same:password'],
+    role: ['required', 'in:marketing,sales,logistics'],
+    account_status: ['nullable', 'in:active,inactive'],
+  });
+  const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
+  const user = await createAccount(c, {
+    role_id: requireFound(roleRow).id,
+    full_name: v.full_name,
+    email: String(v.email).toLowerCase(),
+    phone: v.phone,
+    account_status: v.account_status ?? 'active',
+  }, v.password);
+  await audit(c, db, 'user.created', { type: USER, id: user.id }, null, pick(user, ['full_name', 'email', 'role_id', 'account_status']));
+  return ok(c, await loadUser(db, user.id), 'User account created.', 201);
+});
+
+userRoutes.get('/users/:user', async (c) => {
+  const { db } = c.get('deps');
+  const id = routeId(c, 'user');
+  const user = requireFound(await loadUser(db, id));
+  return ok(c, { ...user, ...(await loadUserRelations(db, id)) });
+});
+
+userRoutes.on(['PUT', 'PATCH'], '/users/:user', async (c) => {
+  const { db, auth } = c.get('deps');
+  const id = routeId(c, 'user');
+  const [target] = await db.query(`select u.*, to_jsonb(r) as role from users u left join roles r on r.id = u.role_id where u.id = $1`, [id]);
+  requireFound(target);
+
+  if (c.get('user').id === id) fail('user', 'You cannot change your own account from User Management. Use My profile instead.');
+  const input = await readInput(c);
+  if (target.role?.name === 'franchisee' && ['role', 'full_name', 'email', 'phone', 'password'].some((k) => k in input)) {
+    fail('user', 'Branch account identity changes must be made through the applicant workflow.');
+  }
+
+  const v = await validate(db, input, {
+    full_name: ['sometimes', 'required', 'string', 'max:255'],
+    email: ['sometimes', 'required', 'email', 'max:255', `unique:users,email,${id}`],
+    phone: ['sometimes', 'required', /^[0-9]{11}$/],
+    password: ['nullable', 'string', 'min:8', 'max:15', 'confirmed'],
+    confirm_password: ['required_with:password', 'same:password'],
+    role: ['sometimes', 'in:marketing,sales,logistics,franchisee'],
+    account_status: ['sometimes', 'in:active,inactive,suspended'],
+    suspended_from: ['nullable', 'date'],
+    suspended_until: ['nullable', 'date'],
+  });
+
+  if (target.role?.name === 'admin' && v.role && v.role !== 'admin') fail('role', 'The Admin role cannot be changed through User Management.');
+
+  const { password, confirm_password: _confirm, role: newRole, ...changes } = v;
+  if (newRole) changes.role_id = requireFound((await db.query(`select id from roles where name = $1`, [newRole]))[0]).id;
+  if (changes.email) changes.email = String(changes.email).toLowerCase();
+
+  // Suspended carries a window and ends by itself; Inactive has none and only an admin restores it.
+  const status = changes.account_status ?? target.account_status;
+  if (status === 'suspended') {
+    const start = String(changes.suspended_from ?? manilaToday()).slice(0, 10);
+    const end = changes.suspended_until ?? target.suspended_until;
+    if (!end) fail('suspended_until', 'Choose the date this suspension ends.');
+    const endDay = String(end).slice(0, 10);
+    if (endDay < start) fail('suspended_until', 'The suspension must end on or after the date it starts.');
+    changes.suspended_from = start;
+    changes.suspended_until = endDay;
+  } else {
+    changes.suspended_from = null;
+    changes.suspended_until = null;
+  }
+
+  if (target.auth_user_id && (password || (changes.email && changes.email !== target.email))) {
+    await auth.updateUser(target.auth_user_id, {
+      ...(changes.email && changes.email !== target.email ? { email: changes.email } : {}),
+      ...(password ? { password } : {}),
+    });
+  }
+  const saved = await updateRow(db, 'users', id, changes);
+
+  // A blocked account cannot keep using the system.
+  if (saved!.account_status !== 'active' && target.auth_user_id) await auth.revokeAll(target.auth_user_id);
+  await audit(c, db, 'user.updated', { type: USER, id }, pick(target, AUDIT_KEYS), pick(saved!, AUDIT_KEYS));
+  return ok(c, await loadUser(db, id), 'User account updated.');
+});
+
+userRoutes.delete('/users/:user', async (c) => {
+  const { db, auth } = c.get('deps');
+  const id = routeId(c, 'user');
+  const [target] = await db.query(`select * from users where id = $1`, [id]);
+  requireFound(target);
+  if (c.get('user').id === id) return c.json({ message: 'You cannot deactivate your own account.' }, 422);
+
+  const cleared = { account_status: 'inactive', suspended_from: null, suspended_until: null };
+  await updateRow(db, 'users', id, cleared);
+  if (target.auth_user_id) await auth.revokeAll(target.auth_user_id);
+  await audit(c, db, 'user.deactivated', { type: USER, id }, pick(target, Object.keys(cleared)), cleared);
+  return ok(c, null, 'User account deactivated.');
+});
+
+userRoutes.get('/audit-logs', async (c) => {
+  const { db } = c.get('deps');
+  const q = c.req.query();
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (q.action) { params.push(q.action); where.push(`a.action = $${params.length}`); }
+  if (q.user_id) { params.push(intParam(q.user_id)); where.push(`a.user_id = $${params.length}`); }
+  if (q.auditable_type) { params.push(q.auditable_type); where.push(`a.auditable_type = $${params.length}`); }
+  return paginate(c, db, {
+    columns: `a.*, (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email) from users u where u.id = a.user_id) as "user"`,
+    from: 'audit_logs a', where, params, orderBy: 'a.created_at desc', perPage: perPage(c, 50),
+  });
+});
