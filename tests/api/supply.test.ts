@@ -53,7 +53,7 @@ test('warehouse: Admin adds catalog only, Logistics owns the quantities', async 
 });
 
 test('warehouse CSV: preview finds problems, apply updates exactly what it previewed', async () => {
-  const template = await call('GET', `/warehouse/import-template?brand_id=${brand.id}`, { token: admin });
+  const template = await call('GET', `/warehouse/import-template?brand_id=${brand.id}`, { token: logistics });
   assert.equal(template.res.headers.get('x-template-rows'), '1');
   const text = await template.res.text();
   assert.match(text, /^brand,sku,product_name,category,unit,quantity\r\n/);
@@ -170,6 +170,8 @@ test('supply: short stock blocks endorsing, and cancelling after Preparing resto
   await call('PATCH', `${p2}/status`, { token: admin, body: { status: 'endorsed' } });
   await call('PATCH', `${p2}/status`, { token: logistics, body: { status: 'preparing' } });
   assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '80.00');
+  const whileOpen = await call('DELETE', '/inventories/items', { token: logistics, body: { inventory_ids: [inventoryId] } });
+  assert.match(whileOpen.json.errors.inventory_ids[0], /still on an open supply request/, 'blocked while the request is open');
   assert.equal((await call('PATCH', `${p2}/status`, { token: admin, body: { status: 'cancelled', remarks: 'Changed mind' } })).status, 200);
   assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '90.00');
 

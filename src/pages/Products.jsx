@@ -5,9 +5,11 @@ import useRemote from '../lib/useRemote';
 import { formatNumber } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, StatusBadge } from '../components/ApiUi';
 import ProductImage from '../components/ProductImage';
+import SlidingPagination from '../components/SlidingPagination';
 import { PRODUCT_IMAGE_ACCEPT, productImageError } from '../lib/productImage';
 
 const EMPTY_FORM = { name: '', brand_id: '', description: '', is_active: false };
+const PAGE_SIZE = 10;
 
 /**
  * Admin → Products. Finished products of a brand (name, picture, status) with the
@@ -24,14 +26,18 @@ export default function Products() {
   const [formOpen, setFormOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
+  const [page, setPage] = useState(1);
 
+  // One page of products at a time (the API counts and orders them).
   const remote = useRemote(
-    async () => (await api.get('/brand-products', {
+    async () => api.get('/brand-products', {
+      page,
+      per_page: PAGE_SIZE,
       ...(brandId ? { brand_id: brandId } : {}),
       ...(query ? { search: query } : {}),
       ...(showInactive ? { include_inactive: 1 } : {}),
-    })).data,
-    [brandId, query, showInactive],
+    }),
+    [page, brandId, query, showInactive],
   );
   const { reload } = remote;
 
@@ -39,12 +45,16 @@ export default function Products() {
     api.get('/brands').then((response) => setBrands(response.data || [])).catch(() => setBrands([]));
   }, []);
 
+  // A new search starts again from page 1.
   useEffect(() => {
-    const timer = window.setTimeout(() => setQuery(search.trim()), 300);
+    const next = search.trim();
+    if (next === query) return undefined;
+    const timer = window.setTimeout(() => { setQuery(next); setPage(1); }, 300);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [search, query]);
 
-  const products = remote.data || [];
+  const products = remote.data?.data || [];
+  const meta = remote.data?.meta;
   const brandName = (id) => brands.find((brand) => Number(brand.id) === Number(id))?.name || '—';
 
   return (
@@ -65,7 +75,7 @@ export default function Products() {
 
       <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         <div className="[.products-page_&]:grid [.products-page_&]:grid-cols-[190px_minmax(0,_1fr)_auto] [.products-page_&]:gap-[10px] [.products-page_&]:items-center [.products-page_&_select]:min-h-[40px] [.products-page_&_select]:w-full [.products-page_&_select]:p-[0_12px] [.products-page_&_select]:border [.products-page_&_select]:border-line [.products-page_&_select]:rounded-[10px] [.products-page_&_select]:text-text [.products-page_&_select]:[background:var(--input-bg,_var(--surface-subtle))] max-[981px]:later:[.products-page_&]:grid-cols-[minmax(0,_1fr)] later:[.products-page_&]:m-0 [.products-page_&]:p-[14px_18px] [.products-page_&]:border-b [.products-page_&]:border-b-line later:[.products-page_&_select]:text-[14px]">
-          <select value={brandId} onChange={(event) => setBrandId(event.target.value)} aria-label="Filter by brand">
+          <select value={brandId} onChange={(event) => { setBrandId(event.target.value); setPage(1); }} aria-label="Filter by brand">
             <option value="">All brands</option>
             {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
           </select>
@@ -77,7 +87,7 @@ export default function Products() {
             aria-label="Search products"
           />
           <label className="inline-flex items-center gap-[7px] text-text-secondary whitespace-nowrap later:text-[13px] later:font-[600]">
-            <input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} />
+            <input type="checkbox" checked={showInactive} onChange={(event) => { setShowInactive(event.target.checked); setPage(1); }} />
             Show inactive
           </label>
         </div>
@@ -137,6 +147,7 @@ export default function Products() {
             </table>
           </div>
         )}
+        {products.length > 0 && <SlidingPagination meta={meta} onPage={setPage} />}
       </section>
 
       {formOpen && (

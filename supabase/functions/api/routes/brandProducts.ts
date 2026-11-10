@@ -16,6 +16,8 @@ const SELECT = `bp.*, (select jsonb_build_object('id', b.id, 'name', b.name, 'co
   coalesce((select jsonb_agg(to_jsonb(i) || jsonb_build_object('product', (select jsonb_build_object('id', p.id, 'name', p.name, 'unit', p.unit, 'sku', p.sku, 'brand_id', p.brand_id) from products p where p.id = i.product_id)) order by i.id)
     from brand_product_ingredients i where i.brand_product_id = bp.id), '[]'::jsonb) as ingredients`;
 const nameKey = (name: string) => name.trim().replace(/\s+/gu, ' ').toLowerCase();
+/** Products per ingredient query in the list (keeps each database result small). */
+const LIST_CHUNK = 15;
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 function present(c: Context<AppEnv>, p: Row): Row {
@@ -79,8 +81,47 @@ brandProductRoutes.get('/brand-products', async (c) => {
   if (q.brand_id) f.add('bp.brand_id = ?', intParam(q.brand_id));
   if (q.search) f.add('(bp.name ilike ? or bp.sku ilike ?)', `%${q.search}%`, `%${q.search}%`);
   if (!boolParam(q.include_inactive)) f.add('bp.is_active = true');
-  const rows = await db.query(`select ${SELECT} from brand_products bp ${f.where} order by bp.name`, f.params);
-  return ok(c, rows.map((r) => present(c, r)));
+  // The list is read in small pieces: one large result (all recipes as JSON, ~90 KB for the
+  // current catalogue) makes the Edge runtime's Postgres connection drop with
+  // "write CONNECTION_CLOSED". Products first, then their ingredients as plain columns,
+  // at most LIST_CHUNK products per query. The response is the same as before.
+  // Optional pagination: with ?per_page (1–100) the list comes one page at a time with `meta`;
+  // without it, the whole list is returned as before.
+  const paged = q.per_page !== undefined;
+  const perPage = paged ? Math.min(100, Math.max(1, intParam(q.per_page, 10))) : 0;
+  let page = paged ? Math.max(1, intParam(q.page, 1)) : 1;
+  let total = 0;
+  if (paged) {
+    total = (await db.query(`select count(*)::int as n from brand_products bp ${f.where}`, f.params))[0].n;
+    page = Math.min(page, Math.max(1, Math.ceil(total / perPage)));
+  }
+  const rows = await db.query(
+    `select bp.*, (select jsonb_build_object('id', b.id, 'name', b.name, 'code', b.code) from brands b where b.id = bp.brand_id) as brand
+     from brand_products bp ${f.where} order by bp.name, bp.id${paged ? ` limit ${perPage} offset ${(page - 1) * perPage}` : ''}`, f.params,
+  );
+  const byProduct = new Map<number, Row[]>(rows.map((r) => [Number(r.id), []]));
+  for (let start = 0; start < rows.length; start += LIST_CHUNK) {
+    const ids = rows.slice(start, start + LIST_CHUNK).map((r) => r.id);
+    const lines = await db.query(
+      `select i.id, i.brand_product_id, i.product_id, i.batch_amount_milli, i.batch_unit, i.yield_pieces,
+         p.name as product_name, p.unit as product_unit, p.sku as product_sku, p.brand_id as product_brand_id
+       from brand_product_ingredients i left join products p on p.id = i.product_id
+       where i.brand_product_id = any($1::bigint[]) order by i.id`, [`{${ids.join(',')}}`],
+    );
+    for (const l of lines) {
+      byProduct.get(Number(l.brand_product_id))?.push({
+        id: l.id, product_id: l.product_id, batch_amount_milli: l.batch_amount_milli, batch_unit: l.batch_unit, yield_pieces: l.yield_pieces,
+        product: l.product_name == null ? null : { id: l.product_id, name: l.product_name, unit: l.product_unit, sku: l.product_sku, brand_id: l.product_brand_id },
+      });
+    }
+  }
+  const data = rows.map((r) => present(c, { ...r, ingredients: byProduct.get(Number(r.id)) ?? [] }));
+  if (!paged) return ok(c, data);
+  const from = total ? (page - 1) * perPage + 1 : null;
+  return c.json({
+    message: 'OK', data,
+    meta: { current_page: page, last_page: Math.max(1, Math.ceil(total / perPage)), per_page: perPage, total, from, to: total ? (from as number) + data.length - 1 : null },
+  });
 });
 
 brandProductRoutes.post('/brand-products', admin, async (c) => {

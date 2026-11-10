@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
-import { abort, fail, Filter, insertRow, intParam, ok, paginate, perPage, pick, routeId, updateRow } from '../lib/http.ts';
+import { abort, fail, Filter, insertRow, intParam, manilaToday, ok, paginate, perPage, pick, routeId, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
@@ -63,6 +63,22 @@ inventoryRoutes.get('/inventories', allRoles, async (c) => {
   return c.json({ ...body, data: await Promise.all(body.data.map((row: Row) => inventoryJson(db, row))) });
 });
 
+// Warehouse list: date range, sort.
+const PERIOD_DAYS: Record<string, number> = { today: 1, '7d': 7, '30d': 30, '90d': 90 };
+/** Start of the period in Manila time: today counts as day one, so "Last 7 days" is today and the 6 days before. */
+const periodStart = (period: string) => new Date(new Date(`${manilaToday()}T00:00:00+08:00`).getTime() - (PERIOD_DAYS[period] - 1) * 86_400_000);
+const LAST_ACTIVITY = `(select max(t.transaction_date) from inventory_transactions t where t.inventory_id = i.id)`;
+const SORTS: Record<string, string> = {
+  item: 'p.name, i.id',
+  item_desc: 'p.name desc, i.id',
+  sku: 'p.sku, i.id',
+  quantity_desc: 'i.current_stock desc, p.name',
+  quantity_asc: 'i.current_stock asc, p.name',
+  status: `case when i.current_stock <= i.critical_level then 0 when i.current_stock <= i.reorder_level then 1 else 2 end, p.name`,
+  recent: `${LAST_ACTIVITY} desc nulls last, p.name`,
+  newest: 'p.created_at desc, p.name',
+};
+
 inventoryRoutes.get('/inventories/grouped', central, async (c) => {
   const { db } = c.get('deps');
   const q = c.req.query();
@@ -79,22 +95,38 @@ inventoryRoutes.get('/inventories/grouped', central, async (c) => {
   const search = String(q.search ?? '').trim();
   if (search) f.add('(p.name ilike ? or p.sku ilike ?)', `%${search}%`, `%${search}%`);
   addStockStatus(f, q.stock_status);
+  // Date range: by stock activity (any stock movement in the period) or by the date the product was added.
+  if (q.period && !(q.period in PERIOD_DAYS)) fail('period', 'Choose Today, Last 7 days, Last 30 days or Last 90 days.');
+  if (q.period_basis && !['activity', 'added'].includes(q.period_basis)) fail('period_basis', 'The date range is by stock activity or by date added.');
+  if (q.sort && !(q.sort in SORTS)) fail('sort', 'Choose a sort from the list.');
+  if (q.period) {
+    const since = periodStart(q.period);
+    if (q.period_basis === 'added') f.add('p.created_at >= ?', since);
+    else f.add('exists (select 1 from inventory_transactions t where t.inventory_id = i.id and t.transaction_date >= ?)', since);
+  }
 
   const size = perPage(c, 10, 50);
   const page = await paginate(c, db, {
     columns: `i.*, p.name as product_name, p.sku, p.unit, p.brand_id as product_brand_id, p.category_id as product_category_id, p.category as product_category,
-      (select pc.name from product_categories pc where pc.id = p.category_id) as category_name`,
-    from: 'inventories i join products p on p.id = i.product_id', where: f.clauses, params: f.params, orderBy: 'coalesce(p.category_id, 999999), p.name', perPage: size,
+      (select pc.name from product_categories pc where pc.id = p.category_id) as category_name,
+      ${LAST_ACTIVITY} as last_activity_at, p.created_at as added_at`,
+    from: 'inventories i join products p on p.id = i.product_id', where: f.clauses, params: f.params,
+    orderBy: q.sort ? SORTS[q.sort] : 'coalesce(p.category_id, 999999), p.name', perPage: size,
   });
   const body = await page.json();
   const groups = new Map<number, Row>();
+  // `items` keeps the requested sort order; `groups` (by category) stays for older screens.
+  const items: Row[] = [];
   for (const r of body.data) {
     const id = r.product_category_id ?? 0;
     if (!groups.has(id)) groups.set(id, { category: { id: id || null, name: r.category_name ?? 'Uncategorized' }, items: [] });
-    groups.get(id)!.items.push({
+    const item = {
       id: r.id, product_id: r.product_id, name: r.product_name, sku: r.sku, unit: r.unit, category: r.category_name ?? r.product_category, brand_id: r.product_brand_id,
       quantity: Number(r.current_stock), reorder_level: Number(r.reorder_level), critical_level: Number(r.critical_level), status: stockStatus(r),
-    });
+      last_activity_at: r.last_activity_at ?? null, added_at: r.added_at ?? null,
+    };
+    groups.get(id)!.items.push(item);
+    items.push(item);
   }
   // Metrics describe the whole selected brand, never the current filter.
   const [summary] = await db.query(
@@ -106,7 +138,7 @@ inventoryRoutes.get('/inventories/grouped', central, async (c) => {
   const { current_page: current, last_page: last, per_page: per, total } = body.meta;
   const from = total ? (current - 1) * per + 1 : null;
   return ok(c, {
-    brand, brands, groups: [...groups.values()],
+    brand, brands, groups: [...groups.values()], items,
     meta: { current_page: current, last_page: last, per_page: per, total, from, to: total ? (from as number) + body.data.length - 1 : null },
     summary: { total_items: summary.total_items, total_units: Number(summary.total_units), low: summary.low, critical: summary.critical },
   });
@@ -175,6 +207,16 @@ inventoryRoutes.delete('/inventories/items', logistics, async (c) => {
      where si.product_id = any($1::bigint[]) and sr.status not in ('completed', 'cancelled', 'rejected')`, [`{${productIds.join(',')}}`],
   );
   if (blocked.length) fail('inventory_ids', `These products are still on an open supply request: ${blocked.map((b) => b.name).join(', ')}. Reject, cancel or complete the request first.`);
+  // An active menu item still deducts this product from branch stock when it is sold, so the
+  // recipe must stop using it first. (Inactive recipes keep their link; the row is archived, not removed.)
+  const inRecipe = await db.query(
+    `select distinct p.name as product, bp.name as recipe from brand_product_ingredients bi
+     join brand_products bp on bp.id = bi.brand_product_id join products p on p.id = bi.product_id
+     where bi.product_id = any($1::bigint[]) and bp.is_active = true order by 1, 2`, [`{${productIds.join(',')}}`],
+  );
+  if (inRecipe.length) {
+    fail('inventory_ids', `These products are used in an active product recipe: ${inRecipe.map((r) => `${r.product} (in ${r.recipe})`).join(', ')}. Remove them from the recipe first.`);
+  }
   await db.query(`update products set is_active = false, archived_at = now() where id = any($1::bigint[])`, [`{${productIds.join(',')}}`]);
   for (const row of rows) await stockAudit(db, user, 'delete', 'delete product', Number(row.current_stock), null, { inventory: row, note: 'Warehouse product archived.' });
   await audit(c, db, 'inventory.items_archived', null, null, { product_ids: productIds, inventory_ids: rows.map((r) => r.id) });
@@ -185,7 +227,8 @@ const csvResponse = (filename: string, csv: string, extra: Record<string, string
   headers: { 'content-type': 'text/csv; charset=UTF-8', 'content-disposition': `attachment; filename="${filename}"`, ...extra },
 });
 
-inventoryRoutes.get('/warehouse/import-template', central, async (c) => {
+// The template is part of Import CSV, which only Logistics may use.
+inventoryRoutes.get('/warehouse/import-template', logistics, async (c) => {
   const { db } = c.get('deps');
   const v = await validate(db, c.req.query(), { brand_id: ['required', 'integer', 'exists:brands,id'], mode: ['sometimes', 'in:set,add'] });
   const t = await csvTemplate(db, v.brand_id, v.mode ?? 'set');

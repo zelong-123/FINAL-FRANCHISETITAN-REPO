@@ -3,12 +3,39 @@ import { FaChevronDown, FaFileCsv, FaPlus, FaTrashCan } from 'react-icons/fa6';
 import { api, downloadFile, firstValidationMessage } from '../lib/api';
 import { can } from '../lib/roleAccess';
 import useRemote from '../lib/useRemote';
-import { formatNumber, titleCase } from '../lib/format';
+import { formatDate, formatNumber, titleCase } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination, StatusBadge } from '../components/ApiUi';
 import SlidingPagination from '../components/SlidingPagination';
 import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE = 10;
+
+// Warehouse toolbar. Date range: by stock activity (any stock movement) or by date added.
+const RANGE_PERIODS = [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days']];
+const SORT_OPTIONS = [
+  ['item', 'Item'], ['item_desc', 'Item Z–A'], ['sku', 'SKU'], ['quantity_desc', 'Quantity, high'], ['quantity_asc', 'Quantity, low'],
+  ['status', 'Status'], ['recent', 'Recent activity'], ['newest', 'Newest'],
+];
+// Product and Action are always shown; the rest can be turned off (remembered in this browser).
+const COLUMN_OPTIONS = [
+  ['sku', 'SKU', true], ['unit', 'Unit', true], ['quantity', 'Quantity', true], ['reorder_level', 'Reorder level', true],
+  ['status', 'Status', true], ['last_activity', 'Last activity', false], ['added', 'Date added', false],
+];
+const COLUMNS_KEY = 'ft.warehouse.columns';
+function readColumns() {
+  const defaults = Object.fromEntries(COLUMN_OPTIONS.map(([key, , on]) => [key, on]));
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(COLUMNS_KEY) || 'null');
+    return saved && typeof saved === 'object' ? { ...defaults, ...saved } : defaults;
+  } catch {
+    return defaults;
+  }
+}
+const rangeLabel = (value) => {
+  if (value === 'all') return 'All time';
+  const [basis, period] = value.split(':');
+  return `${RANGE_PERIODS.find(([key]) => key === period)?.[1] || period} · ${basis === 'added' ? 'added' : 'activity'}`;
+};
 const EMPTY_PRODUCT = { name: '', brand_id: '', category_id: '', unit: '', opening_quantity: '', reorder_level: '', critical_level: '' };
 
 /**
@@ -33,23 +60,45 @@ function WarehouseInventory({ role }) {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [adjustItem, setAdjustItem] = useState(null);
-  // Bulk delete: selection mode, the ids picked on this page and the confirmation step.
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Delete (Logistics): the row being confirmed, the request in flight and the result toast.
+  const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [removedIds, setRemovedIds] = useState([]);
+  const [toast, setToast] = useState(null);
   const deleteLock = useRef(false);
+  // Toolbar: date range ("all", or "<basis>:<period>"), sort and the visible columns.
+  const [range, setRange] = useState('all');
+  const [sort, setSort] = useState('item');
+  const [columns, setColumns] = useState(readColumns);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const columnsRef = useRef(null);
 
   const remote = useRemote(async () => {
+    const [basis, period] = range === 'all' ? [] : range.split(':');
     const response = await api.get('/inventories/grouped', {
       page,
       per_page: PAGE_SIZE,
+      sort,
+      ...(period ? { period, period_basis: basis } : {}),
       ...(brandId ? { brand_id: brandId } : {}),
       ...(status ? { stock_status: status } : {}),
       ...(query ? { search: query } : {}),
     });
     return response.data;
-  }, [page, brandId, status, query]);
+  }, [page, brandId, status, query, range, sort]);
+
+  // Customize Columns closes on a click outside it; the choice is remembered in this browser.
+  useEffect(() => {
+    if (!columnsOpen) return undefined;
+    const close = (event) => { if (!columnsRef.current?.contains(event.target)) setColumnsOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [columnsOpen]);
+  const toggleColumn = (key) => {
+    const next = { ...columns, [key]: !columns[key] };
+    setColumns(next);
+    try { window.localStorage.setItem(COLUMNS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep for this visit only */ }
+  };
 
   const { reload } = remote;
   useEffect(() => {
@@ -72,17 +121,25 @@ function WarehouseInventory({ role }) {
 
   const brands = remote.data?.brands || [];
   const brand = remote.data?.brand || null;
-  const items = useMemo(() => (remote.data?.groups || []).flatMap((group) => group.items || []), [remote.data]);
+  const items = useMemo(
+    () => (remote.data?.items || (remote.data?.groups || []).flatMap((group) => group.items || [])).filter((item) => !removedIds.includes(item.id)),
+    [remote.data, removedIds],
+  );
+  const filtered = Boolean(query || status || range !== 'all');
   const summary = remote.data?.summary;
   const meta = remote.data?.meta;
+  // Admin: view and Add Product. Logistics: also Adjust, Import CSV, Export CSV and Delete.
+  // The API enforces the same rules (routes/inventory.ts).
   const canAdd = can(role, 'inventory.add');
   const canAdjust = can(role, 'inventory.adjust');
+  const canImportExport = role === 'logistics';
   const canDelete = role === 'logistics';
 
+  // The stats always describe the whole selected brand, whatever the filters show.
   const tiles = useMemo(() => (([
-    ['Total items', summary?.total_items, 'Product lines in this brand'],
+    ['Total items:', summary?.total_items, 'Product lines in this brand'],
     ['Total units', summary?.total_units, 'Units on hand'],
-    ['Low stock', summary?.low, 'At or below reorder level'],
+    ['Low stocks', summary?.low, 'At or below reorder level'],
     ['Critical', summary?.critical, 'At or below critical level'],
   ])), [summary]);
 
@@ -93,38 +150,35 @@ function WarehouseInventory({ role }) {
     setStatus('');
   };
 
-  const allSelected = items.length > 0 && items.every((item) => selectedIds.includes(item.id));
-  const toggleItem = (id) => setSelectedIds((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
-  const toggleAll = () => setSelectedIds(allSelected ? [] : items.map((item) => item.id));
-  const exitSelection = () => {
-    setSelectionMode(false);
-    setSelectedIds([]);
-    setConfirmDelete(false);
-    setDeleting(false);
-  };
-
-  useEffect(() => {
-    exitSelection();
-  }, [page, brandId, status, query]);
-
   useEffect(() => {
     if (!remote.loading && remote.data && items.length === 0 && page > 1) setPage(page - 1);
   }, [remote.loading, remote.data, items.length, page]);
 
-  const deleteSelected = async () => {
-    if (deleteLock.current || selectedIds.length === 0) return;
+  // The toast closes by itself.
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // Runs only after the confirmation modal: the row disappears at once, then the list and the
+  // stats are fetched again (no page reload).
+  const deleteProduct = async () => {
+    if (deleteLock.current || !deleteItem) return;
     deleteLock.current = true;
     setDeleting(true);
     setActionError('');
     setSuccess('');
+    const target = deleteItem;
     try {
-      await api.delete('/inventories/items', { body: { inventory_ids: selectedIds } });
-      const count = selectedIds.length;
-      exitSelection();
-      setSuccess(`${count} ${count === 1 ? 'product' : 'products'} deleted.`);
+      await api.delete('/inventories/items', { body: { inventory_ids: [target.id] } });
+      setDeleteItem(null);
+      setRemovedIds((ids) => [...ids, target.id]);
+      setToast({ type: 'success', text: `“${target.name || 'Product'}” was deleted.` });
       await reload();
     } catch (error) {
-      setActionError(firstValidationMessage(error));
+      setDeleteItem(null);
+      setToast({ type: 'error', text: firstValidationMessage(error) });
     } finally {
       deleteLock.current = false;
       setDeleting(false);
@@ -143,93 +197,95 @@ function WarehouseInventory({ role }) {
 
   return (
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] inventory-page [&_.filter-chips]:flex [&_.filter-chips]:flex-wrap [&_.filter-chips]:gap-2 [&_td_small]:block [&_td_small]:mt-[2px] [&_td_small]:text-muted later-2:[&_td_small]:text-[9px]">
-      <PageHeader
-        title="Warehouse inventory"
-        actions={(
-          <>
-            <span className="inline-flex items-center gap-[.45rem] rounded-[999px] p-[.55rem_.8rem] [background:rgba(23,_137,_83,_.1)] text-[#147a4a] text-[.8rem] font-[800] whitespace-nowrap [&::before]:[content:''] [&::before]:w-[.48rem] [&::before]:h-[.48rem] [&::before]:rounded-[50%] [&::before]:[background:currentColor] [&::before]:[box-shadow:0_0_0_.22rem_rgba(23,_137,_83,_.12)]">Live sync · 3 seconds</span>
-            {canDelete && !selectionMode && (
-              <>
-                <button className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" type="button" onClick={() => setImportOpen(true)}>
-                  <FaFileCsv aria-hidden="true" /> Import CSV
-                </button>
-                <button className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" type="button" onClick={() => void exportCsv()}>
-                  Export CSV
-                </button>
-                <button
-                  className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]"
-                  type="button"
-                  onClick={() => { setActionError(''); setSuccess(''); setSelectionMode(true); setSelectedIds([]); }}
-                >
-                  <FaTrashCan aria-hidden="true" /> Delete Product
-                </button>
-              </>
-            )}
-            {canAdd && (
-              <button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => { setActionError(''); setAddOpen(true); }}>
-                <FaPlus aria-hidden="true" /> Add product
-              </button>
-            )}
-          </>
-        )}
-      />
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <section className="flex flex-wrap gap-[10px]" aria-label="Warehouse summary">
+          {tiles.map(([label, value, caption]) => (
+            <article
+              key={label}
+              title={caption}
+              className="inline-flex items-center justify-between gap-[18px] min-w-[148px] min-h-[42px] p-[0_14px] border border-line rounded-[6px] [background:color-mix(in_srgb,_var(--accent)_7%,_var(--panel))]"
+            >
+              <span className="text-[color:color-mix(in_srgb,_var(--accent)_45%,_var(--text-secondary))] text-[12px] font-[650] tracking-[.05em] uppercase whitespace-nowrap">{label}</span>
+              <strong className="text-text text-[18px] font-[800] tabular-nums">{formatNumber(value ?? 0)}</strong>
+            </article>
+          ))}
+        </section>
+        <div className="flex flex-wrap items-center gap-3 ml-auto">
+          {canImportExport && (
+            <>
+              <button type="button" className="inline-flex items-center justify-center gap-2 min-h-[40px] p-[0_18px] border border-line-strong rounded-[8px] [background:var(--panel)] text-text text-[13px] font-[750] whitespace-nowrap [transition:border-color_.16s_ease,_background_.16s_ease] hover:border-accent hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]" onClick={() => setImportOpen(true)}>Import CSV</button>
+              <button type="button" className="inline-flex items-center justify-center gap-2 min-h-[40px] p-[0_18px] border border-line-strong rounded-[8px] [background:var(--panel)] text-text text-[13px] font-[750] whitespace-nowrap [transition:border-color_.16s_ease,_background_.16s_ease] hover:border-accent hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]" onClick={() => void exportCsv()}>Export CSV</button>
+            </>
+          )}
+          {canAdd && (
+            <button type="button" className="primary-button inline-flex items-center justify-center gap-2 min-h-[40px] p-[0_18px] border border-transparent rounded-[8px] text-[#fff] text-[13px] font-[760] whitespace-nowrap [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_10px_24px_color-mix(in_srgb,_var(--accent)_22%,_transparent)] [transition:filter_.16s_ease] hover:[filter:saturate(1.1)_brightness(1.05)]" onClick={() => { setActionError(''); setAddOpen(true); }}>
+              <FaPlus aria-hidden="true" /> Add Product
+            </button>
+          )}
+        </div>
+      </div>
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError || remote.error}</Notice>
 
-      <section className="metric-grid grid grid-cols-[repeat(6,_minmax(0,_1fr))] gap-[13px] mb-[18px] max-[1381px]:later:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[681px]:later-2:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[451px]:later-3:grid-cols-[1fr]" aria-label="Warehouse summary">
-        {tiles.map(([label, value, caption]) => (
-          <article className="metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px]" key={label}>
-            <div className="metric-top relative z-1 flex items-center justify-between gap-3 [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680]"><span>{label}</span></div>
-            <strong>{formatNumber(value ?? 0)}</strong>
-            <small className="metric-caption relative z-1 mt-[7px] text-muted text-[8px] leading-[1.45]">{caption}</small>
-          </article>
-        ))}
-      </section>
-
-      <div className="toolbar flex items-center flex-wrap gap-[9px] mb-[14px] p-[10px] border border-line rounded-[15px] [background:color-mix(in_srgb,_var(--panel)_92%,_transparent)] [box-shadow:var(--shadow-sm)] [&_input]:flex-[1_1_270px] [&_select]:flex-[0_1_210px] [&_input]:min-h-[40px] [&_input]:p-[9px_11px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[11px] [&_input]:[outline:none] [&_input]:text-text [&_input]:[background:var(--input-bg)] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_select]:min-h-[40px] [&_select]:p-[9px_11px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[11px] [&_select]:[outline:none] [&_select]:text-text [&_select]:[background:var(--input-bg)] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_input::placeholder]:text-placeholder [&_input:hover]:border-line-strong [&_select:hover]:border-line-strong later:[&_input:focus]:border-accent [&_input:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_input:focus]:[background:var(--input-focus-bg)] later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_select:focus]:[background:var(--input-focus-bg)] max-[681px]:later:items-stretch max-[681px]:flex-col max-[681px]:[&_input]:w-full max-[681px]:later:[&_input]:flex-[auto] max-[681px]:[&_select]:w-full max-[681px]:later:[&_select]:flex-[auto] [.inventory-page_&]:grid [.inventory-page_&]:grid-cols-[minmax(0,_1fr)_150px_150px] [.inventory-page_&]:gap-[10px] [.inventory-page_&]:items-center [.inventory-page_&_select]:min-h-[40px] [.inventory-page_&_select]:w-full [.inventory-page_&_select]:p-[0_12px] [.inventory-page_&_select]:border later-2:[.inventory-page_&_select]:border-line [.inventory-page_&_select]:rounded-[10px] [.inventory-page_&_select]:text-text later:[.inventory-page_&_select]:[background:var(--input-bg,_var(--surface-subtle))] [.inventory-page_&_select]:text-[11px] max-[761px]:later:[.inventory-page_&]:grid-cols-[minmax(0,_1fr)]">
+      <div className="flex flex-wrap items-center gap-2 mb-3 p-[6px] border border-line rounded-[8px] [background:color-mix(in_srgb,_var(--panel)_92%,_transparent)]" role="toolbar" aria-label="Warehouse filters">
+        <select className="min-h-[36px] p-[0_12px] border border-line rounded-[8px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[11px] font-[600] tracking-[.04em] uppercase [outline:none] cursor-pointer hover:border-line-strong focus:border-accent w-[176px]" value={range} onChange={(event) => { setRange(event.target.value); setPage(1); }} aria-label="Date range">
+          <option value="all">All time</option>
+          <optgroup label="Stock activity">
+            {RANGE_PERIODS.map(([key]) => <option key={`activity-${key}`} value={`activity:${key}`}>{rangeLabel(`activity:${key}`)}</option>)}
+          </optgroup>
+          <optgroup label="Date added">
+            {RANGE_PERIODS.map(([key]) => <option key={`added-${key}`} value={`added:${key}`}>{rangeLabel(`added:${key}`)}</option>)}
+          </optgroup>
+        </select>
+        <select className="min-h-[36px] p-[0_12px] border border-line rounded-[8px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[11px] font-[600] tracking-[.02em] [outline:none] cursor-pointer hover:border-line-strong focus:border-accent w-[158px]" value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label="Sort by">
+          {SORT_OPTIONS.map(([key, label]) => <option key={key} value={key}>{`Sort By: (${label.toUpperCase()})`}</option>)}
+        </select>
+        <div className="relative" ref={columnsRef}>
+          <button
+            type="button"
+            className="min-h-[36px] p-[0_12px] border border-line rounded-[8px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[11px] font-[600] tracking-[.02em] [outline:none] cursor-pointer hover:border-line-strong focus:border-accent inline-flex items-center gap-[10px]"
+            onClick={() => setColumnsOpen((open) => !open)}
+            aria-expanded={columnsOpen}
+            aria-haspopup="true"
+          >
+            Customize Columns <FaChevronDown aria-hidden="true" className="text-[10px]" />
+          </button>
+          {columnsOpen && (
+            <div className="absolute left-0 top-[calc(100%_+_6px)] z-[30] min-w-[200px] grid gap-[2px] p-[8px] border border-line-strong rounded-[10px] [background:var(--panel)] [box-shadow:var(--shadow-md)]" role="group" aria-label="Visible columns">
+              {COLUMN_OPTIONS.map(([key, label]) => (
+                <label key={key} className="flex items-center gap-[9px] p-[6px_8px] rounded-[6px] text-text text-[13px] cursor-pointer hover:[background:var(--hover)]">
+                  <input type="checkbox" className="[accent-color:var(--accent)]" checked={Boolean(columns[key])} onChange={() => toggleColumn(key)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <input
           type="search"
-          className="[.inventory-page_&]:min-h-[40px] [.inventory-page_&]:w-full [.inventory-page_&]:p-[0_12px] [.inventory-page_&]:border [.inventory-page_&]:border-line [.inventory-page_&]:rounded-[10px] [.inventory-page_&]:text-text [.inventory-page_&]:[background:var(--input-bg,_var(--surface-subtle))] [.inventory-page_&]:text-[11px] [.inventory-page_&::placeholder]:text-[color:var(--placeholder,_var(--muted))] [.inventory-page_&::placeholder]:tracking-[0.04em]"
+          className="flex-[1_1_160px] min-w-[140px] min-h-[36px] p-[0_18px] border border-line-strong rounded-[999px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[12px] [outline:none] placeholder:uppercase placeholder:tracking-[.06em] placeholder:text-[color:var(--placeholder,_var(--muted))] focus:border-accent"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder={`Search item (${brand?.name || 'selected brand'} in filter)`}
-          aria-label="Search this brand's products"
+          placeholder="Search"
+          aria-label={`Search ${brand?.name || 'this brand'} products`}
         />
-        <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter stock status">
-          <option value="">All statuses</option>
+        <select className="min-h-[36px] p-[0_12px] border border-line rounded-[8px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[11px] font-[600] tracking-[.04em] uppercase [outline:none] cursor-pointer hover:border-line-strong focus:border-accent w-[150px]" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} aria-label="Filter stock status">
+          <option value="">All items/status</option>
           <option value="normal">Normal</option>
           <option value="low">Low</option>
           <option value="critical">Critical</option>
         </select>
-        <select value={brandId} onChange={(event) => changeBrand(event.target.value)} aria-label="Filter by brand">
+        <select className="min-h-[36px] p-[0_12px] border border-line rounded-[8px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[11px] font-[600] tracking-[.04em] uppercase [outline:none] cursor-pointer hover:border-line-strong focus:border-accent w-[120px]" value={brandId} onChange={(event) => changeBrand(event.target.value)} aria-label="Filter by brand">
           {brands.length === 0 && <option value="">Loading brands…</option>}
           {brands.map((option) => <option key={option.id} value={option.id}>{option.name.toUpperCase()}</option>)}
         </select>
       </div>
 
-      {selectionMode && (
-        <div className="flex flex-wrap items-center gap-[10px] mb-3 p-[9px_12px] border border-line rounded-[12px] [background:var(--surface-subtle)]" role="group" aria-label="Bulk delete products">
-          <span className="mr-auto text-accent-text text-[11px] font-[760]">{selectedIds.length} selected</span>
-          <button type="button" onClick={toggleAll} disabled={!items.length}>
-            {allSelected ? 'Unselect all' : 'Select all'}
-          </button>
-          <button type="button" onClick={exitSelection}>Cancel</button>
-          <button
-            type="button"
-            className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
-            onClick={() => setConfirmDelete(true)}
-            disabled={selectedIds.length === 0 || deleting}
-          >
-            Confirm delete
-          </button>
-        </div>
-      )}
-
       <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         {remote.loading && !remote.data ? <LoadingState /> : !items.length ? (
           <EmptyState
-            label={`No products under ${brand?.name || 'this brand'}.`}
-            detail={canAdd ? 'Add a product, or choose another brand from the filter.' : 'Choose another brand from the filter.'}
+            label={filtered ? 'No products match the current filters.' : `No products under ${brand?.name || 'this brand'}.`}
+            detail={filtered ? 'Choose All time, clear the search or pick another status.' : (canAdd ? 'Add a product, or choose another brand from the filter.' : 'Choose another brand from the filter.')}
           />
         ) : (
           <>
@@ -238,46 +294,47 @@ function WarehouseInventory({ role }) {
               <table>
                 <thead>
                   <tr>
-                    {selectionMode && (
-                      <th className="w-[42px] text-center later:[&_input]:w-[15px] [&_input]:h-[15px] [&_input]:[accent-color:var(--accent)] [&_input]:cursor-pointer">
-                        <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all products on this page" />
-                      </th>
-                    )}
                     <th>Product</th>
-                    <th>SKU</th>
-                    <th>Unit</th>
-                    <th>Quantity</th>
-                    <th>Reorder level</th>
-                    <th>Status</th>
+                    {columns.sku && <th>SKU</th>}
+                    {columns.unit && <th>Unit</th>}
+                    {columns.quantity && <th>Quantity</th>}
+                    {columns.reorder_level && <th>Reorder level</th>}
+                    {columns.status && <th>Status</th>}
+                    {columns.last_activity && <th>Last activity</th>}
+                    {columns.added && <th>Date added</th>}
                     {(canAdjust || canDelete) && <th>Action</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id}>
-                      {selectionMode && (
-                        <td className="w-[42px] text-center later:[&_input]:w-[15px] [&_input]:h-[15px] [&_input]:[accent-color:var(--accent)] [&_input]:cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(item.id)}
-                            onChange={() => toggleItem(item.id)}
-                            aria-label={`Select ${item.name || 'product'}`}
-                          />
-                        </td>
-                      )}
                       <td><strong>{item.name || '—'}</strong><small>{item.category || ''}</small></td>
-                      <td>{item.sku || '—'}</td>
-                      <td>{item.unit || '—'}</td>
-                      <td><strong>{formatNumber(item.quantity)}</strong></td>
-                      <td>{formatNumber(item.reorder_level)}</td>
-                      <td><StatusBadge value={item.status} /></td>
+                      {columns.sku && <td>{item.sku || '—'}</td>}
+                      {columns.unit && <td>{item.unit || '—'}</td>}
+                      {columns.quantity && <td><strong>{formatNumber(item.quantity)}</strong></td>}
+                      {columns.reorder_level && <td>{formatNumber(item.reorder_level)}</td>}
+                      {columns.status && <td><StatusBadge value={item.status} /></td>}
+                      {columns.last_activity && <td>{item.last_activity_at ? formatDate(item.last_activity_at, true) : '—'}</td>}
+                      {columns.added && <td>{item.added_at ? formatDate(item.added_at) : '—'}</td>}
                       {(canAdjust || canDelete) && (
                         <td>
-                          {canAdjust && (
-                            <button type="button" onClick={() => { setActionError(''); setSuccess(''); setAdjustItem(item); }}>
-                              Adjust
-                            </button>
-                          )}
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            {canAdjust && (
+                              <button type="button" className="min-w-[72px]" onClick={() => { setActionError(''); setSuccess(''); setAdjustItem(item); }}>
+                                Adjust
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button
+                                type="button"
+                                className="min-w-[72px] border-[rgba(255,_107,_107,_.38)]! text-[#ff9ca3]! [background:rgba(255,_107,_107,_.08)]! hover:[background:rgba(255,_107,_107,_.16)]! hover:border-[rgba(255,_107,_107,_.6)]!"
+                                onClick={() => { setActionError(''); setSuccess(''); setDeleteItem(item); }}
+                                aria-label={`Delete ${item.name || 'product'}`}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -325,33 +382,36 @@ function WarehouseInventory({ role }) {
         />
       )}
 
-      {confirmDelete && (
+      {deleteItem && (
         <Modal
-          title="Delete selected products"
-          onClose={() => (deleting ? null : setConfirmDelete(false))}
+          title="Delete product"
+          onClose={() => (deleting ? null : setDeleteItem(null))}
           size="small"
           footer={(
             <>
-              <button type="button" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</button>
+              <button type="button" onClick={() => setDeleteItem(null)} disabled={deleting}>Cancel</button>
               <button
                 type="button"
-                className="primary-button [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] danger-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] later:[background:linear-gradient(135deg,_#ef596b,_#c9374a)] later:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--danger)_21%,_transparent)]"
-                onClick={deleteSelected}
-                disabled={deleting || selectedIds.length === 0}
+                className="danger-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] later:[background:linear-gradient(135deg,_#ef596b,_#c9374a)] later:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--danger)_21%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)]"
+                onClick={() => void deleteProduct()}
+                disabled={deleting}
               >
-                {deleting ? 'Deleting…' : `Delete ${selectedIds.length} ${selectedIds.length === 1 ? 'product' : 'products'}`}
+                {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </>
           )}
         >
-          <p>
-            {selectedIds.length === 1
-              ? 'This product will be removed from the warehouse list.'
-              : `${selectedIds.length} products will be removed from the warehouse list.`}{' '}
-            Products are archived, so completed supply requests and stock history keep their snapshot.
-            A product on an open supply request blocks the whole deletion.
-          </p>
+          <p className="m-0 text-text">Delete {deleteItem.name || 'this product'}? This cannot be undone.</p>
         </Modal>
+      )}
+
+      {toast && (
+        <div
+          className={`fixed right-[20px] bottom-[20px] z-[1000] max-w-[min(420px,_calc(100vw_-_40px))] p-[11px_14px] rounded-[12px] border text-[13px] leading-[1.45] [box-shadow:var(--shadow-md)] [animation:noticeIn_.25s_ease_both] ${toast.type === 'success' ? 'border-[rgba(69,_217,_145,_.45)] text-[#45d991] [background:#0f1f19]' : 'border-[rgba(255,_107,_107,_.45)] text-[#ff9ca3] [background:#22151a]'}`}
+          role={toast.type === 'error' ? 'alert' : 'status'}
+        >
+          {toast.text}
+        </div>
       )}
 
       {adjustItem && (
