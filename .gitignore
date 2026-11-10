@@ -34,3 +34,7 @@ supabase/.temp
 # Report from scripts/import-mysql-dump.mjs: real user and file ids
 import-report*.json
 
+
+backup/
+
+backup/

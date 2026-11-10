@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
+import { createStaff } from '../support/accounts.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -11,10 +12,7 @@ const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params
 const [brandA, brandB] = await q(`select id from brands order by id limit 2`);
 const [salesUser] = await q(`select id from users where email = $1`, [SALES]);
 
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Mon Other Sales', email: 'mon.other@example.test', phone: '09179990005', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const otherSales = (await call('POST', '/auth/login', { body: { email: 'mon.other@example.test', password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const otherSales = await createStaff(call, admin, { full_name: 'Mon Other Sales', email: 'mon.other@example.test', phone: '09179990005', role: 'sales' });
 
 let phoneSeq = 0;
 const lead = (name: string) => ({ lead_name: name, first_name: name, last_name: 'Mon', phone: `0920${String(1000000 + (phoneSeq += 1)).slice(1)}`, source: 'facebook', preferred_brand_id: brandA.id });

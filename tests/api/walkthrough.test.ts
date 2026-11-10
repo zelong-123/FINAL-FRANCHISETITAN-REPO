@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { requirementForm } from '../support/requirements.ts';
 import { requirementsOf } from '../../supabase/functions/api/services/requirements.ts';
+import { createStaff, firstSignIn } from '../support/accounts.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -14,10 +15,7 @@ const marketing = await login(MARKETING);
 const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params)).rows as any[];
 const [brand] = await q(`select id, name from brands order by id limit 1`);
 const [firstSalesUser] = await q(`select id from users where email = $1`, [SALES]);
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Walk Sales Two', email: 'walk.sales2@example.test', phone: '09179990007', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const sales = (await call('POST', '/auth/login', { body: { email: 'walk.sales2@example.test', password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const sales = await createStaff(call, admin, { full_name: 'Walk Sales Two', email: 'walk.sales2@example.test', phone: '09179990007', role: 'sales' });
 const [salesUser] = await q(`select id from users where email = 'walk.sales2@example.test'`);
 
 /** Every refused attempt, with the message the user sees (printed at the end for the report). */
@@ -180,7 +178,8 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   agreement.set('agreement', pdf('sample-franchise-agreement.pdf'));
   okay('submit the agreement', await call('POST', `${path}/requirements/franchise_agreement`, { token: sales, form: agreement }), 201);
   okay('accept the agreement', await call('POST', `${path}/requirements/franchise_agreement/accept`, { token: admin, body: {} }));
-  okay('branch account', await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'demo.branch@example.test', phone: '09170000102', password: 'Passw0rd!', confirm_password: 'Passw0rd!' } }), 201);
+  const branchAccount = okay('branch account', await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'demo.branch@example.test', phone: '09170000102' } }), 201);
+  await firstSignIn(call, 'demo.branch@example.test', branchAccount.data.credentials.temporary_password, 'branch');
   assert.equal((await q(`select status from applicants where id = $1`, [id]))[0].status, 'active_franchisee');
   const [location] = await q(`select l.id, l.name from franchise_locations l join franchisees f on f.id = l.franchisee_id where f.applicant_id = $1`, [id]);
   assert.ok(location, 'the branch is created');

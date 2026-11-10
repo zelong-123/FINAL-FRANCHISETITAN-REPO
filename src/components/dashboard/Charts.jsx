@@ -174,14 +174,44 @@ export function ProductionTrendCombo({ rows }) {
 const KNOWN_SOURCES = ['viber', 'facebook', 'gmail', 'walk in', 'referral'];
 
 // Fixed source colors so every panel reads the same channel the same way.
+// Gmail is drawn with a gradient (see GMAIL_* below); its solid value is only a fallback.
 const SOURCE_COLORS = {
   facebook: '#0865FF',
   viber: '#8460F4',
   gmail: '#34A853',
-  'walk in': '#C0C0C0',
-  referral: '#FFD700',
+  'walk in': '#8B5E3C', // professional brown
+  referral: '#D4AF37', // gold
 };
+
+// Gmail logo colors: red -> yellow -> green -> blue.
+const GMAIL_GRADIENT_ID = 'source-gmail-gradient';
+const GMAIL_STOPS = [
+  { offset: '0%', color: '#EA4335' },
+  { offset: '35%', color: '#FBBC04' },
+  { offset: '68%', color: '#34A853' },
+  { offset: '100%', color: '#4285F4' },
+];
+const GMAIL_CSS_GRADIENT = 'linear-gradient(90deg, #EA4335 0%, #FBBC04 35%, #34A853 68%, #4285F4 100%)';
+
+const isGmail = (name) => String(name).toLowerCase() === 'gmail';
 const sourceColor = (name, index) => SOURCE_COLORS[String(name).toLowerCase()] || PALETTE[Math.max(0, index) % PALETTE.length];
+// Fill for SVG shapes (bars, donut slices): Gmail uses the gradient defined in <SourceGradientDefs />.
+const sourceFill = (name, index) => (isGmail(name) ? `url(#${GMAIL_GRADIENT_ID})` : sourceColor(name, index));
+// Background for the small legend dot (plain CSS, so it needs the CSS gradient).
+const sourceSwatch = (name, index) => (isGmail(name) ? GMAIL_CSS_GRADIENT : sourceColor(name, index));
+
+/** SVG gradient definition. Place it as a direct child of BarChart / PieChart. */
+function SourceGradientDefs() {
+  return (
+    <defs>
+      <linearGradient id={GMAIL_GRADIENT_ID} x1="0" y1="0" x2="1" y2="0">
+        {GMAIL_STOPS.map((stop) => (
+          <stop key={stop.offset} offset={stop.offset} stopColor={stop.color} />
+        ))}
+      </linearGradient>
+    </defs>
+  );
+}
 
 // Optional categories: the "By Branch" view passes its own four names and brand colors.
 // Without them the donut is exactly the source view it always was.
@@ -191,15 +221,16 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
   // Any channel the API reports outside the fixed list still gets a slice and a
   // legend row, so the donut total always matches the inquiry count.
   const extras = [...byName.keys()].filter((name) => !known.has(name));
-  const colorAt = (name, index) => (colors ? colors[index % colors.length] : sourceColor(name, index));
+  const fillAt = (name, index) => (colors ? colors[index % colors.length] : sourceFill(name, index));
+  const swatchAt = (name, index) => (colors ? colors[index % colors.length] : sourceSwatch(name, index));
   const legend = [
-    ...categories.map((name, index) => ({ name, value: byName.get(name.toLowerCase()) || 0, color: colorAt(name, index) })),
-    ...extras.map((name, index) => ({ name, value: byName.get(name) || 0, color: colorAt(name, categories.length + index) })),
+    ...categories.map((name, index) => ({ name, value: byName.get(name.toLowerCase()) || 0, fill: fillAt(name, index), swatch: swatchAt(name, index) })),
+    ...extras.map((name, index) => ({ name, value: byName.get(name) || 0, fill: fillAt(name, categories.length + index), swatch: swatchAt(name, categories.length + index) })),
   ];
   const total = legend.reduce((sum, entry) => sum + entry.value, 0);
   const empty = total <= 0;
   // Empty: one neutral full ring keeps the donut shape visible.
-  const data = empty ? [{ name: 'none', value: 1, color: 'var(--border)' }] : legend.filter((entry) => entry.value > 0);
+  const data = empty ? [{ name: 'none', value: 1, fill: 'var(--border)' }] : legend.filter((entry) => entry.value > 0);
   const percentOf = (value) => (total > 0 ? Math.round((value / total) * 100) : 0);
 
   return (
@@ -208,9 +239,10 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
         <ChartFrame height={224} empty={empty}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
+              <SourceGradientDefs />
               <Pie data={data} dataKey="value" nameKey="name" innerRadius="60%" outerRadius="88%" paddingAngle={2} stroke="none" isAnimationActive>
                 {data.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} fillOpacity={empty ? 0.35 : 1} />
+                  <Cell key={entry.name} fill={entry.fill} fillOpacity={empty ? 0.35 : 1} />
                 ))}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
@@ -225,7 +257,7 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
       <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[11.5px] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[8px] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
         {legend.map((entry) => (
           <li key={entry.name}>
-            <span className="[.dashboard-page_&]:w-[9px] [.dashboard-page_&]:h-[9px] [.dashboard-page_&]:rounded-[50%]" style={{ background: entry.color }} />
+            <span className="[.dashboard-page_&]:w-[9px] [.dashboard-page_&]:h-[9px] [.dashboard-page_&]:rounded-[50%]" style={{ background: entry.swatch }} />
             <span className="[.dashboard-page_.donut-legend_&]:whitespace-nowrap [.dashboard-page_.donut-legend_&]:overflow-hidden [.dashboard-page_.donut-legend_&]:text-ellipsis">{titleCase(entry.name)}</span>
             <strong>{formatNumber(entry.value)}</strong>
             <small>{percentOf(entry.value)}%</small>
@@ -282,13 +314,14 @@ export function AcquisitionBars({ rows }) {
       <ChartFrame height={260} empty={empty}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 8, right: 56, left: 8, bottom: 4 }} barCategoryGap={14}>
+            <SourceGradientDefs />
             <CartesianGrid horizontal={false} stroke={GRID} />
             <XAxis type="number" domain={[0, maxLeads]} allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} />
             <YAxis type="category" dataKey="source" tickFormatter={titleCase} tick={{ fill: '#c9d1e4', fontSize: 10 }} axisLine={false} tickLine={false} width={92} />
             <Tooltip content={acquisitionTooltip} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar dataKey="leads" name="Leads" radius={[0, 7, 7, 0]} maxBarSize={26}>
               {data.map((entry) => (
-                <Cell key={entry.source} fill={sourceColor(entry.source, data.indexOf(entry))} />
+                <Cell key={entry.source} fill={sourceFill(entry.source, data.indexOf(entry))} />
               ))}
               <LabelList content={countBarLabel} position="right" />
             </Bar>

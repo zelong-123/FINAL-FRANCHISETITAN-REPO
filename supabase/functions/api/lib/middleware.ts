@@ -29,8 +29,16 @@ export async function authenticate(c: Context<AppEnv>, next: Next) {
   c.set('user', user);
   c.set('accessToken', token);
   c.set('sessionId', verified.sessionId);
+  // An account still on its temporary password can only read itself, set its own password
+  // and sign out. Every other route is refused here, so no page or client can skip the change.
+  if (user.must_change_password && !FIRST_PASSWORD_ALLOWED.test(c.req.path)) {
+    return c.json({ message: PASSWORD_CHANGE_REQUIRED, code: 'password_change_required' }, 403);
+  }
   await next();
 }
+
+export const PASSWORD_CHANGE_REQUIRED = 'Set a new password before using the system.';
+const FIRST_PASSWORD_ALLOWED = /\/auth\/(me|first-password|logout|heartbeat|session-end)$/;
 
 async function currentUser(db: Db, authUserId: string, sessionId: string | null): Promise<Row | null> {
   const [row] = await db.query(

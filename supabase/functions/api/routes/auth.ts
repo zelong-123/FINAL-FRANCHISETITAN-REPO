@@ -8,6 +8,7 @@ import { authenticate, roleName } from '../lib/middleware.ts';
 import { audit, clientIp, liftExpiredSuspension, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
 import * as presence from '../services/presence.ts';
 import { resolveWorkspace } from '../services/branchAccess.ts';
+import { PASSWORD_MAX, PASSWORD_MIN } from '../services/credentials.ts';
 
 const USER_MODEL = 'App\\Models\\User';
 const MAX_ATTEMPTS = 5;
@@ -186,6 +187,31 @@ authRoutes.put('/security', async (c) => {
   await auth.revokeOthers(c.get('accessToken'));
   await audit(c, db, 'auth.security_updated', { type: USER_MODEL, id: user.id }, { email: user.email }, { email, password_changed: Boolean(v.password) });
   return ok(c, await withPresence(c, db, { ...saved, role: user.role }), 'Login credentials updated.');
+});
+
+/**
+ * First sign-in: an account created with a temporary password sets its own (8 to 15
+ * characters). The temporary password stops working at once, and other sessions end.
+ */
+authRoutes.post('/first-password', async (c) => {
+  const { db, auth } = c.get('deps');
+  const user = c.get('user');
+  if (!user.must_change_password) fail('password', 'This account has already set its own password.');
+  const v = await validate(db, await readInput(c), {
+    password: ['required', 'string', `min:${PASSWORD_MIN}`, `max:${PASSWORD_MAX}`],
+    password_confirmation: ['required', 'same:password'],
+  });
+  // Re-using the temporary password is refused: it was shown to someone else.
+  const same = await auth.signIn(user.email, v.password);
+  if (same) {
+    await auth.revoke(same.access_token);
+    fail('password', 'Choose a new password, not the temporary one.');
+  }
+  await auth.updateUser(user.auth_user_id, { password: v.password });
+  await auth.revokeOthers(c.get('accessToken'));
+  const saved = await updateRow(db, 'users', user.id, { must_change_password: false, password_changed_at: new Date() });
+  await audit(c, db, 'auth.first_password_set', { type: USER_MODEL, id: user.id });
+  return ok(c, await withPresence(c, db, { ...saved, role: user.role }), 'Your new password is saved.');
 });
 
 authRoutes.put('/password', async (c) => {

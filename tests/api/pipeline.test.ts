@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
+import { createStaff, firstSignIn } from '../support/accounts.ts';
 
 const { pg, call, login, files } = await setup();
 const admin = await login(ADMIN);
@@ -21,10 +22,7 @@ const [salesUser] = await q(`select id from users where email = $1`, [SALES]);
 
 // A second Sales account: only the assigned Sales user may act for an applicant.
 const otherSalesEmail = 'second.sales@example.test';
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Second Sales', email: otherSalesEmail, phone: '09179990001', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const otherSales = (await call('POST', '/auth/login', { body: { email: otherSalesEmail, password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const otherSales = await createStaff(call, admin, { full_name: 'Second Sales', email: otherSalesEmail, phone: '09179990001', role: 'sales' });
 const [otherSalesUser] = await q(`select id from users where email = $1`, [otherSalesEmail]);
 const convert = (inquiryId: number, salesId = salesUser.id) => call('POST', `/inquiries/${inquiryId}/convert`, { token: admin, body: { assigned_sales_user_id: salesId } });
 
@@ -253,13 +251,13 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal((await call('POST', `${path}/approve`, { token: admin, body: {} })).json.data.status, 'approved');
   assert.match((await call('POST', `${path}/activate`, { token: admin, body: {} })).json.errors.requirements[0], /Missing: Signed franchise agreement/);
   // Activation needs the signed franchise agreement Accepted — including the activation the branch account triggers.
-  const noAgreement = await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'Juan@Branch.Test', phone: '09170000000', password: 'Passw0rd!', confirm_password: 'Passw0rd!' } });
+  const noAgreement = await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'Juan@Branch.Test', phone: '09170000000' } });
   assert.equal(noAgreement.status, 422);
   assert.match(noAgreement.json.errors.requirements[0], /Missing: Signed franchise agreement\./);
   assert.equal((await q(`select count(*)::int c from users where email = 'juan@branch.test'`))[0].c, 0, 'the refused account is removed again');
   await completeStage(call, sales, admin, applicantId, 'activation');
   assert.match((await call('POST', `${path}/activate`, { token: admin, body: {} })).json.errors.account[0], /Create an active Franchisee/);
-  const portal = await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'Juan@Branch.Test', phone: '09170000000', password: 'Passw0rd!', confirm_password: 'Passw0rd!' } });
+  const portal = await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'Juan@Branch.Test', phone: '09170000000' } });
   assert.equal(portal.status, 201);
   assert.equal(portal.json.data.role.name, 'franchisee');
   assert.ok(!('auth_user_id' in portal.json.data));
@@ -271,6 +269,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal((await call('DELETE', path, { token: admin })).status, 422);
 
   // The branch account signs in through the branch portal.
+  await firstSignIn(call, 'juan@branch.test', portal.json.data.credentials.temporary_password, 'branch');
   const branchLogin = await call('POST', '/auth/login', { body: { email: 'juan@branch.test', password: 'Passw0rd!', portal: 'branch' } });
   assert.equal(branchLogin.status, 200);
   const me = await call('GET', '/auth/me', { token: branchLogin.json.data.token });

@@ -25,6 +25,7 @@ import Branches from './pages/Branches';
 import AdminSettings from './pages/AdminSettings';
 import Messenger from './pages/Messenger';
 import BranchPortal from './pages/BranchPortal';
+import FirstPasswordGate from './components/FirstPasswordGate';
 
 function RoleRedirect() {
   const { loading, role, isAuthenticated } = useAuth();
@@ -91,6 +92,7 @@ export default function App() {
       <AuthProvider>
         <ChatProvider>
           <PortalSessionGuard>
+          <FirstPasswordGate>
           <Routes>
             {/* VITE_PORTAL (lib/portal.js): the staff build has no branch login, the branch
                 build has no staff login or staff pages; unset keeps every route. */}
@@ -145,6 +147,7 @@ export default function App() {
             <Route path="/franchisee-dashboard" element={<Navigate to="/branch-portal" replace />} />
             <Route path="*" element={<RoleRedirect />} />
           </Routes>
+          </FirstPasswordGate>
           </PortalSessionGuard>
         </ChatProvider>
       </AuthProvider>

@@ -37,6 +37,11 @@ const PHONE_LENGTH = 11;
 // Numbers lang, hanggang 11 digits.
 const digitsOnly = (value) => String(value || '').replace(/\D/g, '').slice(0, PHONE_LENGTH);
 
+// Style para sa Clear dates / Export CSV / Export PDF buttons.
+// Same kulay ng date inputs (input-line border + input-bg background), same taas (40px).
+const filterBtn =
+  'h-[40px] px-[14px] inline-flex items-center justify-center border border-input-line rounded-[10px] [background:var(--input-bg)] text-text text-[13px] font-[600] cursor-pointer transition-[border-color,background] duration-150 hover:border-line-strong hover:[background:color-mix(in_srgb,_var(--input-bg)_80%,_var(--accent)_20%)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-input-line disabled:hover:[background:var(--input-bg)]';
+
 /**
  * Renders its children straight into <body>.
  *
@@ -193,7 +198,7 @@ const actionCopy = {
   endorse: {
     title: 'Endorse this inquiry?',
     button: 'Endorse inquiry',
-    body: 'This advances the lead for follow-up by the responsible sales team.',
+    body: 'This sends the lead to Admin for review. Admin converts it to an applicant and assigns the Sales user.',
   },
 };
 
@@ -583,9 +588,16 @@ export default function Inquiries() {
   };
 
   // Convert: the Sales user who will handle the applicant (active Sales accounts only).
-  const [salesUsers, setSalesUsers] = useState([]);
+  // The list is loaded each time the modal opens (and on Retry). A failed load is shown, never
+  // treated as an empty list. `salesLoad.key` tells which open/attempt the result belongs to,
+  // so a result for an earlier attempt still reads as "loading".
+  const [salesLoad, setSalesLoad] = useState({ key: null, status: 'loading', list: [] });
+  const [salesAttempt, setSalesAttempt] = useState(0);
   const [convertSalesId, setConvertSalesId] = useState('');
   const convertingInquiry = pendingAction?.type === 'convert' ? pendingAction.inquiry : null;
+  const salesKey = convertingInquiry ? `${convertingInquiry.id}:${salesAttempt}` : null;
+  const salesStatus = salesLoad.key === salesKey ? salesLoad.status : 'loading';
+  const salesUsers = salesLoad.key === salesKey ? salesLoad.list : [];
   useEffect(() => {
     if (!convertingInquiry) return undefined;
     let active = true;
@@ -593,14 +605,19 @@ export default function Inquiries() {
       .then((result) => {
         if (!active) return;
         const list = result.data || [];
-        setSalesUsers(list);
-        // Start from the Sales user the lead was endorsed to, when there is one.
-        const endorsed = list.find((u) => u.id === convertingInquiry.endorsed_to_user_id);
+        setSalesLoad({ key: salesKey, status: list.length ? 'ready' : 'empty', list });
+        // One Sales user: chosen automatically. Otherwise start from the Sales user the lead
+        // was endorsed to, when there is one.
+        const endorsed = list.length === 1 ? list[0] : list.find((u) => u.id === convertingInquiry.endorsed_to_user_id);
         setConvertSalesId(endorsed ? String(endorsed.id) : '');
       })
-      .catch(() => { if (active) setSalesUsers([]); });
+      .catch(() => {
+        if (!active) return;
+        setSalesLoad({ key: salesKey, status: 'error', list: [] });
+        setConvertSalesId('');
+      });
     return () => { active = false; };
-  }, [convertingInquiry]);
+  }, [convertingInquiry, salesKey]);
 
   const exportInquiries = async (kind) => {
     setExporting(true);
@@ -1051,10 +1068,12 @@ export default function Inquiries() {
       <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_input]:p-[0_10px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_input]:text-text" aria-label="Inquiry date range">
         <label>From (inquiry date)<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} /></label>
         <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} /></label>
-        {(dateFrom || dateTo) && <button type="button" onClick={() => { setPage(1); setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
+        {(dateFrom || dateTo) && (
+          <button type="button" className={filterBtn} onClick={() => { setPage(1); setDateFrom(''); setDateTo(''); }}>Clear dates</button>
+        )}
         <span className="flex gap-2 ml-auto">
-          <button type="button" disabled={exporting} onClick={() => void exportInquiries('csv')}>Export CSV</button>
-          <button type="button" disabled={exporting} onClick={() => void exportInquiries('pdf')}>Export PDF</button>
+          <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportInquiries('csv')}>Export CSV</button>
+          <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportInquiries('pdf')}>Export PDF</button>
         </span>
       </div>
 
@@ -1485,12 +1504,23 @@ export default function Inquiries() {
                 <p>{actionCopy[pendingAction.type]?.body}</p>
                 {pendingAction.type === 'convert' && (
                   <Field label="Assigned Sales user (required)">
-                    <select value={convertSalesId} onChange={(e) => setConvertSalesId(e.target.value)} aria-label="Assigned Sales user">
-                      <option value="">Choose a Sales user…</option>
-                      {salesUsers.map((u) => (
-                        <option key={u.id} value={u.id}>{u.full_name} · {u.open_applicants} open</option>
-                      ))}
-                    </select>
+                    {salesStatus === 'error' ? (
+                      <div className="grid gap-2 p-[10px_12px] rounded-[10px] border border-[rgba(255,_107,_107,_.4)] [background:rgba(255,_107,_107,_.08)]" role="alert">
+                        <span className="text-[#ff9ca3] text-[0.85rem]">Could not load Sales users. Try again.</span>
+                        <button type="button" className="w-fit" onClick={() => setSalesAttempt((n) => n + 1)}>Retry</button>
+                      </div>
+                    ) : salesStatus === 'empty' ? (
+                      <p className="m-0 p-[10px_12px] rounded-[10px] border border-[rgba(251,_191,_36,_.4)] [background:rgba(251,_191,_36,_.08)] text-[#f4e3b0] text-[0.85rem]" role="alert">
+                        There is no active Sales user yet. Create one in User Management first.
+                      </p>
+                    ) : (
+                      <select value={convertSalesId} onChange={(e) => setConvertSalesId(e.target.value)} aria-label="Assigned Sales user" disabled={salesStatus === 'loading'}>
+                        <option value="">{salesStatus === 'loading' ? 'Loading Sales users…' : 'Choose a Sales user…'}</option>
+                        {salesUsers.map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name} · {u.open_applicants} open</option>
+                        ))}
+                      </select>
+                    )}
                   </Field>
                 )}
               </div>

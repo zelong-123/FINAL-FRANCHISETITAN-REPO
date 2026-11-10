@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
+import { createStaff } from '../support/accounts.ts';
 
 const { pg, call, login, files } = await setup();
 const admin = await login(ADMIN);
@@ -20,10 +21,7 @@ const lead = (name: string, extra: any = {}) => ({
   lead_name: name, first_name: name, last_name: 'Tester', phone: nextPhone(), source: 'facebook', preferred_brand_id: brand.id, ...extra,
 });
 
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Backup Sales', email: 'backup.sales@example.test', phone: '09179990002', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const backup = (await call('POST', '/auth/login', { body: { email: 'backup.sales@example.test', password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const backup = await createStaff(call, admin, { full_name: 'Backup Sales', email: 'backup.sales@example.test', phone: '09179990002', role: 'sales' });
 const [backupUser] = await q(`select id from users where email = 'backup.sales@example.test'`);
 
 /** An endorsed inquiry converted with the seeded Sales user. */

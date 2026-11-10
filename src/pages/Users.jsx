@@ -7,10 +7,29 @@ import { formatDate, titleCase } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
 
-const blank = { full_name: '', email: '', phone: '', password: '', role: 'marketing', account_status: 'active' };
-const branchBlank = { ...blank, role: 'franchisee' };
+const blank = { full_name: '', email: '', phone: '', role: 'marketing', applicant_id: '' };
 
-const cleanPhone = (value) => value.replace(/\D/g, '').slice(0, 11);
+/** Roles User Management can create. Admin is never offered. */
+const CREATE_ROLES = [
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'logistics', label: 'Logistics' },
+  { value: 'franchisee', label: 'Franchisee (branch)' },
+];
+
+const cleanPhone = (value) => String(value || '').replace(/\D/g, '').slice(0, 11);
+
+// Same rules as the API (services/credentials.ts).
+const NAME_PATTERN = /^[\p{L}\p{M} .'’-]+$/u;
+const nameProblem = (value) => {
+  const name = value.trim();
+  if (!name) return 'Full name is required.';
+  if (!NAME_PATTERN.test(name) || (name.match(/\p{L}/gu) || []).length < 2) {
+    return 'Use letters, spaces, period, hyphen and apostrophe only (no digits or other symbols).';
+  }
+  return '';
+};
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** 9:38 AM — presence timestamps only need the clock in these columns. */
 const clock = (value) => {
@@ -32,8 +51,12 @@ export default function Users() {
   const [page, setPage] = useState(1);
   const [tab, setTab] = useState('staff');
   const [roleFilter, setRoleFilter] = useState('');
-  const [applicantSelection, setApplicantSelection] = useState(null);
-  const [applicantChoices, setApplicantChoices] = useState([]);
+  // Franchisee: the applicants who may get an account (Approved or Active Franchisee, no account yet).
+  const [candidates, setCandidates] = useState({ key: null, status: 'loading', list: [] });
+  const [candidateAttempt, setCandidateAttempt] = useState(0);
+  // The new account's first password, shown once and cleared when the dialog closes.
+  const [issued, setIssued] = useState(null);
+  const [copied, setCopied] = useState(false);
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(blank);
@@ -58,52 +81,99 @@ export default function Users() {
       : ['admin', 'sales', 'marketing', 'logistics'].includes(userRole);
   });
 
-  useEffect(() => {
-    if (!showCreate || applicantSelection) return undefined;
-    let active = true;
-    api.get('/applicants', { status: 'approved', per_page: 100 })
-      .then((response) => { if (active) setApplicantChoices(response.data || []); })
-      .catch(() => { if (active) setApplicantChoices([]); });
-    return () => { active = false; };
-  }, [showCreate, applicantSelection]);
+  const isFranchisee = form.role === 'franchisee';
+  const candidateKey = showCreate && isFranchisee ? candidateAttempt : null;
+  const candidateStatus = candidates.key === candidateKey ? candidates.status : 'loading';
+  const candidateList = candidates.key === candidateKey ? candidates.list : [];
+  const chosenApplicant = candidateList.find((a) => String(a.id) === String(form.applicant_id)) || null;
 
+  useEffect(() => {
+    if (candidateKey === null) return undefined;
+    let active = true;
+    api.get('/users/franchisee-candidates')
+      .then((response) => {
+        if (!active) return;
+        const list = response.data || [];
+        setCandidates({ key: candidateKey, status: list.length ? 'ready' : 'empty', list });
+      })
+      .catch(() => { if (active) setCandidates({ key: candidateKey, status: 'error', list: [] }); });
+    return () => { active = false; };
+  }, [candidateKey]);
+
+  // Opened from an applicant ("Create Account"): Franchisee with that applicant chosen.
   useEffect(() => {
     const applicant = location.state?.createFranchiseeFor;
     if (!applicant) return;
-    setApplicantSelection(applicant);
     setTab('branch');
     setPage(1);
-    setForm({ ...branchBlank, full_name: applicant.full_name || '', email: applicant.email || '', phone: cleanPhone(applicant.phone || '') });
+    setForm({ ...blank, role: 'franchisee', applicant_id: String(applicant.applicantId), full_name: applicant.full_name || '', email: applicant.email || '', phone: cleanPhone(applicant.phone) });
     setActionError('');
     setShowCreate(true);
     window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
   }, [location.state]);
 
+  const openCreate = () => { setForm(blank); setActionError(''); setShowCreate(true); };
+  const closeCreate = () => { setShowCreate(false); setForm(blank); setActionError(''); };
+
+  const changeRole = (role) => {
+    // Switching between staff and Franchisee starts the identity fields again.
+    const wasFranchisee = form.role === 'franchisee';
+    if (wasFranchisee === (role === 'franchisee')) setForm({ ...form, role });
+    else setForm({ ...blank, role });
+    setActionError('');
+  };
+
+  const chooseApplicant = (id) => {
+    const applicant = candidateList.find((a) => String(a.id) === String(id));
+    setForm({
+      ...form,
+      applicant_id: id,
+      full_name: applicant?.full_name || '',
+      email: applicant?.email || '',
+      phone: cleanPhone(applicant?.phone),
+    });
+  };
+
+  const nameError = !isFranchisee && form.full_name ? nameProblem(form.full_name) : '';
+
   const createUser = async (event) => {
     event.preventDefault();
-    const creatingBranchAccount = Boolean(applicantSelection);
-    setSaving(true);
     setActionError('');
     setSuccess('');
+    if (isFranchisee && !form.applicant_id) { setActionError('Choose the applicant for this Franchisee account.'); return; }
+    if (!isFranchisee) {
+      const problem = nameProblem(form.full_name);
+      if (problem) { setActionError(problem); return; }
+    }
+    if (!EMAIL_PATTERN.test(form.email.trim())) { setActionError('Enter a valid email address.'); return; }
+    if (form.phone && !/^[0-9]{11}$/.test(form.phone)) { setActionError('Phone / Contact must be exactly 11 digits, or left empty.'); return; }
+    setSaving(true);
     try {
-      if (!/^[0-9]{11}$/.test(form.phone)) throw new Error('Phone / Contact must be exactly 11 numeric digits.');
-      if (form.password.length < 8 || form.password.length > 15) throw new Error('Password must be between 8 and 15 characters.');
-      if (form.password !== form.confirm_password) throw new Error('Password and Confirm Password must match.');
-      if (applicantSelection) {
-        await api.post(`/applicants/${applicantSelection.applicantId}/portal-user`, { email: form.email, phone: form.phone, password: form.password, confirm_password: form.confirm_password });
-      } else {
-        await api.post('/users', form);
-      }
-      setForm(blank);
-      setApplicantSelection(null);
+      const contact = { email: form.email.trim(), phone: form.phone || null };
+      const response = isFranchisee
+        ? await api.post(`/applicants/${form.applicant_id}/portal-user`, contact)
+        : await api.post('/users', { ...contact, full_name: form.full_name.trim(), role: form.role });
+      const created = response.data;
       setShowCreate(false);
+      setForm(blank);
+      setCopied(false);
+      setIssued({ name: created.full_name, email: created.email, role: isFranchisee ? 'Franchisee (branch)' : titleCase(form.role), credentials: created.credentials || null });
       setSuccess('User account created successfully.');
       await remote.reload();
-      if (creatingBranchAccount) window.dispatchEvent(new CustomEvent('herald:branch-account-created'));
+      if (isFranchisee) window.dispatchEvent(new CustomEvent('herald:branch-account-created'));
     } catch (error) {
       setActionError(firstValidationMessage(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const copyPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(issued.credentials.temporary_password);
+      setCopied(true);
+    } catch {
+      setCopied(false);
     }
   };
 
@@ -171,7 +241,7 @@ export default function Users() {
         <button
           type="button"
           className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.unified-toolbar-container_&]:flex-[0_0_auto] [.unified-toolbar-container_&]:inline-flex [.unified-toolbar-container_&]:items-center [.unified-toolbar-container_&]:justify-center [.unified-toolbar-container_&]:gap-2 [.unified-toolbar-container_&]:h-[44px] [.unified-toolbar-container_&]:min-h-[44px] [.unified-toolbar-container_&]:p-[0_18px] [.unified-toolbar-container_&]:rounded-[10px] [.unified-toolbar-container_&]:text-[13px] [.unified-toolbar-container_&]:font-[700] max-[721px]:later:[.unified-toolbar-container_&]:flex-[1_1_100%]"
-          onClick={() => { setApplicantSelection(null); setForm(blank); setActionError(''); setShowCreate(true); }}
+          onClick={openCreate}
         >
           <FaUserPlus aria-hidden="true" /> New user
         </button>
@@ -238,35 +308,65 @@ export default function Users() {
       </section>
 
       {showCreate && (
-        <Modal title={applicantSelection ? `Create branch account for ${applicantSelection.full_name}` : 'Create user account'} onClose={() => { setShowCreate(false); setApplicantSelection(null); }} footer={<><button onClick={() => { setShowCreate(false); setApplicantSelection(null); }}>Cancel</button><button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="user-form" disabled={saving}>{saving ? 'Saving…' : 'Create user'}</button></>}>
+        <Modal title={isFranchisee ? 'Create branch account' : 'Create user account'} onClose={closeCreate} footer={<><button type="button" onClick={closeCreate}>Cancel</button><button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="user-form" disabled={saving || Boolean(nameError) || (isFranchisee && !form.applicant_id)}>{saving ? 'Saving…' : 'Create user'}</button></>}>
           <Notice type="error">{actionError}</Notice>
           <form id="user-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={createUser}>
-            {applicantSelection
-              ? <Field label="Full name" required><input required readOnly value={form.full_name} /></Field>
-                : <Field label="Full name" required><select required value={form.full_name} onChange={(e) => {
-                const selectedApplicant = applicantChoices.find((candidate) => candidate.full_name === e.target.value);
-                setApplicantSelection(selectedApplicant ? {
-                  applicantId: selectedApplicant.id,
-                  full_name: selectedApplicant.full_name,
-                  email: selectedApplicant.email || '',
-                  phone: selectedApplicant.phone || '',
-                  preferred_brand: selectedApplicant.preferred_brand || null,
-                  preferred_brand_id: selectedApplicant.preferred_brand_id || null,
-                  status: selectedApplicant.status,
-                } : null);
-                setForm({ ...branchBlank, full_name: selectedApplicant?.full_name || '', email: selectedApplicant?.email || '', phone: cleanPhone(selectedApplicant?.phone || '') });
-              }}>
-                <option value="">Select an approved applicant</option>
-                {applicantChoices.map((candidate) => <option key={candidate.id} value={candidate.full_name}>{candidate.full_name}</option>)}
-              </select></Field>}
-            <Field label="Email" required><input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-            <Field label="Phone / Contact" required><input required inputMode="numeric" maxLength={11} pattern="[0-9]{11}" value={form.phone} onChange={(e) => setForm({ ...form, phone: cleanPhone(e.target.value) })} /></Field>
-            <Field label="Password" required hint="Use 8 to 15 characters. Share it through a secure channel."><input required minLength="8" maxLength="15" type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
-            <Field label="Confirm Password" required><input required minLength="8" maxLength="15" type="password" autoComplete="new-password" value={form.confirm_password || ''} onChange={(e) => setForm({ ...form, confirm_password: e.target.value })} /></Field>
-            {applicantSelection && <Field label="Preferred Branch Type"><input readOnly value={applicantSelection.preferred_brand?.name || 'Not specified'} /></Field>}
-            {!applicantSelection && <Field label="Role" required><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{['marketing', 'sales', 'logistics'].map((role) => <option key={role} value={role}>{titleCase(role)}</option>)}</select></Field>}
-            {/* Status is automatic (live session heartbeat): new accounts start Active. */}
+            <Field label="Role" required>
+              <select value={form.role} onChange={(e) => changeRole(e.target.value)} aria-label="Role">
+                {CREATE_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+              </select>
+            </Field>
+            {isFranchisee ? (
+              <Field label="Full name" required hint="Approved or Active Franchisee applicants without an account.">
+                {candidateStatus === 'error' ? (
+                  <span className="grid gap-2" role="alert">
+                    <span className="text-[#ff9ca3]">Could not load the applicants. Try again.</span>
+                    <button type="button" className="w-fit" onClick={() => setCandidateAttempt((n) => n + 1)}>Retry</button>
+                  </span>
+                ) : candidateStatus === 'empty' ? (
+                  <span className="text-[#f4e3b0]" role="alert">No approved or active franchisee without an account.</span>
+                ) : (
+                  <select required value={form.applicant_id} onChange={(e) => chooseApplicant(e.target.value)} aria-label="Full name" disabled={candidateStatus === 'loading'}>
+                    <option value="">{candidateStatus === 'loading' ? 'Loading applicants…' : 'Choose an applicant…'}</option>
+                    {candidateList.map((a) => (
+                      <option key={a.id} value={a.id}>{a.full_name}{a.applicant_code ? ` · ${a.applicant_code}` : ''} · {a.status === 'active_franchisee' ? 'Active Franchisee' : 'Approved'}</option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+            ) : (
+              <Field label="Full name" required hint={nameError || 'Letters, spaces, period, hyphen and apostrophe only.'}>
+                <input required value={form.full_name} maxLength={255} autoComplete="off" aria-invalid={Boolean(nameError)} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+              </Field>
+            )}
+            <Field label="Email" required><input required type="email" maxLength={255} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+            <Field label="Phone / Contact" hint="Optional. Exactly 11 digits, e.g. 09123456789."><input inputMode="numeric" maxLength={11} pattern="[0-9]{11}" value={form.phone} onChange={(e) => setForm({ ...form, phone: cleanPhone(e.target.value) })} /></Field>
+            {isFranchisee && chosenApplicant && <Field label="Preferred Branch Type"><input readOnly value={chosenApplicant.preferred_brand?.name || 'Not specified'} /></Field>}
+            <p className="col-span-full m-0 text-muted text-[0.8rem]">The system creates a temporary password and shows it once after the account is created. The user must change it at first sign-in.</p>
           </form>
+        </Modal>
+      )}
+
+      {issued && (
+        <Modal
+          title="Account created"
+          size="small"
+          onClose={() => setIssued(null)}
+          footer={<button type="button" className="primary-button min-h-[42px] inline-flex items-center justify-center p-[0_16px] rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" onClick={() => setIssued(null)}>Done</button>}
+        >
+          <p className="m-[0_0_12px] text-text">{issued.name} · {issued.role}<br /><span className="text-muted">{issued.email}</span></p>
+          {issued.credentials?.method === 'temporary_password' ? (
+            <div className="grid gap-2">
+              <span className="text-muted text-[0.8rem]">Temporary password (shown only once)</span>
+              <div className="flex gap-2 items-center">
+                <code className="flex-1 p-[10px_12px] rounded-[10px] border border-line [background:var(--input-bg)] text-text text-[1rem] tracking-[.04em] select-all" aria-label="Temporary password">{issued.credentials.temporary_password}</code>
+                <button type="button" onClick={copyPassword}>{copied ? 'Copied' : 'Copy'}</button>
+              </div>
+              <p className="m-0 text-[#f4e3b0] text-[0.85rem]">{issued.credentials.note}</p>
+            </div>
+          ) : issued.credentials?.method === 'email_link' ? (
+            <p className="m-0 text-text">{issued.credentials.note}</p>
+          ) : null}
         </Modal>
       )}
 

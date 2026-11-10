@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
+import { createStaff } from '../support/accounts.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -13,10 +14,7 @@ const marketing = await login(MARKETING);
 const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params)).rows as any[];
 const [salesUser] = await q(`select id from users where email = $1`, [SALES]);
 const [adminUser] = await q(`select id from users where email = $1`, [ADMIN]);
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Other Sales', email: 'other.req@example.test', phone: '09179990003', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const otherSales = (await call('POST', '/auth/login', { body: { email: 'other.req@example.test', password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const otherSales = await createStaff(call, admin, { full_name: 'Other Sales', email: 'other.req@example.test', phone: '09179990003', role: 'sales' });
 
 let n = 0;
 async function applicant(status = 'converted', extra = '') {

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
+import { createStaff } from '../support/accounts.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -13,10 +14,7 @@ const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params
 const [brand] = await q(`select id from brands order by id limit 1`);
 const [salesUser] = await q(`select id from users where email = $1`, [SALES]);
 const [adminUser] = await q(`select id from users where email = $1`, [ADMIN]);
-assert.equal((await call('POST', '/users', {
-  token: admin, body: { full_name: 'Detail Other Sales', email: 'detail.other@example.test', phone: '09179990006', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' },
-})).status, 201);
-const otherSales = (await call('POST', '/auth/login', { body: { email: 'detail.other@example.test', password: 'Passw0rd!', portal: 'staff' } })).json.data.token as string;
+const otherSales = await createStaff(call, admin, { full_name: 'Detail Other Sales', email: 'detail.other@example.test', phone: '09179990006', role: 'sales' });
 
 /** An applicant walked through a few recorded actions. */
 let walks = 0;

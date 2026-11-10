@@ -4,6 +4,7 @@ import { createApp } from '../../supabase/functions/api/app.ts';
 import { createTestPg, pgliteDb } from '../support/testDb.ts';
 import { fakeAuth, linkSeedUsers } from '../support/fakeAuth.ts';
 import { memoryFiles } from '../support/harness.ts';
+import { firstSignIn } from '../support/accounts.ts';
 
 const PASSWORD = 'test-only-password';
 const pg = await createTestPg();
@@ -92,23 +93,22 @@ test('role gates match Laravel', async () => {
 
 test('admin creates a user who can sign in with a USR code, then blocks them', async () => {
   const admin = await tokenFor(ADMIN);
-  const invalid = await call('POST', '/users', { token: admin, body: { full_name: 'A', email: 'nope', phone: '1', password: 'short', confirm_password: 'x', role: 'admin' } });
+  const invalid = await call('POST', '/users', { token: admin, body: { full_name: 'Ana Cruz', email: 'nope', role: 'sales' } });
   assert.equal(invalid.status, 422);
   assert.equal(invalid.json.message, 'The submitted data is invalid.');
-  assert.ok(invalid.json.errors.email && invalid.json.errors.phone && invalid.json.errors.role);
+  assert.ok(invalid.json.errors.email);
+  assert.ok((await call('POST', '/users', { token: admin, body: { full_name: 'Ana Cruz', email: 'ana@example.com', role: 'admin' } })).json.errors.role);
 
   const email = 'New.Person@Example.com';
-  const created = await call('POST', '/users', { token: admin, body: { full_name: 'New Person', email, phone: '09171234567', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' } });
+  const created = await call('POST', '/users', { token: admin, body: { full_name: 'New Person', email, phone: '09171234567', role: 'sales' } });
   assert.equal(created.status, 201);
   assert.equal(created.json.data.email, email.toLowerCase());
   assert.match(created.json.data.user_code, /^USR-\d{4}-\d{5}$/);
 
-  const duplicate = await call('POST', '/users', { token: admin, body: { full_name: 'Dup', email: email.toUpperCase(), phone: '09171234567', password: 'Passw0rd!', confirm_password: 'Passw0rd!', role: 'sales' } });
+  const duplicate = await call('POST', '/users', { token: admin, body: { full_name: 'Dup', email: email.toUpperCase(), phone: '09171234567', role: 'sales' } });
   assert.equal(duplicate.json.errors.email[0], 'The email has already been taken.', 'uniqueness stays case-insensitive as in MySQL');
 
-  const session = await call('POST', '/auth/login', { body: { email, password: 'Passw0rd!', portal: 'staff' } });
-  assert.equal(session.status, 200);
-  const userToken = session.json.data.token;
+  const userToken = await firstSignIn(call, email, created.json.data.credentials.temporary_password);
 
   const blocked = await call('PUT', `/users/${created.json.data.id}`, { token: admin, body: { account_status: 'inactive' } });
   assert.equal(blocked.status, 200);
