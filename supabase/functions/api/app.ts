@@ -11,6 +11,8 @@ import { notificationRoutes } from './routes/notifications.ts';
 import { userRoutes } from './routes/users.ts';
 import { archiveRoutes, inquiryRoutes } from './routes/inquiries.ts';
 import { applicantRoutes } from './routes/applicants.ts';
+import { requirementRoutes } from './routes/requirements.ts';
+import { paymentRecordRoutes } from './routes/paymentRecord.ts';
 import { activityRoutes } from './routes/activities.ts';
 import { sessionRoutes } from './routes/scheduleSessions.ts';
 import { inventoryRoutes } from './routes/inventory.ts';
@@ -77,6 +79,8 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   for (const path of ['/activities', '/activities/*', '/schedule-sessions', '/schedule-sessions/*']) {
     app.use(path, authenticate);
   }
+  app.route('/', requirementRoutes);
+  app.route('/', paymentRecordRoutes);
   app.route('/', applicantRoutes);
   app.route('/', activityRoutes);
   app.route('/', sessionRoutes);

@@ -11,6 +11,8 @@ import { brandColor } from '../lib/brandColors';
 import { initialsOf } from '../lib/initials';
 import { can } from '../lib/roleAccess';
 import RecordCode from '../components/RecordCode';
+import FollowUpLog from '../components/FollowUpLog';
+import { downloadCsv, downloadPdf } from '../lib/export';
 
 const initialForm = {
   first_name: '',
@@ -255,28 +257,6 @@ const buildSuggestions = (rows, query) => {
   return [...unique.values()].slice(0, 6);
 };
 
-// Decides whether an existing inquiry is the same person as the one being entered.
-// Returns the reasons it matched, or null when it is not the same person.
-const matchPerson = (row, mine) => {
-  const rowEmail = normalizeEmail(row.email);
-  const rowPhones = [normalizePhone(row.phone), normalizePhone(row.viber_number)].filter(Boolean);
-  const reasons = [];
-  if (mine.email && rowEmail && mine.email === rowEmail) reasons.push('email address');
-  if (mine.phones.some((phone) => rowPhones.includes(phone))) reasons.push('contact number');
-  if (reasons.length) {
-    // A shared phone/email with a completely different name (e.g. family) is not the same person.
-    const rowTokens = normalizeName(leadDisplayName(row)).split(' ').filter(Boolean);
-    const myTokens = mine.name.split(' ').filter(Boolean);
-    const namesCompatible = !rowTokens.length || !myTokens.length || myTokens.some((token) => rowTokens.includes(token));
-    return namesCompatible ? reasons : null;
-  }
-
-  // Name alone is only enough when the contact details do not contradict each other.
-  if (!mine.name || normalizeName(leadDisplayName(row)) !== mine.name) return null;
-  if (mine.email && rowEmail) return null;
-  if (mine.phones.length && rowPhones.length) return null;
-  return ['name'];
-};
 
 function BrandText({ name }) {
   if (!name) return '—';
@@ -310,6 +290,9 @@ export default function Inquiries() {
   const [monthFilter, setMonthFilter] = useState('');
   const [yearFilter, setYearFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // ---- Edit state ----
   const [editingId, setEditingId] = useState(null);          // table edit: reuses the New inquiry modal
@@ -329,11 +312,13 @@ export default function Inquiries() {
         ...(sortMode === 1 && brandFilter ? { brand_id: brandFilter } : {}),
         ...(sortMode === 2 ? { sort: 'date', ...(monthFilter ? { month: monthFilter } : {}), ...(yearFilter ? { year: yearFilter } : {}) } : {}),
         ...(sortMode === 3 && sourceFilter ? { source: sourceFilter } : {}),
+        ...(dateFrom ? { from: dateFrom } : {}),
+        ...(dateTo ? { to: dateTo } : {}),
       }),
       api.get('/brands'),
     ]);
     return { inquiries: inquiries.data, meta: inquiries.meta, brands: brands.data };
-  }, [page, search, status, showArchived, sortMode, brandFilter, monthFilter, yearFilter, sourceFilter]);
+  }, [page, search, status, showArchived, sortMode, brandFilter, monthFilter, yearFilter, sourceFilter, dateFrom, dateTo]);
 
   // Action rights come from the central role matrix (UI twin of config/roles.php);
   // the API blocks the same actions with 403 for Sales (view-only panel).
@@ -404,6 +389,7 @@ export default function Inquiries() {
 
   // ---------- Duplicate warning ----------
   const [duplicateMatches, setDuplicateMatches] = useState(null);
+  const [duplicateReason, setDuplicateReason] = useState('');
   const duplicateRef = useRef(null);
 
   // Any edit to the form makes an earlier warning outdated.
@@ -414,35 +400,6 @@ export default function Inquiries() {
       duplicateRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }, [duplicateMatches]);
-
-  // Looks for an existing inquiry for the same person AND the same brand/concept.
-  // A different preferred franchise location does not matter.
-  // While editing, the record being edited is ignored.
-  const findDuplicates = async () => {
-    const brandId = Number(form.preferred_brand_id);
-    if (!brandId) return []; // no concept selected: nothing to compare against
-
-    const mine = {
-      email: normalizeEmail(form.email),
-      phones: [normalizePhone(form.phone)].filter(Boolean),
-      name: normalizeName(`${form.first_name} ${form.last_name}`),
-    };
-    const terms = [...new Set([
-      form.email.trim(),
-      form.phone.trim(),
-      form.last_name.trim(),
-    ].filter(Boolean))];
-
-    const results = await Promise.all(terms.map((term) => api.get('/inquiries', { page: 1, per_page: 50, search: term })));
-    const byId = new Map();
-    results.forEach((result) => (result.data || []).forEach((row) => byId.set(row.id, row)));
-
-    return [...byId.values()]
-      .filter((row) => row.id !== editingId)
-      .filter((row) => Number(row.preferred_brand_id ?? row.preferred_brand?.id) === brandId)
-      .map((row) => ({ row, reasons: matchPerson(row, mine) }))
-      .filter((item) => item.reasons);
-  };
 
   // Frontend-only validation (hindi umaasa sa browser pattern).
   const validateForm = () => {
@@ -463,7 +420,7 @@ export default function Inquiries() {
 
   // Creates a new inquiry, or updates the existing one when editingId is set.
   // Both calls throw on failure, so the success message only shows when the request worked.
-  const postInquiry = async () => {
+  const postInquiry = async (duplicateReasonText = null) => {
     const firstName = form.first_name.trim();
     const lastName = form.last_name.trim();
     const payload = {
@@ -481,7 +438,7 @@ export default function Inquiries() {
       await api.put(`/inquiries/${editingId}`, payload);
       setSuccess('Inquiry updated successfully.');
     } else {
-      await api.post('/inquiries', payload);
+      await api.post('/inquiries', duplicateReasonText ? { ...payload, duplicate_reason: duplicateReasonText } : payload);
       setSuccess('Inquiry recorded successfully.');
     }
     setForm(initialForm);
@@ -505,18 +462,14 @@ export default function Inquiries() {
 
     setSaving(true);
     try {
-      let matches = [];
-      try {
-        matches = await findDuplicates();
-      } catch {
-        matches = []; // if the check itself fails, do not block saving
-      }
-      if (matches.length) {
-        setDuplicateMatches(matches);
-        return;
-      }
       await postInquiry();
     } catch (error) {
+      // The API checks the phone and email against every active inquiry and applicant.
+      if (error?.status === 409 && Array.isArray(error.payload?.matches)) {
+        setDuplicateMatches(error.payload.matches);
+        setDuplicateReason('');
+        return;
+      }
       setActionError(firstValidationMessage(error));
     } finally {
       setSaving(false);
@@ -524,10 +477,15 @@ export default function Inquiries() {
   };
 
   const confirmDuplicate = async () => {
+    const reason = duplicateReason.trim();
+    if (reason.length < 5) {
+      setActionError('Give a reason of at least 5 characters to save this possible duplicate.');
+      return;
+    }
     setSaving(true);
     setActionError('');
     try {
-      await postInquiry();
+      await postInquiry(reason);
     } catch (error) {
       setActionError(firstValidationMessage(error));
     } finally {
@@ -624,14 +582,75 @@ export default function Inquiries() {
     );
   };
 
+  // Convert: the Sales user who will handle the applicant (active Sales accounts only).
+  const [salesUsers, setSalesUsers] = useState([]);
+  const [convertSalesId, setConvertSalesId] = useState('');
+  const convertingInquiry = pendingAction?.type === 'convert' ? pendingAction.inquiry : null;
+  useEffect(() => {
+    if (!convertingInquiry) return undefined;
+    let active = true;
+    api.get('/applicants/sales-users')
+      .then((result) => {
+        if (!active) return;
+        const list = result.data || [];
+        setSalesUsers(list);
+        // Start from the Sales user the lead was endorsed to, when there is one.
+        const endorsed = list.find((u) => u.id === convertingInquiry.endorsed_to_user_id);
+        setConvertSalesId(endorsed ? String(endorsed.id) : '');
+      })
+      .catch(() => { if (active) setSalesUsers([]); });
+    return () => { active = false; };
+  }, [convertingInquiry]);
+
+  const exportInquiries = async (kind) => {
+    setExporting(true);
+    setActionError('');
+    try {
+      const base = {
+        search, status, ...(showArchived ? { archived: 1 } : {}),
+        ...(sortMode === 1 && brandFilter ? { brand_id: brandFilter } : {}),
+        ...(sortMode === 2 ? { sort: 'date', ...(monthFilter ? { month: monthFilter } : {}), ...(yearFilter ? { year: yearFilter } : {}) } : {}),
+        ...(sortMode === 3 && sourceFilter ? { source: sourceFilter } : {}),
+        ...(dateFrom ? { from: dateFrom } : {}), ...(dateTo ? { to: dateTo } : {}),
+      };
+      const all = [];
+      for (let p = 1; p <= 100; p += 1) {
+        const result = await api.get('/inquiries', { ...base, page: p, per_page: 100 });
+        all.push(...(result.data || []));
+        if (!result.meta || p >= Number(result.meta.last_page || 1)) break;
+      }
+      const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
+      const rows = all.map((r) => [
+        r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '', titleCase(r.source || ''),
+        r.inquiry_date ? formatDate(r.inquiry_date) : '', titleCase(r.status || ''), r.days_in_status ?? '', r.overdue ? 'Yes' : 'No',
+        r.follow_up_count ?? 0, r.next_follow_up_at ? formatDate(r.next_follow_up_at, true) : '',
+      ]);
+      const name = `inquiries-${new Date().toISOString().slice(0, 10)}`;
+      const range = dateFrom || dateTo ? `${dateFrom || '…'} to ${dateTo || '…'}` : 'All dates';
+      if (kind === 'pdf') downloadPdf(name, headers, rows, 'Inquiries', `${range} · ${rows.length} record(s)`);
+      else downloadCsv(name, headers, rows);
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const runAction = async () => {
     if (!pendingAction) return;
+    if (pendingAction.type === 'convert' && !convertSalesId) {
+      setActionError('Choose the Sales user who will handle this applicant.');
+      return;
+    }
     setSaving(true);
     setActionError('');
     setSuccess('');
     try {
       if (pendingAction.type === 'delete') {
         await api.delete(`/inquiries/${pendingAction.inquiry.id}`);
+      } else if (pendingAction.type === 'convert') {
+        // Admin must choose the active Sales user who will handle the applicant.
+        await api.post(`/inquiries/${pendingAction.inquiry.id}/convert`, { assigned_sales_user_id: convertSalesId ? Number(convertSalesId) : null });
       } else {
         await api.post(`/inquiries/${pendingAction.inquiry.id}/${pendingAction.type}`, {});
       }
@@ -673,6 +692,34 @@ export default function Inquiries() {
   const lastSelected = useRef(null);
   if (selected) lastSelected.current = selected;
   const shown = selected || lastSelected.current; // keeps content visible while the panel slides out
+
+  // The selected inquiry's follow-up log (Marketing adds to it).
+  const [followUps, setFollowUps] = useState({ id: null, items: [] });
+  const [followUpBusy, setFollowUpBusy] = useState(false);
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    let active = true;
+    api.get(`/inquiries/${selectedId}`)
+      .then((result) => { if (active) setFollowUps({ id: selectedId, items: result.data?.follow_ups || [] }); })
+      .catch(() => { if (active) setFollowUps({ id: selectedId, items: [] }); });
+    return () => { active = false; };
+  }, [selectedId]);
+  const logFollowUp = async (body) => {
+    if (!selectedId) return;
+    setFollowUpBusy(true);
+    setActionError('');
+    try {
+      const result = await api.post(`/inquiries/${selectedId}/follow-ups`, body);
+      setFollowUps({ id: selectedId, items: result.data?.follow_ups || [] });
+      setSuccess('Follow-up logged.');
+      await remote.reload();
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    } finally {
+      setFollowUpBusy(false);
+    }
+  };
+
   const closeDetails = () => setSelectedId(null);
   const toggleRow = (id) => setSelectedId((current) => (current === id ? null : id));
 
@@ -1001,6 +1048,16 @@ export default function Inquiries() {
         </p>
       )}
 
+      <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_input]:p-[0_10px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_input]:text-text" aria-label="Inquiry date range">
+        <label>From (inquiry date)<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} /></label>
+        <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} /></label>
+        {(dateFrom || dateTo) && <button type="button" onClick={() => { setPage(1); setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
+        <span className="flex gap-2 ml-auto">
+          <button type="button" disabled={exporting} onClick={() => void exportInquiries('csv')}>Export CSV</button>
+          <button type="button" disabled={exporting} onClick={() => void exportInquiries('pdf')}>Export PDF</button>
+        </span>
+      </div>
+
       <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         {remote.loading ? <LoadingState /> : rows.length === 0 ? (
           <EmptyState label="No inquiries match the current filters." detail="Adjust your search or create a new inquiry to begin the pipeline." />
@@ -1032,7 +1089,15 @@ export default function Inquiries() {
                 <td><BrandText name={inquiry.preferred_brand?.name || brandMap.get(inquiry.preferred_brand_id)} /></td>
                 <td>{titleCase(inquiry.source)}</td>
                 <td>{formatDate(inquiry.inquiry_date)}</td>
-                <td><StatusBadge value={inquiry.status} /></td>
+                <td>
+                  <StatusBadge value={inquiry.status} />
+                  {typeof inquiry.days_in_status === 'number' && !inquiry.archived_at && (
+                    <small className="block mt-1 text-muted">
+                      {inquiry.days_in_status} day{inquiry.days_in_status === 1 ? '' : 's'}
+                      {inquiry.overdue && <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_136,_142,_.5)] text-[#ff888e] text-[11px] font-[700]" title={`More than ${inquiry.overdue_after_days} days in this status`}>Overdue</span>}
+                    </small>
+                  )}
+                </td>
                 <td><div className={`row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative ${showArchived ? '' : ' later-4:[&.row-actions]:grid! [&.row-actions]:grid-cols-[132px_42px_42px] [&.row-actions]:gap-[10px] [&.row-actions]:items-center [&.row-actions_.action-slot]:flex [&.row-actions_.action-slot]:min-h-[42px] [&.row-actions_.action-slot]:items-center [&.row-actions_.action-slot_button]:h-[32px] [&.row-actions_.action-slot_button]:justify-center [&.row-actions_.action-slot_button]:whitespace-nowrap [&.row-actions_.action-slot_button]:text-[0.825rem]! [&.row-actions_.action-slot_button]:font-[500]! [&.row-actions_.icon-button]:w-[42px] [&.row-actions_.icon-button]:h-[42px]'}`} onClick={(event) => event.stopPropagation()}>
                   {showArchived ? renderArchiveActions(inquiry) : (
                     <>
@@ -1217,6 +1282,14 @@ export default function Inquiries() {
                   <div className="pb-[14px]"><StatusBadge value={shown.status} /></div>
                 </section>
                 {!drawerEditing && (
+                  <FollowUpLog
+                    items={followUps.id === selectedId ? followUps.items : []}
+                    canAdd={role === 'marketing' && Boolean(selected) && !selected.archived_at && !['converted', 'rejected', 'closed'].includes(selected.status)}
+                    busy={followUpBusy}
+                    onAdd={(body) => void logFollowUp(body)}
+                  />
+                )}
+                {!drawerEditing && (
                   <section>
                     <h3>Remarks</h3>
                     <p className="m-[0_0_14px] text-[0.9rem] leading-[1.55] whitespace-pre-wrap">{shown.remarks || <span className="text-[color:var(--drawer-muted)] opacity-[0.7] italic">No remarks recorded.</span>}</p>
@@ -1322,25 +1395,34 @@ export default function Inquiries() {
                 <div className="col-span-full p-[14px_16px] rounded-[12px] border border-[rgba(251,_191,_36,_0.4)] [background:rgba(251,_191,_36,_0.08)]" role="alert" ref={duplicateRef}>
                   <div className="flex gap-[10px] items-start text-[#fbbf24] [&_svg]:flex-none later:[&_svg]:mt-[3px] later-2:[&_p]:m-0 [&_p]:font-[600] later:[&_p]:leading-[1.45] later-2:[&_p]:text-[#f4e3b0]">
                     <FaTriangleExclamation aria-hidden="true" />
-                    <p>An inquiry for this person and brand already exists. Do you still want to save this inquiry?</p>
+                    <p>Possible duplicate: this phone number or email already belongs to an active record. Save it only if you can explain why.</p>
                   </div>
                   <ul className="m-[12px_0_0] p-[0_0_0_26px] grid gap-2 text-[0.88rem] [&_small]:block [&_small]:text-[#8590a8]">
-                    {duplicateMatches.slice(0, 3).map(({ row, reasons }) => (
-                      <li key={row.id}>
-                        <strong>{leadDisplayName(row)}</strong>
-                        <span> — <BrandText name={row.preferred_brand?.name || brandMap.get(row.preferred_brand_id)} /></span>
+                    {duplicateMatches.slice(0, 5).map((match) => (
+                      <li key={`${match.type}-${match.id}`}>
+                        <strong>{match.name}</strong>
+                        <span> — {match.type === 'applicant' ? 'Applicant' : 'Inquiry'} {match.code || ''}</span>
                         <small>
-                          {[row.preferred_franchise_location, formatDate(row.inquiry_date), titleCase(row.status)].filter(Boolean).join(' · ')}
-                          {' · '}matched by {reasons.join(' and ')}
+                          {[formatDate(match.date), titleCase(match.status)].filter(Boolean).join(' · ')}
+                          {' · '}same {(match.matched_on || []).map((m) => (m === 'phone' ? 'phone number' : 'email')).join(' and ')}
                         </small>
                       </li>
                     ))}
-                    {duplicateMatches.length > 3 && <li><small>and {duplicateMatches.length - 3} more</small></li>}
+                    {duplicateMatches.length > 5 && <li><small>and {duplicateMatches.length - 5} more</small></li>}
                   </ul>
+                  <label className="grid gap-1 mt-3 text-[0.88rem] text-[#f4e3b0]">
+                    <span>Reason for saving it anyway (required, at least 5 characters)</span>
+                    <textarea
+                      value={duplicateReason}
+                      onChange={(e) => setDuplicateReason(e.target.value)}
+                      placeholder="e.g. Same person, inquiring for a second branch."
+                      rows={2}
+                    />
+                  </label>
                   <div className="flex justify-end gap-2 mt-[14px]">
                     <button type="button" onClick={() => setDuplicateMatches(null)} disabled={saving}>Cancel</button>
-                    <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={confirmDuplicate} disabled={saving}>
-                      {saving ? 'Saving…' : 'Confirm'}
+                    <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={confirmDuplicate} disabled={saving || duplicateReason.trim().length < 5}>
+                      {saving ? 'Saving…' : 'Save with reason'}
                     </button>
                   </div>
                 </div>
@@ -1388,7 +1470,7 @@ export default function Inquiries() {
                 <button
                   className={pendingAction.type === 'delete' ? 'danger-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] later:[background:linear-gradient(135deg,_#ef596b,_#c9374a)] later:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--danger)_21%,_transparent)]' : 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]'}
                   onClick={runAction}
-                  disabled={saving}
+                  disabled={saving || (pendingAction.type === 'convert' && !convertSalesId)}
                 >
                   {saving ? 'Processing…' : actionCopy[pendingAction.type]?.button}
                 </button>
@@ -1401,6 +1483,16 @@ export default function Inquiries() {
               <div>
                 <strong>{leadDisplayName(pendingAction.inquiry)}</strong>
                 <p>{actionCopy[pendingAction.type]?.body}</p>
+                {pendingAction.type === 'convert' && (
+                  <Field label="Assigned Sales user (required)">
+                    <select value={convertSalesId} onChange={(e) => setConvertSalesId(e.target.value)} aria-label="Assigned Sales user">
+                      <option value="">Choose a Sales user…</option>
+                      {salesUsers.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name} · {u.open_applicants} open</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
               </div>
             </div>
           </Modal>

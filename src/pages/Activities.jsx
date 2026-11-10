@@ -23,7 +23,7 @@ import { FaXmark } from 'react-icons/fa6';
 import { initialsOf } from '../lib/initials';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
-import { formatDate, titleCase } from '../lib/format';
+import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, ProgressBar, StatusBadge } from '../components/ApiUi';
 import ScheduleWindowFields from '../components/ScheduleActivityFields';
 import {
@@ -37,7 +37,6 @@ import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import { getScheduleConfig, isWorkingDay } from '../lib/scheduleConfig';
 import useScheduleConfig from '../lib/useScheduleConfig';
-import { EARLY_COMPLETE_MESSAGE, EARLY_COMPLETE_TASTING_NOTE, isBeforeScheduledDay } from '../lib/scheduleSessions';
 import MasterSchedule from './MasterSchedule';
 import { activitiesView } from '../lib/navigation';
 
@@ -134,8 +133,10 @@ function isFullyAccomplished(group) {
  */
 function nextActivityTypeFor(group) {
   const index = trackedTypes.findIndex((type) => !activityDone(group, type));
-  if (index <= 0) return null; // nothing Done yet, or all three Done
+  if (index < 0) return null; // all three Done
   const type = trackedTypes[index];
+  // Nothing Done yet: only a No Show of the first activity is rescheduled with Set Again.
+  if (index === 0 && !(group.activities || []).some((item) => item.activity_type === type && item.status === 'no_show')) return null;
   const pendingAnywhere = (group.activities || []).some((item) => item.approval_status === 'pending_admin');
   if (pendingAnywhere) return null;
   const active = (group.activities || []).some((item) => item.activity_type === type
@@ -714,11 +715,17 @@ export default function Activities() {
   const [success, setSuccess] = useState('');
   const [completing, setCompleting] = useState(null);
   // Early completion: the scheduled day (Manila) has not arrived — ask first.
-  const [earlyConfirm, setEarlyConfirm] = useState(null);
   // [View] from the Update modal: filter + highlight one applicant's schedule.
   const [pendingView, setPendingView] = useState(null);
   const [viewFocus, setViewFocus] = useState(null);
-  const [resultNotes, setResultNotes] = useState('');
+  // The Complete form: attendance + proof, or a No Show with its reason.
+  const [completeForm, setCompleteForm] = useState(null);
+  // A ticking clock: Complete unlocks by itself once the scheduled start time arrives.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [archiving, setArchiving] = useState(null); // group being archived
   const [deleting, setDeleting] = useState(null); // group whose ongoing schedule will be cancelled
   // 'table' (data panel) | 'calendar' (set schedules) | 'people' (mini calendar + category chart)
@@ -1129,16 +1136,20 @@ export default function Activities() {
     setActionError('');
     setSuccess('');
     try {
-      await api.post(`/activities/${completing.id}/complete`, {
-        result_notes: resultNotes.trim(),
-        status: 'completed',
-        // Only sent after the early-completion confirmation; the API refuses an
-        // early completion without it.
-        confirm_early: Boolean(completing.confirmEarly),
-      });
+      const body = new FormData();
+      body.append('attended', completeForm.attended);
+      if (completeForm.attended === 'yes') {
+        body.append('actual_started_at', fromManilaInput(completeForm.actual_started_at));
+        body.append('handler_name', completeForm.handler_name.trim());
+        body.append('result_notes', completeForm.result_notes.trim());
+        if (completeForm.proof) body.append('proof', completeForm.proof);
+      } else {
+        body.append('no_show_reason', completeForm.no_show_reason.trim());
+      }
+      const result = await api.post(`/activities/${completing.id}/complete`, body);
       setCompleting(null);
-      setResultNotes('');
-      setSuccess('Activity completed. Admin can now confirm attendance in the applicant tracker.');
+      setCompleteForm(null);
+      setSuccess(result.message || 'Activity completed — waiting for Admin to review the proof.');
       await remote.reload();
     } catch (error) {
       setActionError(firstValidationMessage(error));
@@ -1240,7 +1251,8 @@ export default function Activities() {
     setView(next);
   };
 
-  // Keeps the curved pointer level with the selected row while the panel is open.
+  // Keeps the curved pointer level with the selected row while the panel is open,
+  // and keeps the panel flush under the real header (no gap, no overlap).
   const drawerRef = useRef(null);
   const prevSelectedRef = useRef(null);
   useLayoutEffect(() => {
@@ -1253,6 +1265,7 @@ export default function Activities() {
 
     const place = () => {
       // Measure the real header's bottom edge (border included) instead of a fixed height.
+      // The drawer is portaled to <body>, so this viewport value is exactly its `top`.
       const header = document.querySelector('.herald-header');
       const topEdge = header ? Math.max(0, Math.round(header.getBoundingClientRect().bottom)) : 0;
       drawer.style.setProperty('--drawer-top', `${topEdge}px`);
@@ -1297,11 +1310,11 @@ export default function Activities() {
   useEffect(() => {
     if (!selectedKey) return undefined;
     const onKey = (event) => {
-      if (event.key === 'Escape' && !showCreate && !editing && !completing && !earlyConfirm && !archiving && !deleting) setSelectedKey(null);
+      if (event.key === 'Escape' && !showCreate && !editing && !completing && !archiving && !deleting) setSelectedKey(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedKey, showCreate, editing, completing, earlyConfirm, archiving, deleting]);
+  }, [selectedKey, showCreate, editing, completing, archiving, deleting]);
 
   const applicantName = shown?.activities?.[0]?.applicant?.full_name || shown?.person || 'Applicant';
   const progress = shown ? typeProgress(shown.activities) : [];
@@ -1458,17 +1471,31 @@ export default function Activities() {
                                     {canComplete && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
                                       <button
                                         type="button"
+                                        disabled={nowMs < new Date(activity.starts_at).getTime()}
                                         className="[.activities-page_.row-actions_&]:inline-grid [.activities-page_.row-actions_&]:place-items-center [.activities-page_.row-actions_&]:w-[26px] [.activities-page_.row-actions_&]:min-w-[26px] [.activities-page_.row-actions_&]:h-[26px] [.activities-page_.row-actions_&]:p-0 [.activities-page_.row-actions_&]:border [.activities-page_.row-actions_&]:border-[rgba(57,_255,_176,_0.42)] [.activities-page_.row-actions_&]:rounded-[6px] [.activities-page_.row-actions_&]:[background:rgba(57,_255,_176,_0.1)] [.activities-page_.row-actions_&]:text-[#39ffb0] [.activities-page_.row-actions_&]:text-[11px] [.activities-page_.row-actions_&]:leading-[1] [.activities-page_.row-actions_&]:[box-shadow:none] [.activities-page_.row-actions_&:hover:not(:disabled)]:border-[rgba(57,_255,_176,_0.75)] [.activities-page_.row-actions_&:hover:not(:disabled)]:[background:rgba(57,_255,_176,_0.2)] [.activities-page_.row-actions_&:hover:not(:disabled)]:[transform:none]"
-                                        title="Mark Complete (cannot be undone)"
+                                        title={nowMs < new Date(activity.starts_at).getTime() ? `Available on ${manilaDateTimeLabel(activity.starts_at)}` : 'Mark Complete'}
                                         aria-label="Mark Complete"
                                         onClick={() => {
                                           setActionError('');
-                                          if (isBeforeScheduledDay(activity.starts_at)) setEarlyConfirm(activity);
-                                          else setCompleting(activity);
+                                          setCompleting(activity);
+                                          setCompleteForm({
+                                            attended: 'yes',
+                                            actual_started_at: toManilaInput(activity.starts_at),
+                                            handler_name: activity.assigned_to?.full_name || '',
+                                            result_notes: '',
+                                            no_show_reason: '',
+                                            proof: null,
+                                          });
                                         }}
                                       >
                                         <FaCheck aria-hidden="true" />
                                       </button>
+                                    )}
+                                    {canComplete && activity.approval_status === 'immediate' && ['pending', 'confirmed'].includes(activity.status) && nowMs < new Date(activity.starts_at).getTime() && (
+                                      <span className="muted-note text-muted text-[12px] leading-[1.6]">Available on {manilaDateTimeLabel(activity.starts_at)}</span>
+                                    )}
+                                    {activity.review_status === 'returned' && (
+                                      <span className="text-[12px] leading-[1.5] text-[#fbbf24]">Returned by Admin: {activity.return_reason}</span>
                                     )}
                                   </>
                                 )
@@ -1604,65 +1631,60 @@ export default function Activities() {
         document.body,
       )}
 
-      {earlyConfirm && createPortal(
-        <div className="activities-page [--act-radius-panel:10px] [--act-radius-control:8px] [--act-radius-cell:6px] [--act-pad:22px] [--act-line:var(--border,_#262f45)] [--act-cell:var(--surface-subtle,_rgba(255,_255,_255,_0.03))] [--act-accent:var(--accent,_#7b88ff)] [&_.data-panel]:rounded-[var(--act-radius-panel)] [&_.muted-note]:text-[color:var(--muted,_#8590a8)] [&_.muted-note]:text-[12px] later-4:[&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later-5:[&>:empty]:hidden! [&_.data-panel]:m-0 [&_.duration-presets]:flex [&_.duration-presets]:flex-wrap [&_.duration-presets]:gap-2 [&_.duration-preset]:inline-flex [&_.duration-preset]:items-center [&_.duration-preset]:gap-[6px] [&_.duration-preset]:p-[7px_14px] [&_.duration-preset]:rounded-[var(--act-radius-cell)] [&_.duration-preset]:[border:1px_solid_var(--act-line)] [&_.duration-preset]:[background:transparent] [&_.duration-preset]:text-[color:inherit] [&_.duration-preset]:text-[13px] [&_.duration-preset]:font-[600] [&_.duration-preset]:cursor-pointer [&_.duration-preset]:[transition:background_0.15s_ease,_border-color_0.15s_ease] [&_.duration-preset:hover]:border-[color:var(--act-accent)] [&_.duration-preset.active]:[background:rgba(123,_136,_255,_0.16)] [&_.duration-preset.active]:border-[color:var(--act-accent)] [&_.duration-preset.active]:text-[color:var(--accent,_#aeb6ff)] max-[721px]:later:[--act-pad:16px] [&_tr.is-archived]:opacity-[0.88] [&_tr.is-archived:hover]:opacity-[1] [&_.drawer-archive-btn]:[background:rgba(59,_130,_246,_0.14)] [&_.drawer-archive-btn]:border-[rgba(59,_130,_246,_0.4)] [&_.drawer-archive-btn]:text-[#60a5fa] [&_.drawer-archive-btn:hover:not(:disabled)]:[background:rgba(59,_130,_246,_0.26)] [&_.drawer-archive-btn:hover:not(:disabled)]:text-[#93c5fd] motion-reduce:[&_*]:[transition:none]! activities-modal-root contents [&_.danger-button]:[background:#dc2626] [&_.danger-button]:border-[#b91c1c] [&_.danger-button]:text-[#fff] [&_.danger-button:hover:not(:disabled)]:[filter:brightness(1.08)]">
-        <Modal
-          title={`Complete “${activityLabel(earlyConfirm)}” early?`}
-          onClose={() => setEarlyConfirm(null)}
-          size="small"
-          footer={(
-            <>
-              <button type="button" onClick={() => setEarlyConfirm(null)}>Cancel</button>
-              <button
-                type="button"
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
-                onClick={() => {
-                  setCompleting({ ...earlyConfirm, confirmEarly: true });
-                  setEarlyConfirm(null);
-                }}
-              >
-                Confirm
-              </button>
-            </>
-          )}
-        >
-          <div className="later-2:[&_p]:m-[0_0_8px] [&_p]:leading-[1.5]" role="alert">
-            <p>{EARLY_COMPLETE_MESSAGE}</p>
-            <p className="muted-note text-muted text-[8px] leading-[1.6]">Scheduled: {formatDate(earlyConfirm.starts_at, true)}</p>
-            {earlyConfirm.activity_type === 'product_tasting' && <p><strong>{EARLY_COMPLETE_TASTING_NOTE}</strong></p>}
-          </div>
-        </Modal>
-        </div>,
-        document.body,
-      )}
-
       {completing && createPortal(
         <div className="activities-page [--act-radius-panel:10px] [--act-radius-control:8px] [--act-radius-cell:6px] [--act-pad:22px] [--act-line:var(--border,_#262f45)] [--act-cell:var(--surface-subtle,_rgba(255,_255,_255,_0.03))] [--act-accent:var(--accent,_#7b88ff)] [&_.data-panel]:rounded-[var(--act-radius-panel)] [&_.muted-note]:text-[color:var(--muted,_#8590a8)] [&_.muted-note]:text-[12px] later-4:[&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later-5:[&>:empty]:hidden! [&_.data-panel]:m-0 [&_.duration-presets]:flex [&_.duration-presets]:flex-wrap [&_.duration-presets]:gap-2 [&_.duration-preset]:inline-flex [&_.duration-preset]:items-center [&_.duration-preset]:gap-[6px] [&_.duration-preset]:p-[7px_14px] [&_.duration-preset]:rounded-[var(--act-radius-cell)] [&_.duration-preset]:[border:1px_solid_var(--act-line)] [&_.duration-preset]:[background:transparent] [&_.duration-preset]:text-[color:inherit] [&_.duration-preset]:text-[13px] [&_.duration-preset]:font-[600] [&_.duration-preset]:cursor-pointer [&_.duration-preset]:[transition:background_0.15s_ease,_border-color_0.15s_ease] [&_.duration-preset:hover]:border-[color:var(--act-accent)] [&_.duration-preset.active]:[background:rgba(123,_136,_255,_0.16)] [&_.duration-preset.active]:border-[color:var(--act-accent)] [&_.duration-preset.active]:text-[color:var(--accent,_#aeb6ff)] max-[721px]:later:[--act-pad:16px] [&_tr.is-archived]:opacity-[0.88] [&_tr.is-archived:hover]:opacity-[1] [&_.drawer-archive-btn]:[background:rgba(59,_130,_246,_0.14)] [&_.drawer-archive-btn]:border-[rgba(59,_130,_246,_0.4)] [&_.drawer-archive-btn]:text-[#60a5fa] [&_.drawer-archive-btn:hover:not(:disabled)]:[background:rgba(59,_130,_246,_0.26)] [&_.drawer-archive-btn:hover:not(:disabled)]:text-[#93c5fd] motion-reduce:[&_*]:[transition:none]! activities-modal-root contents [&_.danger-button]:[background:#dc2626] [&_.danger-button]:border-[#b91c1c] [&_.danger-button]:text-[#fff] [&_.danger-button:hover:not(:disabled)]:[filter:brightness(1.08)]">
         <Modal
-          title={`Complete “${activityLabel(completing)}”${completing.confirmEarly ? ' · early' : ''}`}
-          onClose={() => setCompleting(null)}
+          title={`Complete “${activityLabel(completing)}”`}
+          onClose={() => { setCompleting(null); setCompleteForm(null); }}
           size="small"
           footer={(
             <>
               <button onClick={() => setCompleting(null)}>Cancel</button>
               <button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="complete-activity-form" disabled={saving}>
-                {saving ? 'Saving…' : 'Mark completed'}
+                {saving ? 'Saving…' : completeForm?.attended === 'no' ? 'Mark No Show' : 'Submit for Admin review'}
               </button>
             </>
           )}
         >
           <Notice type="error">{actionError}</Notice>
-          <form id="complete-activity-form" onSubmit={completeActivity}>
-            <Field label="Result notes" full required hint="Record the outcome so the next team member has clear context.">
-              <textarea
-                required
-                minLength="3"
-                value={resultNotes}
-                onChange={(e) => setResultNotes(e.target.value)}
-                placeholder="Summarize attendance, feedback, and next steps."
-              />
+          {completeForm && (
+          <form id="complete-activity-form" onSubmit={completeActivity} className="grid gap-[12px] [&_label]:text-[14px]">
+            <p className="m-0 text-[14px] text-muted">Scheduled start: {manilaDateTimeLabel(completing.starts_at)}</p>
+            <Field label="Did the applicant attend?" full required>
+              <select value={completeForm.attended} onChange={(e) => setCompleteForm({ ...completeForm, attended: e.target.value })}>
+                <option value="yes">Yes, the applicant attended</option>
+                <option value="no">No — mark as No Show</option>
+              </select>
             </Field>
+            {completeForm.attended === 'yes' ? (
+              <>
+                <Field label="Actual date and time" full required hint="Not before the scheduled start and not in the future.">
+                  <input
+                    type="datetime-local"
+                    required
+                    value={completeForm.actual_started_at}
+                    min={toManilaInput(completing.starts_at)}
+                    max={toManilaInput(nowMs)}
+                    onChange={(e) => setCompleteForm({ ...completeForm, actual_started_at: e.target.value })}
+                  />
+                </Field>
+                <Field label="Handled by" full required>
+                  <input required value={completeForm.handler_name} onChange={(e) => setCompleteForm({ ...completeForm, handler_name: e.target.value })} placeholder="Who ran the activity" />
+                </Field>
+                <Field label="Notes" full required hint="At least 10 characters: attendance, feedback, next steps.">
+                  <textarea required minLength="10" value={completeForm.result_notes} onChange={(e) => setCompleteForm({ ...completeForm, result_notes: e.target.value })} placeholder="What happened during the activity." />
+                </Field>
+                <Field label="Attendance proof" full required hint="Sign-in sheet or photo (PDF, JPG or PNG).">
+                  <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setCompleteForm({ ...completeForm, proof: e.target.files?.[0] || null })} />
+                </Field>
+              </>
+            ) : (
+              <Field label="No Show reason" full required hint="At least 5 characters. Use Set Again afterwards to reschedule this activity.">
+                <textarea required minLength="5" value={completeForm.no_show_reason} onChange={(e) => setCompleteForm({ ...completeForm, no_show_reason: e.target.value })} placeholder="Why the applicant did not attend." />
+              </Field>
+            )}
           </form>
+          )}
         </Modal>
         </div>,
         document.body,
@@ -1724,7 +1746,14 @@ export default function Activities() {
         document.body,
       )}
 
-      {/* Read panel: same slide-from-right behavior as Leads & inquiries */}
+      {/* Read panel: same slide-from-right behavior as Leads & inquiries.
+          Rendered through a portal into <body> so `position: fixed` is measured against
+          the viewport (an ancestor with transform/animation would otherwise shift it down
+          by the header height a second time). `--drawer-top` = the real header's bottom
+          edge, so the panel sits flush under the header: not over it, not under it.
+          The wrapper keeps the .activities-page scope + --act-* tokens the drawer styles use. */}
+      {createPortal(
+        <div className="activities-page contents [--act-radius-panel:10px] [--act-radius-control:8px] [--act-radius-cell:6px] [--act-pad:22px] [--act-line:var(--border,_#262f45)] [--act-cell:var(--surface-subtle,_rgba(255,_255,_255,_0.03))] [--act-accent:var(--accent,_#7b88ff)] [&_.muted-note]:text-[color:var(--muted,_#8590a8)] [&_.muted-note]:text-[12px] [&_.drawer-archive-btn]:[background:rgba(59,_130,_246,_0.14)] [&_.drawer-archive-btn]:border-[rgba(59,_130,_246,_0.4)] [&_.drawer-archive-btn]:text-[#60a5fa] [&_.drawer-archive-btn:hover:not(:disabled)]:[background:rgba(59,_130,_246,_0.26)] [&_.drawer-archive-btn:hover:not(:disabled)]:text-[#93c5fd] motion-reduce:[&_*]:[transition:none]!">
       <aside
         ref={drawerRef}
         className={`inquiry-drawer [--drawer-bg:#0a0e18] [--drawer-border:#1a2133] [--drawer-text:#e6e9f2] [--drawer-muted:#8590a8] [--drawer-accent:#7b88ff] [--drawer-accent-2:#38bdf8] fixed top-[var(--drawer-top,_var(--header-height,_76px))] right-0 bottom-0 z-40 w-[min(440px,_100vw)] flex flex-col [background:radial-gradient(circle_at_100%_0%,_color-mix(in_srgb,_var(--drawer-accent)_16%,_transparent),_transparent_22%),_radial-gradient(circle_at_100%_100%,_color-mix(in_srgb,_var(--drawer-accent-2)_10%,_transparent),_transparent_20%),_var(--drawer-bg)] text-[color:var(--drawer-text)] [border-left:1px_solid_var(--drawer-border)] [box-shadow:-24px_0_48px_rgba(0,_0,_0,_0.35)] [transform:translate3d(100%,_0,_0)] [visibility:hidden] [will-change:transform] [transition:transform_0.5s_cubic-bezier(0.32,_0.72,_0,_1),_visibility_0s_linear_0.5s] [&.open]:[transform:translate3d(0,_0,_0)] [&.open]:[visibility:visible] [&.open]:[transition-delay:0s] motion-reduce:later:[transition:none] ${selectedGroup ? ' open' : ''}`}
@@ -1793,6 +1822,12 @@ export default function Activities() {
                       </div>
                       <small>{formatDate(activity.starts_at, true)} · {formatDuration(activity.duration_minutes)}{activity.venue ? ` · ${activity.venue}` : ''}</small>
                       {activity.result_notes && <p>{activity.result_notes}</p>}
+                      {activity.status === 'no_show' && activity.no_show_reason && <p>No Show: {activity.no_show_reason}</p>}
+                      {activity.completed_before_schedule && (
+                        <span className="inline-flex w-fit p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] text-[#fbbf24] text-[11px] font-[700]">Completed before schedule (legacy)</span>
+                      )}
+                      {activity.review_status === 'submitted' && <small>Waiting for Admin to review the proof</small>}
+                      {activity.review_status === 'returned' && <small className="text-[#fbbf24]">Returned by Admin: {activity.return_reason}</small>}
                       {role === 'admin' && ['pending', 'confirmed'].includes(activity.status) && activity.approval_status !== 'rejected' && <div className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative">
                         <button type="button" onClick={() => openEdit(activity)}>Adjust</button>
                         <button type="button" onClick={() => setDeleting({ ...shown, current: activity })}>Cancel schedule</button>
@@ -1820,6 +1855,9 @@ export default function Activities() {
           </>
         )}
       </aside>
+        </div>,
+        document.body,
+      )}
 
       {view === 'table' && (
         <p className="muted-note text-muted text-[8px] leading-[1.6] [.activities-page_&]:mt-[14px]">

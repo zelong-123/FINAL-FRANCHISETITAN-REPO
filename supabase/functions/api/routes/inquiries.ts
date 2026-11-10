@@ -15,6 +15,10 @@ import {
 } from '../services/inquiryModel.ts';
 import { assignPublicCode } from '../services/users.ts';
 import { renameParticipantName } from '../services/scheduleNames.ts';
+import { activeSalesUser, requireReason } from '../services/accountability.ts';
+import { logStageChange } from '../services/applicantStage.ts';
+import { assertBrandUnlocked } from '../services/brandConfirmation.ts';
+import { applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, INQUIRY_DAYS_SQL, inquiryMonitor } from '../services/monitoring.ts';
 
 export const inquiryRoutes = new Hono<AppEnv>();
 
@@ -62,12 +66,17 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
   const name = roleName(c);
   const archived = boolParam(q.archived);
   if (archived && !['admin', 'marketing'].includes(name)) abort(403, 'Your role is not allowed to perform this action.');
+  await deliverDueReminders(db, user);
 
   const f = new Filter();
   visibleTo(f, user);
   let columns = `franchise_inquiries.*, ${relations('franchise_inquiries')},
     (select jsonb_build_object('id', ap.id, 'inquiry_id', ap.inquiry_id, 'status', ap.status, 'applicant_code', ap.applicant_code)
-     from applicants ap where ap.inquiry_id = franchise_inquiries.id limit 1) as applicant`;
+     from applicants ap where ap.inquiry_id = franchise_inquiries.id limit 1) as applicant,
+    ${INQUIRY_DAYS_SQL('franchise_inquiries')} as days_in_status,
+    (select count(*)::int from follow_ups fu where fu.followable_type = 'inquiry' and fu.followable_id = franchise_inquiries.id) as follow_up_count,
+    (select max(fu.next_follow_up_at) from follow_ups fu where fu.followable_type = 'inquiry' and fu.followable_id = franchise_inquiries.id
+       and fu.id = (select max(x.id) from follow_ups x where x.followable_type = 'inquiry' and x.followable_id = franchise_inquiries.id)) as next_follow_up_at`;
   const columnParams: unknown[] = [];
 
   if (archived) {
@@ -92,8 +101,7 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
   if (boolParam(q.encoded_by_me)) f.add('franchise_inquiries.encoded_by_user_id = ?', user.id);
   if (q.source) f.add('franchise_inquiries.source = ?', q.source);
   if (q.brand_id) f.add('franchise_inquiries.preferred_brand_id = ?', intParam(q.brand_id));
-  if (q.from) f.add('franchise_inquiries.inquiry_date >= ?::date', q.from);
-  if (q.to) f.add('franchise_inquiries.inquiry_date <= ?::date', q.to);
+  applyDateRange(f, q, { inquiry: 'franchise_inquiries.inquiry_date' }, 'inquiry');
   if (q.year) f.add('extract(year from franchise_inquiries.inquiry_date) = ?::int', intParam(q.year));
   if (q.month) f.add('extract(month from franchise_inquiries.inquiry_date) = ?::int', intParam(q.month));
 
@@ -118,6 +126,7 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
   return paginate(c, db, {
     columns, columnParams, from: 'franchise_inquiries', where: f.clauses, params: f.params,
     orderBy: order.join(', '), orderParams, perPage: perPage(c, 20),
+    map: (row) => ({ ...row, ...inquiryMonitor(row) }),
   });
 });
 
@@ -138,12 +147,67 @@ inquiryRoutes.post('/inquiries', role('marketing'), async (c) => {
     preferred_brand_id: ['required', 'integer', 'exists:brands,id'],
     remarks: ['nullable', 'string'],
     inquiry_date: ['nullable', 'date'],
+    duplicate_reason: ['nullable', 'string', 'max:2000'],
   });
-  const inquiry = await createInquiry(db, { ...v, status: 'new', encoded_by_user_id: user.id, inquiry_date: v.inquiry_date ?? manilaToday() });
+  // Same normalized phone or email as an active inquiry or applicant: 409 with the matches,
+  // saved only once the user gives a reason, which is kept with the record.
+  const { duplicate_reason: duplicateInput, ...fields } = v;
+  const matches = await findDuplicates(db, fields.phone, fields.email);
+  let duplicate: Row = {};
+  if (matches.length) {
+    if (!String(duplicateInput ?? '').trim()) {
+      return c.json({
+        message: 'Possible duplicate: this phone number or email already belongs to an active inquiry or applicant. Give a reason to save it anyway.',
+        matches,
+        errors: { duplicate_reason: ['Give a reason to save this possible duplicate.'] },
+      }, 409);
+    }
+    duplicate = { duplicate_reason: requireReason(duplicateInput, 'duplicate_reason', 'a duplicate reason'), duplicate_matches: JSON.stringify(matches) };
+  }
+  const inquiry = await createInquiry(db, { ...fields, ...duplicate, status: 'new', encoded_by_user_id: user.id, inquiry_date: fields.inquiry_date ?? manilaToday() });
   await audit(c, db, 'inquiry.created', { type: INQUIRY_MODEL, id: inquiry.id }, null, inquiry);
+  if (matches.length) {
+    await audit(c, db, 'inquiry.duplicate_confirmed', { type: INQUIRY_MODEL, id: inquiry.id }, null, { duplicate_reason: inquiry.duplicate_reason, matches });
+  }
   await notifyRoles(db, ['admin'], 'inquiry_created', 'New inquiry recorded', `${inquiry.lead_name} was added to the Leads & inquiries pipeline.`, { inquiry_id: inquiry.id }, user);
   return ok(c, await withRelations(db, inquiry.id), 'Inquiry recorded.', 201);
 });
+
+/** Digits only, compared on the last 10 (09171234567, +639171234567 and 9171234567 match). */
+export const phoneKey = (value: unknown) => String(value ?? '').replace(/\D/g, '').slice(-10);
+const PHONE_SQL = (column: string) => `right(regexp_replace(coalesce(${column}, ''), '\\D', '', 'g'), 10)`;
+
+/** Active inquiries and applicants that share the normalized phone or email. */
+export async function findDuplicates(db: Db, phone: unknown, email: unknown, ignoreInquiryId: number | null = null): Promise<Row[]> {
+  const key = phoneKey(phone);
+  const mail = String(email ?? '').trim().toLowerCase();
+  if (key.length < 7 && !mail) return [];
+  const phoneParam = key.length >= 7 ? key : null;
+  const mailParam = mail || null;
+  const inquiries = await db.query(
+    `select id, lead_code as code, lead_name as name, status, inquiry_date as date,
+       (${PHONE_SQL('phone')} = $1) as phone_match, (lower(trim(coalesce(email, ''))) = $2) as email_match
+     from franchise_inquiries
+     where archived_at is null and status <> 'rejected' and ($3::bigint is null or id <> $3::bigint)
+       and ((${PHONE_SQL('phone')} = $1) or (lower(trim(coalesce(email, ''))) = $2))
+     order by id limit 10`,
+    [phoneParam, mailParam, ignoreInquiryId],
+  );
+  const applicants = await db.query(
+    `select id, applicant_code as code, full_name as name, status, application_date as date,
+       (${PHONE_SQL('phone')} = $1) as phone_match, (lower(trim(coalesce(email, ''))) = $2) as email_match
+     from applicants
+     where archived_at is null and status <> 'rejected' and ($3::bigint is null or inquiry_id is distinct from $3::bigint)
+       and ((${PHONE_SQL('phone')} = $1) or (lower(trim(coalesce(email, ''))) = $2))
+     order by id limit 10`,
+    [phoneParam, mailParam, ignoreInquiryId],
+  );
+  const shape = (type: string) => (r: Row) => ({
+    type, id: r.id, code: r.code, name: r.name, status: r.status, date: r.date,
+    matched_on: [r.phone_match ? 'phone' : null, r.email_match ? 'email' : null].filter(Boolean),
+  });
+  return [...inquiries.map(shape('inquiry')), ...applicants.map(shape('applicant'))];
+}
 
 inquiryRoutes.get('/inquiries/endorsement-history', marketingAdminSales, async (c) => {
   const { db } = c.get('deps');
@@ -195,7 +259,29 @@ inquiryRoutes.get('/inquiries/:inquiry', marketingAdminSales, async (c) => {
     );
     applicantJsonOut = { ...applicantJson(applicant), status_history: history };
   }
-  return ok(c, { ...row, applicant: applicantJsonOut });
+  return ok(c, { ...row, applicant: applicantJsonOut, follow_ups: await followUpsOf(db, 'inquiry', inquiry.id) });
+});
+
+inquiryRoutes.post('/inquiries/:inquiry/follow-ups', marketingAdminSales, async (c) => {
+  const { db } = c.get('deps');
+  const user = c.get('user');
+  if (roleName(c) !== 'marketing') abort(403, 'Marketing logs the follow-ups of an inquiry.');
+  const inquiry = await loadInquiry(db, routeId(c, 'inquiry'));
+  await ensureVisible(c, db, inquiry);
+  ensureNotLockedForMarketing(c, inquiry);
+  if (inquiry.archived_at || ['rejected', 'closed'].includes(inquiry.status)) fail('inquiry', 'An archived, rejected or closed inquiry takes no follow-ups.');
+  const previous = (await db.query(`select count(*)::int as n from follow_ups where followable_type = 'inquiry' and followable_id = $1`, [inquiry.id]))[0].n;
+  const followUp = await db.tx(async (tx) => {
+    const row = await createFollowUp(tx, 'inquiry', inquiry.id, user, await readInput(c));
+    await audit(c, tx, 'inquiry.follow_up_logged', { type: INQUIRY_MODEL, id: inquiry.id }, null, row);
+    // The first follow-up marks a new inquiry as contacted.
+    if (previous === 0 && inquiry.status === 'new') {
+      const saved = await updateInquiry(tx, inquiry, { status: 'contacted' });
+      await audit(c, tx, 'inquiry.contacted', { type: INQUIRY_MODEL, id: inquiry.id }, { status: 'new' }, { status: saved.status, follow_up_id: row.id });
+    }
+    return row;
+  });
+  return ok(c, { follow_up: followUp, inquiry: await withRelations(db, inquiry.id), follow_ups: await followUpsOf(db, 'inquiry', inquiry.id) }, 'Follow-up logged.', 201);
 });
 
 inquiryRoutes.put('/inquiries/:inquiry', marketingAdmin, async (c) => {
@@ -224,6 +310,11 @@ inquiryRoutes.put('/inquiries/:inquiry', marketingAdmin, async (c) => {
     inquiry_date: ['sometimes', 'date'],
   });
 
+  // A linked applicant's confirmed (or legacy) brand is locked: the edit cannot overwrite it.
+  const [linked] = await db.query(`select * from applicants where inquiry_id = $1 limit 1`, [id]);
+  if (linked && Number(v.preferred_brand_id) !== Number(linked.preferred_brand_id ?? 0)) {
+    await assertBrandUnlocked(db, linked, 'preferred_brand_id');
+  }
   const saved = await updateInquiry(db, inquiry, v);
   await syncLinkedApplicant(db, saved, v);
   await audit(c, db, 'inquiry.updated', { type: INQUIRY_MODEL, id }, inquiry, saved);
@@ -295,30 +386,36 @@ inquiryRoutes.post('/inquiries/:inquiry/convert', adminOnly, async (c) => {
   const [existing] = await db.query(`select * from applicants where inquiry_id = $1 limit 1`, [id]);
   if (existing) return ok(c, applicantJson(existing), 'Inquiry was already converted.');
 
-  const v = await validate(db, await readInput(c), { notes: ['nullable', 'string'], application_date: ['nullable', 'date'] });
+  const v = await validate(db, await readInput(c), {
+    notes: ['nullable', 'string'], application_date: ['nullable', 'date'], assigned_sales_user_id: ['nullable', 'integer'],
+  });
+  // Admin must choose the active Sales user who will handle the applicant.
+  const salesUser = await activeSalesUser(db, v.assigned_sales_user_id, 'assigned_sales_user_id');
   const applicant = await db.tx(async (tx) => {
     const [row] = await tx.query(
-      `insert into applicants (inquiry_id, preferred_brand_id, full_name, email, phone, address, status, application_date, notes)
-       values ($1, $2, $3, $4, $5, $6, 'converted', $7, $8) returning *`,
-      [id, inquiry.preferred_brand_id, inquiry.lead_name, inquiry.email, inquiry.phone, inquiry.address, v.application_date ?? manilaToday(), v.notes ?? inquiry.remarks],
+      `insert into applicants (inquiry_id, preferred_brand_id, full_name, email, phone, address, status, application_date, notes, assigned_sales_user_id, assigned_sales_at, assigned_sales_by_user_id)
+       values ($1, $2, $3, $4, $5, $6, 'converted', $7, $8, $9, now(), $10) returning *`,
+      [id, inquiry.preferred_brand_id, inquiry.lead_name, inquiry.email, inquiry.phone, inquiry.address, v.application_date ?? manilaToday(), v.notes ?? inquiry.remarks, salesUser.id, user.id],
     );
     row.applicant_code = await assignPublicCode(tx, 'applicants', 'applicant_code', 'APL', row.id);
     await tx.query(
       `insert into applicant_status_histories (applicant_id, from_status, to_status, remarks, changed_by_user_id) values ($1, null, 'converted', 'Created from inquiry.', $2)`,
       [row.id, user.id],
     );
+    await logStageChange(tx, row.id, null, 'converted', user.id, 'Created from inquiry.', 'converted', { inquiry_id: id, lead_code: inquiry.lead_code }, {
+      step: 'conversion', new_values: { status: 'converted', inquiry_id: id, lead_code: inquiry.lead_code },
+    });
+    await logStageChange(tx, row.id, 'converted', 'converted', user.id, `Assigned to ${salesUser.full_name}.`, 'sales_assigned', {}, {
+      step: 'assignment', old_values: { assigned_sales_user_id: null }, new_values: { assigned_sales_user_id: salesUser.id, assigned_sales: salesUser.full_name },
+    });
     await updateInquiry(tx, inquiry, { status: 'converted', converted_from_status: inquiry.status });
     return row;
   });
 
-  await audit(c, db, 'inquiry.converted', { type: INQUIRY_MODEL, id }, null, { applicant_id: applicant.id });
-  // The assigned Sales person gets a red dot on [Update] until the record is opened.
-  const message = `${applicant.applicant_code} (${applicant.full_name}) is ready for the qualification assessment.`;
-  if (inquiry.endorsed_to_user_id) {
-    await notifyUser(db, inquiry.endorsed_to_user_id, 'assessment_pending', 'Applicant ready for assessment', message, { applicant_id: applicant.id }, user);
-  } else {
-    await notifyRoles(db, ['sales'], 'assessment_pending', 'Applicant ready for assessment', message, { applicant_id: applicant.id }, user);
-  }
+  await audit(c, db, 'inquiry.converted', { type: INQUIRY_MODEL, id }, null, { applicant_id: applicant.id, assigned_sales_user_id: salesUser.id });
+  // The assigned Sales user gets the alert (and the red dot on [Update] until the record is opened).
+  const message = `${applicant.applicant_code} (${applicant.full_name}) is ready for the qualification assessment. You are the assigned Sales user.`;
+  await notifyUser(db, salesUser.id, 'assessment_pending', 'Applicant ready for assessment', message, { applicant_id: applicant.id }, user);
   const [brand] = await db.query(`select * from brands where id = $1`, [applicant.preferred_brand_id]);
   return ok(c, { ...applicantJson(applicant), preferred_brand: brand ?? null, inquiry: await fresh(db, id) }, 'Inquiry converted to applicant.', 201);
 });
@@ -351,12 +448,14 @@ inquiryRoutes.post('/inquiries/:inquiry/reject', adminOnly, async (c) => {
   await ensureVisible(c, db, inquiry);
   if ((await db.query(`select 1 from applicants where inquiry_id = $1 limit 1`, [id])).length) fail('inquiry', 'Reject the linked applicant from the applicant pipeline instead.');
   if (inquiry.status === 'rejected') return ok(c, inquiry, 'Inquiry is already rejected.');
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  const reason = requireReason(v.reason, 'reason', 'a rejection reason');
 
-  const updated = await updateInquiry(db, inquiry, { status: 'rejected' });
+  const updated = await updateInquiry(db, inquiry, { status: 'rejected', rejected_reason: reason, rejected_at: new Date(), rejected_by_user_id: user.id });
   const log = await archiveInquiry(db, updated, user.id);
   const saved = await fresh(db, id);
   await audit(c, db, 'inquiry.rejected', { type: INQUIRY_MODEL, id }, inquiry, saved);
-  await notifyRoles(db, ['admin'], 'inquiry_rejected', 'Inquiry rejected', `${inquiry.lead_code} (${inquiry.lead_name}) was rejected and moved to the archive.`, { inquiry_id: id, archive_id: log?.archive_id ?? null }, user);
+  await notifyRoles(db, ['admin'], 'inquiry_rejected', 'Inquiry rejected', `${inquiry.lead_code} (${inquiry.lead_name}) was rejected and moved to the archive. Reason: ${reason}`, { inquiry_id: id, archive_id: log?.archive_id ?? null }, user);
   return ok(c, { ...saved, current_archive_log: log }, 'Inquiry rejected and archived.');
 });
 

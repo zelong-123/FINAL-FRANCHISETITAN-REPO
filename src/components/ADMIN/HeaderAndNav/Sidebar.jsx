@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { FaAngleLeft, FaAngleRight, FaRightFromBracket, FaStore } from 'react-icons/fa6';
+import { FaAngleLeft, FaAngleRight, FaRightFromBracket } from 'react-icons/fa6';
 import AppIconImg from '../../../assets/icon.png.png';
 import { useAuth } from '../../../context/AuthContext';
 import { titleCase } from '../../../lib/format';
@@ -35,19 +35,6 @@ export default function Sidebar({ isCollapsed, setIsCollapsed, onNavigate, unrea
         </div>
 
         <div className="min-h-[31px] flex items-center gap-2 overflow-hidden m-[13px_6px_11px] p-[0_11px] border border-line rounded-[999px] text-accent-text [background:color-mix(in_srgb,_var(--accent)_6%,_transparent)] text-[9px] font-[800] tracking-[.08em] uppercase whitespace-nowrap [.sidebar-collapsed_&]:hidden max-[861px]:later:[.sidebar-collapsed_&]:flex"><span className="w-[7px] h-[7px] flex-[0_0_auto] later:rounded-[50%] later:[background:var(--success)] [box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--success)_12%,_transparent)]" />{titleCase(role || 'user')} workspace</div>
-        {/* Branch Portal Login: Admin only (removed for Marketing and Logistics;
-            Sales never had it). The branch login page itself is unchanged. */}
-        {role === 'admin' && (
-          <NavLink
-            to="/branch-portal/login"
-            onClick={onNavigate}
-            className="side-link relative min-h-[50px] flex items-center gap-[11px] w-full overflow-hidden p-[6px_10px] border border-transparent rounded-[14px] text-muted [background:transparent] text-left whitespace-nowrap [transition:color_.2s_ease,_background_.2s_ease,_border-color_.2s_ease,_transform_.2s_ease,_box-shadow_.2s_ease] [&::before]:[content:''] [&::before]:absolute [&::before]:inset-[7px_auto_7px_0] [&::before]:w-[3px] [&::before]:rounded-[999px] [&::before]:[background:linear-gradient(var(--accent),_var(--accent-2))] [&::before]:opacity-[0] [&::before]:[transform:scaleY(.4)] [&::before]:[transition:opacity_.2s_ease,_transform_.2s_ease] hover:text-text hover:[background:var(--hover)] hover:[transform:translateX(2px)] [&.active]:text-text [&.active]:border-[color:color-mix(in_srgb,_var(--accent)_18%,_var(--border))] later:[&.active]:[background:linear-gradient(135deg,_color-mix(in_srgb,_var(--accent)_12%,_transparent),_color-mix(in_srgb,_var(--accent-2)_8%,_transparent))] [&.active]:[box-shadow:inset_0_1px_0_color-mix(in_srgb,_#fff_5%,_transparent)] [&.active::before]:opacity-[1] [&.active::before]:[transform:scaleY(1)]"
-            title={isCollapsed ? 'Branch Portal Login' : undefined}
-          >
-            <span className="side-link-icon w-[34px] h-[34px] grid place-items-center flex-[0_0_auto] rounded-[11px] text-text-secondary [background:var(--surface-subtle)] [transition:color_.2s_ease,_background_.2s_ease,_transform_.2s_ease] [.side-link:hover_&]:[transform:scale(1.04)] [.side-link.active_&]:text-[#fff] [.side-link.active_&]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [.side-link.active_&]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_20%,_transparent)]"><FaStore aria-hidden="true" /></span>
-            <span className="side-link-copy min-w-0 flex flex-col gap-[3px] [&_strong]:overflow-hidden [&_strong]:text-[color:inherit] later:[&_strong]:text-[11px] later:[&_strong]:font-[720] [&_strong]:text-ellipsis [&_small]:overflow-hidden [&_small]:text-muted [&_small]:text-[8px] [&_small]:text-ellipsis"><strong>Branch Portal Login</strong><small>Franchisee sign in</small></span>
-          </NavLink>
-        )}
 
         <nav className="min-h-0 flex flex-1 flex-col gap-[14px] overflow-x-hidden overflow-y-auto p-[5px_2px_16px]">
           {groups.map((group) => (

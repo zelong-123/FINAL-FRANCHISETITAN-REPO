@@ -21,6 +21,6 @@ const origins = (Deno.env.get('ALLOWED_ORIGINS') ?? '*').split(',').map((o) => o
 
 const files = supabaseFiles(env('SUPABASE_URL'), secretKey);
 
-const app = createApp({ db, auth, files, costingEnabled: Deno.env.get('FEATURE_COSTING') === 'true' }, origins);
+const app = createApp({ db, auth, files, costingEnabled: Deno.env.get('FEATURE_COSTING') === 'true', paymentAdvanced: Deno.env.get('FEATURE_PAYMENT_ADVANCED') === 'true' }, origins);
 
 Deno.serve(app.fetch);

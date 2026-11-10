@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaArrowRight,
   FaChartLine,
@@ -40,10 +40,12 @@ export default function Log() {
   const { loginForPortal, isAuthenticated, role, loading } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [keepSignedIn, setKeepSignedIn] = useState(false);
-  const [error, setError] = useState('');
+  // A session signed out for being on the wrong portal arrives with a short notice.
+  const [error, setError] = useState(() => location.state?.portalNotice || '');
   const [showPassword, setShowPassword] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [loggedUser, setLoggedUser] = useState(null);
@@ -182,7 +184,7 @@ export default function Log() {
           </form>
 
           {import.meta.env.DEV && <p className="mt-3 mb-0 text-[10px] leading-normal text-accent-text">Development seed: admin@franchisetitan.local / Password123!</p>}
-          <p className="mt-4 mb-0 border-t border-line pt-3.5 text-[9px] leading-[1.6] text-muted">Authorized staff only. Activity may be logged for security and audit purposes. <Link to="/branch-login">Branch Portal sign in</Link></p>
+          <p className="mt-4 mb-0 border-t border-line pt-3.5 text-[9px] leading-[1.6] text-muted">Authorized staff only. Activity may be logged for security and audit purposes.</p>
         </div>
 
         <div className="relative min-w-0 overflow-hidden bg-cover bg-center after:absolute after:inset-0 after:bg-[linear-gradient(110deg,color-mix(in_srgb,#07101f_78%,transparent)_0%,rgba(5,12,28,.42)_58%,rgba(5,12,28,.18)_100%)] after:content-[''] max-[940px]:min-h-[390px] max-[620px]:min-h-[360px] max-[450px]:hidden" style={{ backgroundImage: `url(${FranchiseImg})` }}>

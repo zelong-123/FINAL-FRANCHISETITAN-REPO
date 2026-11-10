@@ -250,15 +250,28 @@ export default function Header({ onMenu, mobileOpen }) {
           )}
         </div>
 
+        {/* Profile button: round avatar + white initials, applies to every role */}
         <button
           type="button"
-          className="flex items-center [.header-right_&]:min-h-[40px] gap-[10px] min-w-0 ml-[6px] pl-[13px] border-l border-l-line later:[button&]:border-0 later:[button&]:border-l later:[button&]:border-l-line later:[button&]:rounded-[0] later:[button&]:[background:transparent] [button&]:[font-family:inherit] later:[button&]:[font-size:inherit] later:[button&]:[font-weight:inherit] [button&]:[font-style:inherit] [button&]:[line-height:inherit] [button&]:text-left later:[button&]:cursor-pointer [button&:hover]:[background:var(--hover)] [button&:focus-visible]:[outline:2px_solid_var(--accent)] [button&:focus-visible]:[outline-offset:2px] [&>div]:min-w-0 [&>div]:flex [&>div]:flex-col [&>div]:gap-[3px] [&_strong]:max-w-[170px] [&_strong]:overflow-hidden [&_strong]:text-text later-2:[&_strong]:text-[10px] later-2:[&_strong]:font-[730] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_span]:text-muted later:[&_span]:text-[8px] max-[1121px]:later:[&_strong]:max-w-[120px] max-[681px]:later:[&>div]:hidden max-[681px]:later:ml-[1px] max-[681px]:later:pl-2"
+          className="group flex items-center gap-[10px] min-w-0 ml-[6px] py-[4px] pl-[4px] pr-[12px] border border-transparent rounded-full text-left [background:transparent] [font-family:inherit] cursor-pointer [transition:background_.18s_ease,_border-color_.18s_ease] hover:[background:var(--hover)] hover:border-line focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[681px]:pr-[4px] max-[681px]:ml-[1px]"
           title={`${user?.full_name || 'User'} · ${titleCase(role)}`}
           onClick={() => setProfileOpen(true)}
           aria-haspopup="dialog"
         >
-          <span className="w-[36px] h-[36px] grid place-items-center flex-[0_0_auto] border border-[color:color-mix(in_srgb,_var(--accent)_24%,_var(--border))] rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_18%,_transparent)] text-[10px] font-[850]" aria-hidden="true">{initials(user?.full_name)}</span>
-          <div><strong>{user?.full_name || 'User'}</strong><span>{titleCase(role)} workspace</span></div>
+          <span
+            className="w-[38px] h-[38px] shrink-0 grid place-items-center rounded-full border-2 border-[color:color-mix(in_srgb,_var(--accent)_35%,_transparent)] text-[#fff] text-[15px] font-bold leading-none uppercase select-none [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_6px_16px_color-mix(in_srgb,_var(--accent)_28%,_transparent)]"
+            aria-hidden="true"
+          >
+            {initials(user?.full_name)}
+          </span>
+          <div className="min-w-0 flex flex-col gap-[2px] max-[681px]:hidden">
+            <strong className="block max-w-[170px] overflow-hidden text-text text-[11px] font-[760] leading-tight text-ellipsis whitespace-nowrap max-[1121px]:max-w-[120px]">
+              {user?.full_name || 'User'}
+            </strong>
+            <span className="block max-w-[170px] overflow-hidden text-muted text-[9px] leading-tight text-ellipsis whitespace-nowrap max-[1121px]:max-w-[120px]">
+              {titleCase(role)} workspace
+            </span>
+          </div>
         </button>
       </div>
 

@@ -6,6 +6,7 @@ import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, manilaToday, updateRow } from '../lib/http.ts';
 import { APPLICANT_MODEL, loadPlan } from './applicantModel.ts';
 import { notifyRoles } from './notifications.ts';
+import { notifyAssignedSales, requireReason } from './accountability.ts';
 
 const MAX_TOTAL_CENTS = 50_000_000;
 const MAX_ENTRY_CENTS = 99_999_900;
@@ -49,7 +50,7 @@ const applyDiscount = (originalCents: number, percent: number) => {
   const p = Math.max(0, Math.min(100, percent));
   return p === 0 ? originalCents : Math.trunc((originalCents * (100 - p) + 50) / 100);
 };
-const money2 = (cents: number) => `₱${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const money2 = (cents: number) => `₱${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const moneyLabel = (cents: number) => (cents % 100 === 0 ? `₱${(cents / 100).toLocaleString('en-US')}` : money2(cents));
 
 // ---- InstallmentRules ----
@@ -130,7 +131,7 @@ function schedule(total: number, saved: Row[], frequency: string | null, customD
 }
 
 // ---- reads ----
-const state = (a: Row): string | null => (STATES.includes(a.payment_stage_state) ? a.payment_stage_state : null);
+export const state = (a: Row): string | null => (STATES.includes(a.payment_stage_state) ? a.payment_stage_state : null);
 const canonicalType = (type: unknown): string | null => {
   const t = String(type ?? '').trim();
   return t === '' ? null : LEGACY_TYPES[t] ?? t;
@@ -151,7 +152,7 @@ const totalCents = (a: Row, plan: Row | null) => toCents(plan?.total_required_am
 const originalCents = (a: Row, plan: Row | null) => toCents(plan?.total_required_original_amount ?? a.total_required_original_amount ?? plan?.total_required_amount ?? a.total_required_amount ?? 0);
 const discountPercent = (a: Row, plan: Row | null) => Math.max(0, Math.min(100, Number(plan?.total_required_discount_percent ?? a.total_required_discount_percent ?? 0)));
 
-async function totals(db: Db, a: Row, plan: Row | null) {
+export async function totals(db: Db, a: Row, plan: Row | null) {
   const payments = await db.query(`select * from payments where applicant_id = $1 order by payment_date, id`, [a.id]);
   let verified = 0;
   let legacyPending = 0;
@@ -177,7 +178,7 @@ async function totals(db: Db, a: Row, plan: Row | null) {
   };
 }
 
-const pendingRequest = async (db: Db, a: Row): Promise<Row | null> => (await db.query(
+export const pendingRequest = async (db: Db, a: Row): Promise<Row | null> => (await db.query(
   `select pr.*, (select u.full_name from users u where u.id = pr.requested_by_user_id) as requested_by_name
    from payment_requests pr where pr.applicant_id = $1 and pr.status = 'pending' order by pr.id desc limit 1`, [a.id],
 ))[0] ?? null;
@@ -367,7 +368,7 @@ export async function stagePayload(db: Db, a: Row, user: Row): Promise<Row> {
 }
 
 // ---- guards ----
-const lock = async (db: Db, id: number): Promise<Row> => {
+export const lock = async (db: Db, id: number): Promise<Row> => {
   const [a] = await db.query(`select * from applicants where id = $1 for update`, [id]);
   if (!a) abort(404, 'Record not found.');
   return a;
@@ -433,8 +434,9 @@ export async function syncLedger(db: Db, p: Row) {
   );
 }
 
+// Sales-facing alerts go to the applicant's assigned Sales user only.
 const notifySales = (db: Db, a: Row, type: string, title: string, message: string, actor: Row) =>
-  notifyRoles(db, ['sales'], type, title, message, { applicant_id: a.id, by: actor.full_name }, actor);
+  notifyAssignedSales(db, a, type, title, message, { by: actor.full_name }, actor);
 
 const auditMoney = (db: Db, actor: Row, action: string, id: number, oldValues: Row, newValues: Row) => db.query(
   `insert into audit_logs (user_id, action, auditable_type, auditable_id, old_values, new_values, created_at) values ($1, $2, $3, $4, $5, $6, now())`,
@@ -644,7 +646,7 @@ export function completePayment(db: Db, id: number, actor: Row, remarksText: str
     const t = await totals(tx, locked, plan);
     if (originalCents(locked, plan) <= 0) fail('payments', 'Set the Total required before completing this stage.');
     if (t.legacy_pending_cents > 0) fail('payments', 'A payment is still awaiting review. Confirm it before completing the stage.');
-    if (t.verified_cents < t.total_cents || t.balance_cents > 0) fail('payments', `COMPLETED unlocks only when Total paid equals the Total required. Remaining: ${money2(t.balance_cents)}.`);
+    if (t.verified_cents < t.total_cents || t.balance_cents > 0) fail('payments', `COMPLETED unlocks only when the Payment Record is Fully Paid. Remaining: ${money2(t.balance_cents)}.`);
     const [latest] = await tx.query(`select max(payment_date) as day from payments where applicant_id = $1 and status = 'verified'`, [id]);
     const fresh = (await updateRow(tx, 'applicants', id, {
       payment_stage_state: 'confirmed', payments_fully_paid_on: latest?.day ?? manilaToday(), payment_confirmed_at: new Date(),
@@ -699,8 +701,7 @@ export function returnToSales(db: Db, id: number, actor: Row, note: string): Pro
     const locked = await lock(tx, id);
     assertNotArchived(locked);
     if (state(locked) !== 'for_review') fail('payments', 'Only a Sales Report awaiting confirmation can be returned.');
-    const text = note.trim();
-    if (!text) fail('note', 'Write a note so Sales knows exactly what to correct.');
+    const text = requireReason(note, 'note', 'a return reason');
     const request = await pendingRequest(tx, locked);
     if (request) await updateRow(tx, 'payment_requests', request.id, { status: 'rejected', reviewed_by_user_id: actor.id, reviewed_at: new Date(), note: text });
     const fresh = (await updateRow(tx, 'applicants', id, {

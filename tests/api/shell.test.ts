@@ -76,7 +76,7 @@ test('protected routes need a token, and logout kills it immediately', async () 
   assert.equal(me.status, 200);
   assert.equal(me.json.data.email, ADMIN);
   assert.equal(me.json.data.presence.is_online, true);
-  assert.deepEqual(me.json.data.features, { costing: false });
+  assert.deepEqual(me.json.data.features, { costing: false, payment_advanced: false }, 'both features are off unless configured');
   assert.equal((await call('POST', '/auth/logout', { token })).status, 200);
   assert.equal((await call('GET', '/auth/me', { token })).status, 401);
 });

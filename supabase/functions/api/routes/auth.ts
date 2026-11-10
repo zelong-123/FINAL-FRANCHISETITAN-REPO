@@ -36,7 +36,7 @@ async function withPresence(c: Context<AppEnv>, db: Db, user: Row): Promise<Row>
   return {
     ...publicUser(user),
     presence: await presence.forUser(db, user),
-    features: { costing: c.get('deps').costingEnabled },
+    features: { costing: c.get('deps').costingEnabled, payment_advanced: Boolean(c.get('deps').paymentAdvanced) },
   };
 }
 

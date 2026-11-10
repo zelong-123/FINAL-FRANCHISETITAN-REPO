@@ -13,8 +13,14 @@ const [salesUser] = await q(`select id from users where email = $1`, [SALES]);
 
 /** A weekday at the given Manila time, safely in the future. */
 function slot(days: number, hour: string): string {
-  const d = new Date(Date.now() + days * 86400000);
-  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 1);
+  // The N-th weekday from today, so two different offsets never land on the same day
+  // (adding days and then skipping a weekend could map +11 and +12 to the same Monday).
+  const d = new Date();
+  let left = days;
+  while (left > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left -= 1;
+  }
   return `${d.toISOString().slice(0, 10)}T${hour}:00+08:00`;
 }
 const DAY1 = (h: string) => slot(10, h);
@@ -22,8 +28,23 @@ const DAY1 = (h: string) => slot(10, h);
 let counter = 0;
 async function schedulable(brandId = brandA.id) {
   counter += 1;
-  const [a] = await q(`insert into applicants (full_name, status, preferred_brand_id, application_date) values ($1, 'scheduled', $2, '2026-01-01') returning id`, [`Person ${counter}`, brandId]);
+  // Assigned to the seeded Sales user: only the assigned Sales user may complete activities.
+  const [a] = await q(
+    `insert into applicants (full_name, status, preferred_brand_id, application_date, assigned_sales_user_id) values ($1, 'scheduled', $2, '2026-01-01', $3) returning id`,
+    [`Person ${counter}`, brandId, salesUser.id],
+  );
   return a.id as number;
+}
+/** A Complete form: attended, actual time one hour ago, handler, notes, a proof file. */
+function completion(overrides: Record<string, string> = {}) {
+  const f = new FormData();
+  f.set('attended', 'yes');
+  f.set('actual_started_at', new Date(Date.now() - 3600_000).toISOString());
+  f.set('handler_name', 'Sales User');
+  f.set('result_notes', 'Attended the whole session and asked questions.');
+  f.set('proof', new File([new Uint8Array([7, 7, 7])], 'sign-in.png', { type: 'image/png' }));
+  for (const [k, v] of Object.entries(overrides)) f.set(k, v);
+  return f;
 }
 const session = (applicantIds: number[], start: string, extra: any = {}) => ({
   activity_type: 'orientation', start_at: start, end_at: start.replace(/T(\d{2})/, (_m, h) => `T${String(Number(h) + 1).padStart(2, '0')}`), applicant_ids: applicantIds, ...extra,
@@ -179,10 +200,34 @@ test('Activities API: Sales booking waits for approval, the Complete and Attende
   assert.equal(reverted.json.data.approval_status, 'immediate', 'a rejected adjustment keeps the approved schedule');
   assert.equal((await call('GET', `/activities/grouped?applicant_id=${id}&include_completed=1`, { token: admin })).json.data[0].activities.some((x: any) => x.approval_status === 'rejected'), true);
 
-  const early = await call('POST', `/activities/${activity.id}/complete`, { token: sales, body: { result_notes: 'Went well' } });
-  assert.ok(early.json.errors.confirm_early);
-  const done = await call('POST', `/activities/${activity.id}/complete`, { token: sales, body: { result_notes: 'Went well', confirm_early: true } });
+  // An unassigned applicant blocks every Sales action until Admin assigns a Sales user.
+  await q(`update applicants set assigned_sales_user_id = null where id = $1`, [id]);
+  const unassigned = await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion() });
+  assert.equal(unassigned.status, 403);
+  assert.equal(unassigned.json.message, 'Admin must assign a Sales user first.');
+  await q(`update applicants set assigned_sales_user_id = $1 where id = $2`, [salesUser.id, id]);
+
+  // Complete is refused before the exact start time — confirm_early no longer exists.
+  const early = await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion() });
+  assert.equal(early.status, 422);
+  assert.match(early.json.errors.complete[0], /^Available on [A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} (AM|PM)\.$/);
+  const forced = completion();
+  forced.set('confirm_early', 'true');
+  assert.match((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: forced })).json.errors.complete[0], /^Available on/, 'the old early path is gone');
+
+  // The scheduled start passes (simulated by moving the row into the past).
+  await q(`update activity_schedules set starts_at = now() - interval '2 hours', ends_at = now() - interval '1 hour' where id = $1`, [activity.id]);
+  const noProof = completion();
+  noProof.delete('proof');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: noProof })).json.errors.proof, 'proof file required');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ result_notes: 'short' }) })).json.errors.result_notes, 'notes of 10+ characters');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ actual_started_at: new Date(Date.now() - 5 * 3600_000).toISOString() }) })).json.errors.actual_started_at, 'not before the scheduled start');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ actual_started_at: new Date(Date.now() + 3600_000).toISOString() }) })).json.errors.actual_started_at, 'not in the future');
+  const done = await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion() });
+  assert.equal(done.status, 200, JSON.stringify(done.json));
   assert.equal(done.json.data.status, 'completed');
+  assert.equal(done.json.data.review_status, 'submitted');
+  assert.equal(done.json.data.proof_documents.length, 1);
   assert.equal((await q(`select attendance_status from schedule_session_participants where activity_schedule_id = $1`, [activity.id]))[0].attendance_status, 'completed');
   assert.equal((await call('GET', '/applicants', { token: admin })).json.data.find((a: any) => a.id === id).has_activity_update, true, 'blue dot for Admin');
 

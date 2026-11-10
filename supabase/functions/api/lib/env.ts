@@ -41,6 +41,8 @@ export interface Deps {
   files: FileStore;
   /** FEATURE_COSTING: off hides every cost/price field outside applicant routes. */
   costingEnabled: boolean;
+  /** FEATURE_PAYMENT_ADVANCED: off (the default) hides discount/promo, installments, due dates, the minimum rules and Sales Report batching. */
+  paymentAdvanced?: boolean;
 }
 
 export type AppEnv = {

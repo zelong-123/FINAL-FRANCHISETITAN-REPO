@@ -1,5 +1,5 @@
-import React from 'react';
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import React, { useEffect, useRef } from 'react';
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Log from './components/Log';
 import BranchLogin from './components/BranchLogin';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -7,6 +7,7 @@ import { AppLoader } from './components/ApiUi';
 import { AuthProvider, ROLE_HOME, useAuth } from './context/AuthContext';
 import { rolesFor } from './lib/roleAccess';
 import { scheduleRedirectTarget } from './lib/navigation';
+import { BRANCH_LOGIN_PATH, IS_BRANCH_PORTAL, IS_STAFF_PORTAL, WRONG_PORTAL_MESSAGE, isWrongPortalRole } from './lib/portal';
 import { ChatProvider } from './context/ChatContext';
 import AppShell from './layout/AppShell';
 import Dashboard from './pages/Dashboard';
@@ -40,9 +41,33 @@ function BranchPortalRoute() {
   const { loading, isAuthenticated, role } = useAuth();
   const location = useLocation();
   if (loading) return <AppLoader label="Restoring branch session…" />;
-  if (!isAuthenticated) return <Navigate to="/branch-login" replace />;
+  if (!isAuthenticated) return <Navigate to={BRANCH_LOGIN_PATH} replace />;
   if (role === 'admin' && location.pathname.endsWith('/preview')) return <BranchPortal preview />;
   return role === 'franchisee' ? <BranchPortal /> : <Navigate to={ROLE_HOME[role] || '/'} replace />;
+}
+
+/**
+ * A session that belongs to the other portal (a franchisee on the staff site, or
+ * staff on the branch site) is signed out here, before any route renders, and the
+ * visitor lands on this site's login with a short notice.
+ */
+function PortalSessionGuard({ children }) {
+  const { loading, isAuthenticated, role, logout } = useAuth();
+  const navigate = useNavigate();
+  const signingOut = useRef(false);
+  const wrongPortal = !loading && isAuthenticated && isWrongPortalRole(role);
+
+  useEffect(() => {
+    if (!wrongPortal || signingOut.current) return;
+    signingOut.current = true;
+    // Move to this site's login first, while the loader below still covers the routes,
+    // so the login page mounts with the notice once the session is cleared.
+    navigate('/', { replace: true, state: { portalNotice: WRONG_PORTAL_MESSAGE } });
+    logout().finally(() => { signingOut.current = false; });
+  }, [wrongPortal, logout, navigate]);
+
+  if (wrongPortal) return <AppLoader label="Signing out…" />;
+  return children;
 }
 
 /**
@@ -65,14 +90,23 @@ export default function App() {
     <BrowserRouter basename={base}>
       <AuthProvider>
         <ChatProvider>
+          <PortalSessionGuard>
           <Routes>
-            <Route path="/" element={<Log />} />
-            <Route path="/branch-login" element={<BranchLogin />} />
-            <Route path="/branch_portal/login" element={<Navigate to="/branch-portal/login" replace />} />
-            <Route path="/branch-portal/login" element={<BranchLogin />} />
-            {/* Estimated Requirement left the branch workspace: old links open the dashboard. */}
-            <Route path="/branch-portal/estimated-requirement" element={<Navigate to="/branch-portal" replace />} />
+            {/* VITE_PORTAL (lib/portal.js): the staff build has no branch login, the branch
+                build has no staff login or staff pages; unset keeps every route. */}
+            <Route path="/" element={IS_BRANCH_PORTAL ? <BranchLogin /> : <Log />} />
+            {!IS_STAFF_PORTAL && (
+              <>
+                <Route path="/branch-login" element={<BranchLogin />} />
+                <Route path="/branch_portal/login" element={<Navigate to="/branch-portal/login" replace />} />
+                <Route path="/branch-portal/login" element={<BranchLogin />} />
+                {/* Estimated Requirement left the branch workspace: old links open the dashboard. */}
+                <Route path="/branch-portal/estimated-requirement" element={<Navigate to="/branch-portal" replace />} />
+              </>
+            )}
+            {/* Kept in the staff build too: Admin's read-only /branch-portal/preview. */}
             <Route path="/branch-portal/*" element={<BranchPortalRoute />} />
+            {!IS_BRANCH_PORTAL && (
             <Route element={<ProtectedRoute />}>
               <Route element={<StaffRoute />}>
                 <Route element={<AppShell />}>
@@ -106,10 +140,12 @@ export default function App() {
                 </Route>
               </Route>
             </Route>
+            )}
             <Route path="/branch-portal" element={<BranchPortalRoute />} />
             <Route path="/franchisee-dashboard" element={<Navigate to="/branch-portal" replace />} />
             <Route path="*" element={<RoleRedirect />} />
           </Routes>
+          </PortalSessionGuard>
         </ChatProvider>
       </AuthProvider>
     </BrowserRouter>

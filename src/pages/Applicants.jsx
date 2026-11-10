@@ -9,6 +9,8 @@ import {
   API_BASE_URL, api, authToken, firstValidationMessage,
 } from '../lib/api';
 import { downloadCsv, downloadPdf } from '../lib/export';
+import FollowUpLog from '../components/FollowUpLog';
+import ApplicationDetailReport from '../components/applicants/ApplicationDetailReport';
 import useRemote from '../lib/useRemote';
 import {
   EmptyState,
@@ -21,7 +23,7 @@ import {
 } from '../components/ApiUi';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
-import { formatDate, localDateInputValue, titleCase } from '../lib/format';
+import { formatDate, localDateInputValue, manilaDateTimeLabel, titleCase } from '../lib/format';
 import { RecordFolderGrid, RecordFolderTable } from '../components/applicants/RecordFolders';
 import RecordCode from '../components/RecordCode';
 import { RECORD_FOLDERS } from '../lib/recordFolders';
@@ -48,7 +50,7 @@ const REPORT_STAGES = [
   { key: 'qualification', label: '1 · Qualification' },
   { key: 'activities', label: '2 · Activities' },
   { key: 'loi', label: '3 · LOI Submission' },
-  { key: 'payment', label: '4 · Payment Submission' },
+  { key: 'payment', label: '4 · Payment Record' },
   { key: 'approval', label: '5 · Approval' },
 ];
 
@@ -57,7 +59,7 @@ const REVISE_STAGES = [
   { key: 'qualified', label: 'Qualified', hint: 'Redo the qualification checklist.' },
   { key: 'scheduled', label: 'Scheduled', hint: 'Adjust the scheduled activities.' },
   { key: 'loi_submitted', label: 'LOI Submitted', hint: 'Correct the LOI submission record.' },
-  { key: 'payment_submitted', label: 'Payment Submitted', hint: 'Fix the payment report.' },
+  { key: 'payment_submitted', label: 'Payment Record', hint: 'Fix the payment report.' },
 ];
 
 // ---- Pagination settings (same behavior as the Leads & inquiries table) ----
@@ -110,7 +112,7 @@ const fmtDateTime = (value) => {
   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 };
 const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value) || 0);
-// Payment Submission money rule: peso sign, thousands separators, cents only
+// Payment Record money rule: peso sign, thousands separators, cents only
 // when the amount is not a whole peso (₱500,000 not ₱500,000.00).
 const moneyExact = (value) => {
   const amount = Number(value) || 0;
@@ -128,7 +130,7 @@ const moneyShort = (value) => {
   return amount >= 1000 ? `₱${Math.round(amount / 1000)}k` : `₱${amount}`;
 };
 
-// Payment Submission product rules (the API enforces the same limits).
+// Payment Record product rules (the API enforces the same limits).
 // The Admin's ORIGINAL Total required (before discount) — mirrors the backend
 // ceiling in PaymentStageService::MAX_TOTAL_CENTS.
 const MAX_TOTAL_REQUIRED = 500000;
@@ -423,7 +425,7 @@ const lastActivitySignature = new Map();
  * database and are shown by the read-only reports instead. */
 const SCHEDULE_VISIBLE_FROM = ['scheduled'];
 
-/* The Payment Submission section belongs to the payment stage and the review
+/* The Payment Record section belongs to the payment stage and the review
  * that follows it — never to LOI Submission. */
 const PAYMENT_PANEL_FROM = ['payment_submitted', 'for_approval', 'approved', 'active_franchisee'];
 
@@ -432,7 +434,7 @@ const PAYMENT_PANEL_FROM = ['payment_submitted', 'for_approval', 'approved', 'ac
  * the handler key depend on the current stage and on the role permission matrix.
  * A button a role cannot use stays visible but disabled, with a short reason.
  */
-function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, paymentPercent, hasPortalAccount, isAdminRole, isSalesRole }) {
+function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, qualificationMissing = [], activationMissing = [], paymentPercent, hasPortalAccount, isAdminRole, isSalesRole }) {
   const adminOnly = 'Admin action — your role can only view this stage.';
 
   // Sales only gets a "View" button before the Scheduled stage: no actions yet.
@@ -444,7 +446,7 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
     case 'converted':
       return qualificationDone
         ? { label: 'Confirm Qualified', enabled: isAdminRole, reason: isAdminRole ? '' : adminOnly, run: 'qualified' }
-        : { label: 'Confirm Qualified', enabled: false, reason: 'Complete all five qualification assessment items first.', run: 'qualified' };
+        : { label: 'Confirm Qualified', enabled: false, reason: qualificationMissing.length ? `Every Qualification requirement must be Accepted first. Missing: ${qualificationMissing.join(', ')}.` : 'Every Qualification requirement must be Accepted first.', run: 'qualified' };
     case 'qualified':
       // [Set Schedule] lives inside the locked Schedule Activity section
       // (LockedScheduleSection), so the tracker area has no second button.
@@ -469,7 +471,7 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
       // The LOI record must be verified on the field and saved before the stage
       // can move; Sales records the payment in the panel below.
       if (isSalesRole) {
-        return { label: 'Payment Submitted', enabled: false, reason: 'Waiting for Admin to verify and complete the LOI stage.' };
+        return { label: 'Payment Record', enabled: false, reason: 'Waiting for Admin to verify and complete the LOI stage.' };
       }
       // Admin: [Save LOI] / [Proceed] / [Complete] live in the LOI section itself.
       if (isAdminRole) return null;
@@ -477,7 +479,7 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
         ? { label: 'Completed', enabled: false, reason: adminOnly }
         : { label: 'Completed', enabled: false, reason: 'Waiting for Admin to verify and complete the LOI.' };
     case 'payment_submitted':
-      // The Payment Submission stage renders its own buttons in the same spot
+      // The Payment Record stage renders its own buttons in the same spot
       // (Turn over to Admin / Confirm payment + Return to Sales), so the generic
       // primary button steps aside instead of competing with them.
       return null;
@@ -488,6 +490,9 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
     case 'approved':
       if (Number(paymentPercent) < 100) {
         return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: `At least 100% verified payment is required; current progress is ${Number(paymentPercent) || 0}%.` };
+      }
+      if (activationMissing.length) {
+        return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: `The signed franchise agreement must be Accepted first. Missing: ${activationMissing.join(', ')}.` };
       }
       return hasPortalAccount
         ? { label: 'Mark as Active Franchisee', enabled: isAdminRole, reason: isAdminRole ? '' : adminOnly, run: 'activate' }
@@ -716,7 +721,576 @@ function QualificationAssessment({ draft, onToggle, readOnly = false, log = [], 
  * There is deliberately no Save Record button here and no per-activity "Set
  * Again": Set Again is an applicant-level action shown in the stage area.
  */
-function ScheduleSection({ editing, draft, isAdminRole, sectionRef, onPickChecked, onOpenCalendar, onView }) {
+const PAY_STATUS_TONE = { unpaid: 'text-[#9aa6c4] border-[#3a4256]', partially_paid: 'text-[#8fb4ff] border-[rgba(143,_180,_255,_.45)]', fully_paid: 'text-[#45d991] border-[rgba(69,_217,_145,_.45)]' };
+const ENTRY_TONE = { pending: 'text-[#8fb4ff]', verified: 'text-[#45d991]', returned: 'text-[#fbbf24]' };
+const peso = (value) => (value === null || value === undefined ? '—' : `₱${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+
+/** Receipts are fetched through the API with role checks, then opened. */
+async function openReceipt(applicantId, paymentId, document) {
+  const token = await authToken.get();
+  const response = await fetch(`${API_BASE_URL}/applicants/${applicantId}/payments/${paymentId}/documents/${document.id}/download`, {
+    headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!response.ok) throw new Error('The receipt could not be opened.');
+  const url = URL.createObjectURL(await response.blob());
+  window.open(url, '_blank', 'noopener');
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/**
+ * Payment Record: records payments that already happened outside the system (no billing).
+ * Admin enters the Agreed Package Amount; the assigned Sales user records each payment with
+ * its OR/AR number, reference number and receipt; Admin verifies or returns each entry.
+ */
+function PaymentRecordPanel({ editing, readOnly = false, busy, onSetAmount, onSubmitEntry, onVerify, onReturn, onError }) {
+  const record = editing?.payment_record;
+  const [amountForm, setAmountForm] = useState(null);
+  const [entryForm, setEntryForm] = useState(null);
+  const [fileError, setFileError] = useState('');
+  const [returning, setReturning] = useState(null);
+  const [reason, setReason] = useState('');
+  if (!record) return null;
+  const maxBytes = (record.receipt_rule?.max_mb || 10) * 1024 * 1024;
+  const accept = (record.receipt_rule?.accept || ['pdf', 'jpg', 'jpeg', 'png']).map((ext) => `.${ext}`).join(',');
+  const pickReceipt = (file) => {
+    setFileError('');
+    if (!file) { setEntryForm({ ...entryForm, receipt: null }); return; }
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!(record.receipt_rule?.accept || []).includes(ext)) { setFileError('The receipt must be a PDF, JPG or PNG file.'); setEntryForm({ ...entryForm, receipt: null }); return; }
+    if (file.size > maxBytes) { setFileError(`The receipt may not be larger than ${record.receipt_rule.max_mb} MB.`); setEntryForm({ ...entryForm, receipt: null }); return; }
+    setEntryForm({ ...entryForm, receipt: file });
+  };
+  const needsReference = entryForm && entryForm.payment_method !== 'cash';
+  const entryReady = entryForm && entryForm.payment_date && Number(entryForm.amount) > 0 && entryForm.payment_method && entryForm.or_number.trim()
+    && (!needsReference || entryForm.reference_number.trim()) && entryForm.receipt;
+  const sendEntry = () => {
+    const body = new FormData();
+    for (const key of ['payment_date', 'amount', 'payment_method', 'or_number', 'reference_number', 'remarks']) if (String(entryForm[key] || '').trim()) body.append(key, String(entryForm[key]).trim());
+    body.append('receipt', entryForm.receipt);
+    onSubmitEntry(body);
+    setEntryForm(null);
+  };
+  const changing = record.agreed_amount !== null;
+  const amountReady = amountForm && Number(amountForm.agreed_amount) > 0 && (!changing || !record.has_entries || amountForm.reason.trim().length >= 5);
+
+  return (
+    <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">Payment Record</h3>
+        <span className={`inline-flex p-[2px_10px] rounded-[999px] border text-[12px] font-[700] ${PAY_STATUS_TONE[record.status] || PAY_STATUS_TONE.unpaid}`}>{record.status_label}</span>
+      </div>
+      <p className="m-[6px_0_0] text-[#8f9bbd]">Records payments made outside the system. No billing or computation: the status comes only from Verified entries.</p>
+      <dl className="grid grid-cols-[minmax(150px,_220px)_minmax(0,_1fr)] gap-[6px_12px] m-[12px_0_0] [&_dt]:text-[#8f9bbd] [&_dd]:m-0">
+        <dt>Agreed Package Amount</dt><dd><strong className="text-[#edf0fa]">{peso(record.agreed_amount)}</strong>{record.package_name ? ` · ${record.package_name}` : ''}{record.source ? ` · from ${record.source}` : ''}</dd>
+        <dt>Verified</dt><dd>{peso(record.verified_amount)}</dd>
+        <dt>Waiting for review</dt><dd>{peso(record.pending_amount)}</dd>
+        <dt>Remaining</dt><dd>{peso(record.remaining_amount)}</dd>
+        {record.legacy_discount && (
+          <><dt>Earlier discount (read-only)</dt><dd>{record.legacy_discount.discount_percent}% off {peso(record.legacy_discount.original_amount)}{record.legacy_discount.promo_name ? ` · ${record.legacy_discount.promo_name}` : ''}</dd></>
+        )}
+      </dl>
+      {record.locked && <p className="m-[8px_0_0] text-[#45d991]">{record.locked}</p>}
+      {record.pending_sales_report && <p className="m-[8px_0_0] text-[#fbbf24]">An older Sales Report is still waiting for Admin: apply or return it below before new payments are recorded.</p>}
+
+      {!readOnly && record.can_set_amount && !amountForm && (
+        <button type="button" className="mt-3" disabled={busy} onClick={() => setAmountForm({ agreed_amount: record.agreed_amount ?? '', package_name: record.package_name ?? '', source: record.source ?? '', reason: '' })}>
+          {changing ? 'Change Agreed Package Amount' : 'Set Agreed Package Amount'}
+        </button>
+      )}
+      {!readOnly && amountForm && (
+        <div className="grid gap-[10px] mt-3">
+          <Field label="Agreed Package Amount (₱)" required><input type="number" min="1" step="0.01" value={amountForm.agreed_amount} onChange={(e) => setAmountForm({ ...amountForm, agreed_amount: e.target.value })} /></Field>
+          <Field label="Package name"><input value={amountForm.package_name} onChange={(e) => setAmountForm({ ...amountForm, package_name: e.target.value })} /></Field>
+          <Field label="Taken from" hint="e.g. Signed LOI, Package B price list"><input value={amountForm.source} onChange={(e) => setAmountForm({ ...amountForm, source: e.target.value })} /></Field>
+          {changing && record.has_entries && (
+            <Field label="Reason for the change (required, at least 5 characters)" required full>
+              <textarea rows={2} value={amountForm.reason} onChange={(e) => setAmountForm({ ...amountForm, reason: e.target.value })} />
+            </Field>
+          )}
+          <span className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setAmountForm(null)}>Cancel</button>
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !amountReady} onClick={() => { onSetAmount({ ...amountForm, agreed_amount: Number(amountForm.agreed_amount) }); setAmountForm(null); }}>
+              Save amount
+            </button>
+          </span>
+        </div>
+      )}
+
+      <div className="table-wrap overflow-x-auto mt-3">
+        <table className="w-full text-[14px]">
+          <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>OR/AR no.</th><th>Reference no.</th><th>Receipt</th><th>Status</th></tr></thead>
+          <tbody>
+            {!record.entries.length && <tr><td colSpan={7} className="text-muted">No payments recorded yet.</td></tr>}
+            {record.entries.map((p) => (
+              <React.Fragment key={p.id}>
+                <tr>
+                  <td>{formatDate(p.payment_date)}</td>
+                  <td>{peso(p.amount)}</td>
+                  <td>{p.payment_method_label}</td>
+                  <td>{p.or_number || '—'}</td>
+                  <td>{p.reference_number || '—'}</td>
+                  <td>
+                    {p.legacy_no_receipt ? <small className="text-[#fbbf24]">Legacy - no receipt captured</small>
+                      : p.receipts === null ? <small className="text-muted">Private</small>
+                        : p.receipts.map((doc) => (
+                          <button key={doc.id} type="button" disabled={busy} onClick={() => openReceipt(editing.id, p.id, doc).catch((error) => onError(error.message))}>{doc.original_name}</button>
+                        ))}
+                  </td>
+                  <td>
+                    <strong className={ENTRY_TONE[p.status] || ''}>{p.status_label}</strong>
+                    <small className="block">By {p.recorded_by || '—'}{p.recorded_at ? ` · ${manilaDateTimeLabel(p.recorded_at)}` : ''}</small>
+                    {p.verified_by && <small className="block">Verified by {p.verified_by} · {manilaDateTimeLabel(p.verified_at)}</small>}
+                    {p.status === 'returned' && <small className="block text-[#fbbf24]">Returned by {p.returned_by}: {p.returned_reason}</small>}
+                  </td>
+                </tr>
+                {!readOnly && p.reviewable && (
+                  <tr>
+                    <td colSpan={7}>
+                      {returning === p.id ? (
+                        <span className="grid gap-2">
+                          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+                          <span className="flex gap-2">
+                            <button type="button" disabled={busy} onClick={() => setReturning(null)}>Cancel</button>
+                            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(p.id, reason.trim()); setReturning(null); }}>Return with reason</button>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="flex gap-2">
+                          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[34px] inline-flex items-center justify-center gap-2 p-[0_12px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onVerify(p.id)}>Verify</button>
+                          <button type="button" disabled={busy} onClick={() => { setReturning(p.id); setReason(''); }}>Return to Sales</button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {!readOnly && record.can_add_entry && !entryForm && (
+        <button type="button" className="mt-3" disabled={busy} onClick={() => { setFileError(''); setEntryForm({ payment_date: localDateInputValue(), amount: '', payment_method: 'cash', or_number: '', reference_number: '', remarks: '', receipt: null }); }}>
+          Add payment entry
+        </button>
+      )}
+      {!readOnly && entryForm && (
+        <div className="grid gap-[10px] mt-3">
+          <Field label="Date paid" required><input type="date" max={localDateInputValue()} value={entryForm.payment_date} onChange={(e) => setEntryForm({ ...entryForm, payment_date: e.target.value })} /></Field>
+          <Field label="Amount (₱)" required><input type="number" min="0.01" step="0.01" value={entryForm.amount} onChange={(e) => setEntryForm({ ...entryForm, amount: e.target.value })} /></Field>
+          <Field label="Method" required>
+            <select value={entryForm.payment_method} onChange={(e) => setEntryForm({ ...entryForm, payment_method: e.target.value })}>
+              {Object.entries(record.methods || {}).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+            </select>
+          </Field>
+          <Field label="OR / AR number" required><input value={entryForm.or_number} onChange={(e) => setEntryForm({ ...entryForm, or_number: e.target.value })} /></Field>
+          <Field label={needsReference ? 'Reference number' : 'Reference number (not needed for cash)'} required={needsReference}>
+            <input value={entryForm.reference_number} onChange={(e) => setEntryForm({ ...entryForm, reference_number: e.target.value })} />
+          </Field>
+          <Field label="Receipt" required full hint={`PDF, JPG or PNG, up to ${record.receipt_rule?.max_mb || 10} MB.`}>
+            <input type="file" accept={accept} onChange={(e) => pickReceipt(e.target.files?.[0] || null)} />
+          </Field>
+          {fileError && <p className="m-0 text-[#ff9ca3]" role="alert">{fileError}</p>}
+          <Field label="Remarks" full><textarea rows={2} value={entryForm.remarks} onChange={(e) => setEntryForm({ ...entryForm, remarks: e.target.value })} /></Field>
+          <span className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setEntryForm(null)}>Cancel</button>
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !entryReady} onClick={sendEntry}>
+              Send to Admin
+            </button>
+          </span>
+        </div>
+      )}
+
+      {(record.history || []).length > 0 && (
+        <details className="mt-3">
+          <summary>Payment Record history ({record.history.length})</summary>
+          <ul className="m-[6px_0_0] p-[0_0_0_18px] grid gap-1">
+            {record.history.map((h) => (
+              <li key={h.id}>
+                {manilaDateTimeLabel(h.changed_at)} · {h.by_name || 'System'}{h.actor_role ? ` (${titleCase(h.actor_role)})` : ''} · {titleCase(String(h.event || 'stage change').replace(/^payment_/, '').replace(/_/g, ' '))}
+                {h.remarks ? ` — ${h.remarks}` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+const REQUIREMENT_STATUS = {
+  pending: { label: 'Pending', tone: 'text-[#9aa6c4] border-[#3a4256]' },
+  submitted: { label: 'Submitted', tone: 'text-[#8fb4ff] border-[rgba(143,_180,_255,_.45)]' },
+  accepted: { label: 'Accepted', tone: 'text-[#45d991] border-[rgba(69,_217,_145,_.45)]' },
+  returned: { label: 'Returned', tone: 'text-[#fbbf24] border-[rgba(251,_191,_36,_.45)]' },
+};
+
+/** Requirement files are fetched through the API with role checks, then opened. */
+async function openRequirementFile(applicantId, key, document) {
+  const token = await authToken.get();
+  const response = await fetch(`${API_BASE_URL}/applicants/${applicantId}/requirements/${key}/documents/${document.id}/download`, {
+    headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!response.ok) throw new Error('The file could not be opened.');
+  const url = URL.createObjectURL(await response.blob());
+  window.open(url, '_blank', 'noopener');
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function RequirementStatus({ status }) {
+  const info = REQUIREMENT_STATUS[status] || REQUIREMENT_STATUS.pending;
+  return <span className={`inline-flex p-[2px_10px] rounded-[999px] border text-[12px] font-[700] ${info.tone}`}>{info.label}</span>;
+}
+
+/**
+ * Requirements of one stage: details + proof files submitted by the assigned Sales user,
+ * Accepted or Returned (with a reason) by Admin. The list itself comes from the API config.
+ */
+function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy, onSubmit, onAccept, onReturn, onError, readOnly = false }) {
+  const [editingKey, setEditingKey] = useState(null);
+  const [values, setValues] = useState({});
+  const [returningKey, setReturningKey] = useState(null);
+  const [reason, setReason] = useState('');
+  const req = editing?.requirements;
+  if (!req) return null;
+  const stageInfo = req.config.stages[stage];
+  const defs = req.config.requirements.filter((def) => def.stage === stage);
+  const summary = req.summary[stage] || {};
+  const itemOf = (key) => req.items.find((item) => item.key === key) || { status: 'pending', data: {} };
+  const optionLabel = (field, value) => field.options?.find((o) => o.value === value)?.label || value;
+  const startEdit = (def) => {
+    const item = itemOf(def.key);
+    setEditingKey(def.key);
+    setValues(Object.fromEntries(def.fields.map((field) => [field.key, item.data?.[field.key] || ''])));
+  };
+  const send = (def) => {
+    const body = new FormData();
+    for (const field of def.fields) if (values[field.key]) body.append(field.key, values[field.key]);
+    for (const slot of def.files) for (const file of values[`file:${slot.key}`] || []) body.append(slot.key, file);
+    onSubmit(def.key, body);
+    setEditingKey(null);
+  };
+  const accepted = defs.filter((def) => itemOf(def.key).status === 'accepted').length;
+
+  return (
+    <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">{stageInfo?.label} requirements</h3>
+        <small className="text-[#9ba5bd]">{accepted} of {defs.length} accepted</small>
+      </div>
+      {summary.legacy && <p className="m-[8px_0_0] text-[#fbbf24]">Legacy record - requirements not captured.</p>}
+      {!summary.legacy && summary.missing?.length > 0 && (
+        <p className="m-[8px_0_0] text-muted">{stageInfo?.gate} needs every item Accepted. Missing: {summary.missing.join(', ')}.</p>
+      )}
+      {!req.files_visible && <p className="m-[8px_0_0] text-muted">Files are visible to Admin and the assigned Sales user only.</p>}
+      {!summary.legacy && (
+        <ul className="m-[12px_0_0] p-0 [list-style:none] grid gap-[10px]">
+          {defs.map((def) => {
+            const item = itemOf(def.key);
+            const canEdit = !readOnly && isAssignedSales && summary.open && ['pending', 'returned'].includes(item.status);
+            const canReview = !readOnly && isAdminRole && item.status === 'submitted';
+            return (
+              <li key={def.key} className="p-[12px_14px] border border-[#2b344c] rounded-[11px] [background:#0c111d] grid gap-[6px]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong className="text-[#edf0fa]">{def.label}</strong>
+                  <RequirementStatus status={item.status} />
+                </div>
+                <small className="text-[#8f9bbd]">{def.help}</small>
+                {item.status === 'pending' && !summary.open && <span className="text-muted">Not started yet</span>}
+                {def.fields.some((field) => item.data?.[field.key]) && (
+                  <dl className="grid grid-cols-[minmax(140px,_200px)_minmax(0,_1fr)] gap-[4px_12px] m-0 [&_dt]:text-[#8f9bbd] [&_dd]:m-0">
+                    {def.fields.map((field) => (item.data?.[field.key] ? (
+                      <React.Fragment key={field.key}>
+                        <dt>{field.label}</dt>
+                        <dd>{field.type === 'date' ? formatDate(item.data[field.key]) : optionLabel(field, item.data[field.key])}</dd>
+                      </React.Fragment>
+                    ) : null))}
+                  </dl>
+                )}
+                {(item.files || []).length > 0 && (
+                  <span className="flex flex-wrap gap-2 items-center">
+                    Files:
+                    {item.files.map((doc) => (
+                      <button key={doc.id} type="button" disabled={busy} onClick={() => openRequirementFile(editing.id, def.key, doc).catch((error) => onError(error.message))}>
+                        {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
+                      </button>
+                    ))}
+                  </span>
+                )}
+                {item.submitted_at && <small>Submitted by {item.submitted_by?.full_name || '—'} on {manilaDateTimeLabel(item.submitted_at)}</small>}
+                {item.reviewed_at && item.status !== 'submitted' && (
+                  <small>{item.status === 'accepted' ? 'Accepted' : 'Returned'} by {item.reviewed_by?.full_name || '—'} on {manilaDateTimeLabel(item.reviewed_at)}</small>
+                )}
+                {item.status === 'returned' && <span className="text-[#fbbf24]">Return reason: {item.return_reason}</span>}
+
+                {canEdit && editingKey !== def.key && (
+                  <button type="button" className="w-fit" disabled={busy} onClick={() => startEdit(def)}>{item.status === 'returned' ? 'Correct and resubmit' : 'Submit'}</button>
+                )}
+                {canEdit && editingKey === def.key && (
+                  <div className="grid gap-[10px] mt-1">
+                    {def.fields.map((field) => (
+                      <Field key={field.key} label={field.label} required={field.required} full>
+                        {field.type === 'select' ? (
+                          <select value={values[field.key] || ''} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}>
+                            <option value="">Choose…</option>
+                            {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ) : field.type === 'textarea' ? (
+                          <textarea rows={3} value={values[field.key] || ''} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })} placeholder={field.min_length ? `At least ${field.min_length} characters` : ''} />
+                        ) : (
+                          <input
+                            type={field.type === 'date' ? 'date' : 'text'}
+                            max={field.type === 'date' && field.not_future ? localDateInputValue() : undefined}
+                            value={values[field.key] || ''}
+                            onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+                          />
+                        )}
+                      </Field>
+                    ))}
+                    {def.files.map((slot) => (
+                      <Field key={slot.key} label={`${slot.label}${(item.files || []).some((d) => d.type === slot.key && !d.replaced_at) ? ' (leave empty to keep the attached file)' : ''}`} required={slot.required} full>
+                        <input
+                          type="file"
+                          multiple={Boolean(slot.multiple)}
+                          accept={slot.accept.split(',').map((ext) => `.${ext}`).join(',')}
+                          onChange={(e) => setValues({ ...values, [`file:${slot.key}`]: [...(e.target.files || [])] })}
+                        />
+                      </Field>
+                    ))}
+                    <span className="flex gap-2">
+                      <button type="button" disabled={busy} onClick={() => setEditingKey(null)}>Cancel</button>
+                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => send(def)}>
+                        Send to Admin
+                      </button>
+                    </span>
+                  </div>
+                )}
+                {canReview && returningKey !== def.key && (
+                  <span className="flex flex-wrap gap-2">
+                    <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onAccept(def.key)}>Accept</button>
+                    <button type="button" disabled={busy} onClick={() => { setReturningKey(def.key); setReason(''); }}>Return to Sales</button>
+                  </span>
+                )}
+                {canReview && returningKey === def.key && (
+                  <span className="grid gap-2">
+                    <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+                    <span className="flex gap-2">
+                      <button type="button" disabled={busy} onClick={() => setReturningKey(null)}>Cancel</button>
+                      <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(def.key, reason.trim()); setReturningKey(null); }}>Return with reason</button>
+                    </span>
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+const BRAND_METHOD_LABELS = { in_person: 'In person', call: 'Call', message: 'Message', written: 'Written' };
+
+/** The attendance proof route is authenticated, so the file is fetched as a blob and opened. */
+async function openActivityProof(activityId, document) {
+  const token = await authToken.get();
+  const response = await fetch(`${API_BASE_URL}/activities/${activityId}/documents/${document.id}/download`, {
+    headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!response.ok) throw new Error('The attendance proof could not be opened.');
+  const url = URL.createObjectURL(await response.blob());
+  window.open(url, '_blank', 'noopener');
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/** The latest row of one activity type (rejected requests are skipped). */
+function latestActivityOf(editing, type) {
+  return (editing?.schedules || [])
+    .filter((row) => row.activity_type === type && row.approval_status !== 'rejected')
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
+}
+
+/**
+ * What Sales submitted for an activity (attendance, time, handler, notes, proof) — Admin
+ * reads it here before marking Attended or returning it with a reason.
+ */
+function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn, onError }) {
+  const [returning, setReturning] = useState(false);
+  const [reason, setReason] = useState('');
+  if (!activity || !activity.completion_submitted_at) {
+    if (activity?.completed_before_schedule) {
+      return <small className="inline-flex w-fit p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] text-[#fbbf24] text-[11px] font-[700]">Completed before schedule (legacy)</small>;
+    }
+    return null;
+  }
+  const proofs = activity.proof_documents || [];
+  const reviewLabel = { submitted: 'Waiting for Admin review', returned: 'Returned to Sales', accepted: 'Attended (accepted)' }[activity.review_status] || '';
+  const canReview = isAdminRole && activity.review_status === 'submitted';
+  return (
+    <div className="basis-full grid gap-[6px] mt-2 p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] text-[14px] leading-[1.5] text-[#c9d0e0]">
+      <div className="flex flex-wrap gap-[6px_16px]">
+        <span><strong>{activity.status === 'no_show' ? 'No Show' : 'Attended'}</strong>{reviewLabel ? ` · ${reviewLabel}` : ''}</span>
+        <span>Submitted by {activity.completion_submitted_by?.full_name || '—'} on {manilaDateTimeLabel(activity.completion_submitted_at)}</span>
+      </div>
+      {activity.status === 'no_show' ? (
+        <p className="m-0">Reason: {activity.no_show_reason}</p>
+      ) : (
+        <>
+          <span>Actual time: {manilaDateTimeLabel(activity.actual_started_at)} · Handled by {activity.handler_name || '—'}{activity.tasted_brand_name ? ` · Brand tasted: ${activity.tasted_brand_name}` : ''}</span>
+          <p className="m-0">Notes: {activity.result_notes}</p>
+          <span className="flex flex-wrap gap-2 items-center">
+            Proof:
+            {proofs.map((doc) => (
+              <button key={doc.id} type="button" disabled={busy} onClick={() => openActivityProof(activity.id, doc).catch((error) => onError(error.message))}>
+                {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
+              </button>
+            ))}
+          </span>
+        </>
+      )}
+      {activity.review_status === 'returned' && <span className="text-[#fbbf24]">Returned: {activity.return_reason}</span>}
+      {activity.reviewed_by?.full_name && activity.review_status !== 'submitted' && <span>Reviewed by {activity.reviewed_by.full_name} on {manilaDateTimeLabel(activity.reviewed_at)}</span>}
+      {canReview && !returning && (
+        <span className="flex flex-wrap gap-2">
+          {activity.status === 'completed' && (
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onAttended(activity)}>
+              Mark Attended
+            </button>
+          )}
+          <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
+        </span>
+      )}
+      {canReview && returning && (
+        <span className="grid gap-2">
+          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+          <span className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setReturning(false)}>Cancel</button>
+            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(activity, reason.trim()); setReturning(false); }}>Return with reason</button>
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Brand Confirmation (after Product Tasting, before Training): the assigned Sales user submits the
+ * final brand; Admin confirms it twice (it then locks) or returns it with a reason.
+ */
+function BrandConfirmationCard({ editing, brands, isAdminRole, isAssignedSales, busy, onSubmit, onConfirm, onReturn }) {
+  const state = editing?.brand_confirmation;
+  const [form, setForm] = useState(null);
+  const [returning, setReturning] = useState(false);
+  const [reason, setReason] = useState('');
+  if (!state) return null;
+  const current = state.current;
+  const brandName = (id) => (brands || []).find((b) => Number(b.id) === Number(id))?.name || '—';
+  const tastedId = state.tasted_brand_id;
+  const startForm = () => setForm({
+    final_brand_id: String(tastedId || editing.preferred_brand_id || ''), confirmation_method: 'in_person', confirmed_on: localDateInputValue(), notes: '', change_reason: '',
+  });
+  const differs = form && Number(form.final_brand_id) !== Number(tastedId);
+  const formReady = form && form.final_brand_id && form.notes.trim().length >= 5 && (!differs || form.change_reason.trim().length >= 5);
+  return (
+    <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">Brand Confirmation</h3>
+        {state.locked && <small className="inline-flex items-center gap-[6px] text-[#45d991]"><FaLock aria-hidden="true" /> Brand locked</small>}
+      </div>
+      {state.legacy && <p className="m-[8px_0_0] text-[#fbbf24]">Legacy - brand confirmation not captured. The brand ({editing.preferred_brand?.name || brandName(editing.preferred_brand_id)}) is locked.</p>}
+      {state.confirmed && (
+        <p className="m-[8px_0_0]"><FaLock aria-hidden="true" /> <strong>{editing.preferred_brand?.name || brandName(editing.preferred_brand_id)}</strong> — confirmed by {state.locked_by || 'Admin'} on {manilaDateTimeLabel(state.locked_at)}.</p>
+      )}
+      {current && !state.confirmed && (
+        <dl className="grid grid-cols-[170px_minmax(0,_1fr)] gap-[6px_12px] m-[10px_0_0] [&_dt]:text-[#8f9bbd] [&_dd]:m-0">
+          <dt>Status</dt><dd>{{ submitted: 'Waiting for Admin', returned: 'Returned to Sales', confirmed: 'Confirmed' }[current.status]}</dd>
+          <dt>Final brand</dt><dd>{current.final_brand?.name || brandName(current.final_brand_id)}</dd>
+          <dt>Brand tasted</dt><dd>{current.tasted_brand?.name || brandName(current.tasted_brand_id)}</dd>
+          <dt>Confirmed by applicant</dt><dd>{BRAND_METHOD_LABELS[current.confirmation_method]} on {formatDate(current.confirmed_on)}</dd>
+          <dt>Notes</dt><dd>{current.notes}</dd>
+          {current.change_reason && <><dt>Reason for the change</dt><dd>{current.change_reason}</dd></>}
+          <dt>Submitted by</dt><dd>{current.submitted_by?.full_name || '—'} · {manilaDateTimeLabel(current.submitted_at)}</dd>
+          {current.status === 'returned' && <><dt>Return reason</dt><dd className="text-[#fbbf24]">{current.return_reason}</dd></>}
+        </dl>
+      )}
+      {state.retasting_required && (
+        <p className="m-[8px_0_0] text-[#fbbf24]">
+          {state.retasting_done
+            ? 'The new brand was tasted: Admin can confirm it now.'
+            : 'The final brand differs from the tasted one: Product Tasting must be done again for it (use Set Again) before Admin can confirm.'}
+        </p>
+      )}
+      {!state.locked && state.blocked_reason && !current && <p className="m-[8px_0_0] text-muted">{state.blocked_reason}</p>}
+
+      {isAssignedSales && state.can_submit && !form && (
+        <button type="button" className="mt-3" disabled={busy} onClick={startForm}>{current?.status === 'returned' ? 'Correct and resubmit' : 'Submit final brand'}</button>
+      )}
+      {isAssignedSales && form && (
+        <div className="grid gap-[10px] mt-3">
+          <Field label="Final brand" required full>
+            <select value={form.final_brand_id} onChange={(e) => setForm({ ...form, final_brand_id: e.target.value })}>
+              {(brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}{Number(b.id) === Number(tastedId) ? ' (tasted)' : ''}</option>)}
+            </select>
+          </Field>
+          <Field label="How the applicant confirmed" required>
+            <select value={form.confirmation_method} onChange={(e) => setForm({ ...form, confirmation_method: e.target.value })}>
+              {Object.entries(BRAND_METHOD_LABELS).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+            </select>
+          </Field>
+          <Field label="Date confirmed" required>
+            <input type="date" max={localDateInputValue()} value={form.confirmed_on} onChange={(e) => setForm({ ...form, confirmed_on: e.target.value })} />
+          </Field>
+          <Field label="Notes (required)" required full>
+            <textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="What the applicant said and how it was confirmed" />
+          </Field>
+          {differs && (
+            <Field label="Reason for a brand other than the tasted one (required)" required full>
+              <textarea rows={2} value={form.change_reason} onChange={(e) => setForm({ ...form, change_reason: e.target.value })} placeholder="Product Tasting will be done again for the new brand." />
+            </Field>
+          )}
+          <span className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setForm(null)}>Cancel</button>
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !formReady} onClick={() => { onSubmit({ ...form, final_brand_id: Number(form.final_brand_id) }); setForm(null); }}>
+              Send to Admin
+            </button>
+          </span>
+        </div>
+      )}
+      {isAdminRole && current?.status === 'submitted' && !state.confirmed && !returning && (
+        <span className="flex flex-wrap gap-2 mt-3">
+          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || (state.retasting_required && !state.retasting_done)} title={state.retasting_required && !state.retasting_done ? 'Product Tasting must be done again for the new brand first.' : ''} onClick={() => onConfirm(current)}>
+            Confirm Brand
+          </button>
+          <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
+        </span>
+      )}
+      {isAdminRole && returning && (
+        <span className="grid gap-2 mt-3">
+          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+          <span className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setReturning(false)}>Cancel</button>
+            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(reason.trim()); setReturning(false); }}>Return with reason</button>
+          </span>
+        </span>
+      )}
+      {(state.history || []).length > 1 && (
+        <details className="mt-3">
+          <summary>Earlier submissions ({state.history.length - 1})</summary>
+          <ul className="m-[6px_0_0] p-[0_0_0_18px]">
+            {state.history.slice(0, -1).map((row) => (
+              <li key={row.id}>{row.final_brand?.name || brandName(row.final_brand_id)} · {row.status} · {manilaDateTimeLabel(row.submitted_at)}{row.return_reason ? ` · Returned: ${row.return_reason}` : ''}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function ScheduleSection({
+  editing, draft, isAdminRole, sectionRef, onPickChecked, onOpenCalendar, onView,
+  busy = false, onAttended = null, onReturn = null, onError = () => {},
+}) {
   const infoOf = (type) => editing?.activity_state?.[type] || {};
   // The Master Schedule session of each activity: the newest one the
   // applicant was not removed from (cancelled sessions are skipped).
@@ -739,7 +1313,11 @@ function ScheduleSection({ editing, draft, isAdminRole, sectionRef, onPickChecke
           const state = info.state || 'not_scheduled';
           const checked = Boolean(draft.milestones[tracked.key]);
           const saved = Boolean(info.attended) || state === 'attended';
-          const canMark = !saved && state === 'completed';
+          const latest = latestActivityOf(editing, tracked.type);
+          // New completions are decided with the proof in view (Mark Attended / Return); the
+          // checkbox stays only for older completions recorded without proof.
+          const legacyCompletion = !latest?.completion_submitted_at;
+          const canMark = !saved && state === 'completed' && legacyCompletion;
           const overdue = Boolean(info.overdue) && !saved;
           return (
             <li key={tracked.type} className="ap-activity-row flex items-center gap-3 flex-wrap p-[10px_12px] border border-[color:var(--border,_#262b36)] rounded-[12px] [background:color-mix(in_srgb,_var(--panel,_#12151c)_92%,_transparent)]" data-activity-type={tracked.type}>
@@ -769,7 +1347,7 @@ function ScheduleSection({ editing, draft, isAdminRole, sectionRef, onPickChecke
                   )}
                 </span>
               )}
-              {isAdminRole && (
+              {isAdminRole && legacyCompletion && (
                 <button
                   type="button"
                   role="checkbox"
@@ -787,6 +1365,9 @@ function ScheduleSection({ editing, draft, isAdminRole, sectionRef, onPickChecke
                   <span className="place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex later:flex-[0_0_17px] later:w-[17px] later:h-[17px] items-center justify-center later:border later:border-[#4a5268] rounded-[5px] later:text-[#071a12] later:[background:#0d1220] later:text-[10px] later:[.ap-check.checked_&]:border-[#25c77a] later:[.ap-check.checked_&]:[background:#25c77a]" aria-hidden="true">{checked && <FaCheck />}</span>
                   Attended
                 </button>
+              )}
+              {onAttended && (
+                <ActivitySubmission activity={latest} isAdminRole={isAdminRole} busy={busy} onAttended={onAttended} onReturn={onReturn} onError={onError} />
               )}
             </li>
           );
@@ -1023,6 +1604,22 @@ async function fetchApplicantDocument(applicantId, document) {
  * on the server asks first and deletes it server-side when the LOI is saved;
  * only then does the picker come back.
  */
+/** The assigned Sales user, or an "Unassigned" badge (Sales cannot act until Admin assigns one). */
+function AssignedSalesTag({ sales, prefix = 'Sales' }) {
+  if (sales?.full_name) return <small className="block mt-1 text-[#9aa6c4]">{prefix}: {sales.full_name}</small>;
+  return (
+    <small className="inline-flex items-center mt-1 p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] [background:rgba(251,_191,_36,_0.1)] text-[#fbbf24] text-[11px] font-[700]" title="Admin must assign a Sales user first.">
+      Unassigned
+    </small>
+  );
+}
+
+/** The LOI scan in force: the latest one not marked Replaced or Removed. */
+function currentLoiDocument(documents) {
+  const live = (documents || []).filter((file) => file.type === 'loi' && !file.removed_at && !file.replaced_at);
+  return live[live.length - 1] || null;
+}
+
 function LoiAttachment({
   draft, savedDocument, applicantId, interactive, disabled, onChange, onPreview, onError,
 }) {
@@ -1113,7 +1710,7 @@ function LoiAttachment({
 
   const remove = () => {
     if (attached.kind === 'saved') {
-      if (!window.confirm(`Remove "${attached.name}"? The saved file is deleted when this LOI record is saved.`)) return;
+      if (!window.confirm(`Remove "${attached.name}"? The file is never deleted: it stays in the history, marked Removed (or Replaced when you upload a new scan).`)) return;
       onChange({ ...draft, file: null, removeDocument: true });
       return;
     }
@@ -1160,8 +1757,11 @@ function LoiAttachment({
 
 function LoiPanel({
   draft, interactive, disabled, savedDocument, applicantId, receivedByName, onChange, onPreview, onError,
-  status = null, actions = null,
+  status = null, actions = null, canEditDetails = interactive, canVerify = interactive,
 }) {
+  // The assigned Sales user records the details and uploads the scan; Admin only verifies.
+  const detailsEditable = interactive && canEditDetails;
+  const verifyEditable = interactive && canVerify;
   const typeLabels = { physical: 'Hard copy', digital: 'Soft copy', email: 'Email', other: 'Other' };
   const verifyLabels = { not_verified: 'Not verified', verified: 'Verified', rejected: 'Rejected' };
   // A submission can never be dated after today (the API rejects it too).
@@ -1189,7 +1789,7 @@ function LoiPanel({
           draft={draft}
           savedDocument={savedDocument}
           applicantId={applicantId}
-          interactive={interactive}
+          interactive={detailsEditable}
           disabled={disabled}
           onChange={onChange}
           onPreview={onPreview}
@@ -1199,7 +1799,7 @@ function LoiPanel({
         <div className="grid gap-[9px] [align-content:start]">
           <div className="grid grid-cols-[130px_minmax(0,_1fr)] items-center gap-[10px] text-[#b9c1d5] text-[11.5px] later:[&_strong]:text-[#edf0fa] later:[&_strong]:font-[600] [&_input]:w-full [&_select]:w-full [&_textarea]:w-full">
             <span>Submission date</span>
-            {interactive ? (
+            {detailsEditable ? (
               <div className="grid gap-1">
                 <input
                   type="date"
@@ -1219,7 +1819,7 @@ function LoiPanel({
           </div>
           <div className="grid grid-cols-[130px_minmax(0,_1fr)] items-center gap-[10px] text-[#b9c1d5] text-[11.5px] later:[&_strong]:text-[#edf0fa] later:[&_strong]:font-[600] [&_input]:w-full [&_select]:w-full [&_textarea]:w-full">
             <span>Submission type</span>
-            {interactive ? (
+            {detailsEditable ? (
               <select
                 value={draft.submission_type}
                 disabled={disabled}
@@ -1235,7 +1835,7 @@ function LoiPanel({
           </div>
           <div className="grid grid-cols-[130px_minmax(0,_1fr)] items-center gap-[10px] text-[#b9c1d5] text-[11.5px] later:[&_strong]:text-[#edf0fa] later:[&_strong]:font-[600] [&_input]:w-full [&_select]:w-full [&_textarea]:w-full">
             <span>Verification</span>
-            {interactive ? (
+            {verifyEditable ? (
               <select
                 value={draft.verification_status}
                 disabled={disabled}
@@ -1350,7 +1950,7 @@ function ApprovalReceipt({ applicant, draft }) {
         </article>
 
         <article className="p-3 border border-[#272f44] rounded-[10px] [background:#0c111d] [&_h4]:m-[0_0_8px] [&_h4]:text-[#9aa6c4] [&_h4]:text-[10px] [&_h4]:tracking-[.07em] [&_h4]:uppercase [&_ul]:m-0 [&_ul]:p-0 [&_ul]:[list-style:none] [&_ul]:grid [&_ul]:gap-[6px] [&_li]:flex [&_li]:justify-between [&_li]:gap-[10px] [&_li]:text-[#b9c1d5] [&_li]:text-[11px] [&_li_strong]:text-[#edf0fa] [&_li_strong]:font-[600] [&_li_strong]:text-right">
-          <h4>4 · Payment Submission</h4>
+          <h4>4 · Payment Record</h4>
           <ul>
             <li><span>Package</span><strong>{summary.package_name || '—'}</strong></li>
             <li><span>Total required</span><strong>{money(summary.total_required_amount)}</strong></li>
@@ -1360,261 +1960,13 @@ function ApprovalReceipt({ applicant, draft }) {
         </article>
       </div>
 
-      {/* The payment entries are NOT repeated here: the full Payment Submission
+      {/* The payment entries are NOT repeated here: the full Payment Record
           section below this card is the single payment history. */}
     </section>
   );
 }
 
-/* ---------------- Application Detail: read-only report ---------------- */
-function ReportSection({ title, children }) {
-  return (
-    <section className="p-[12px_14px] border border-[#2a3041] rounded-[11px] [background:#141a28] later:[&_h4]:m-[0_0_9px] [&_h4]:text-[#9aa6c4] later:[&_h4]:text-[10.5px] [&_h4]:tracking-[.07em] [&_h4]:uppercase print:[body.ap-print-report_&]:[break-inside:avoid] print:[body.ap-print-report_&]:[background:#fff] print:[body.ap-print-report_&]:border-[#cbd5e1] print:[body.ap-print-report_&_h4]:text-[#111827]!">
-      <h4>{title}</h4>
-      <dl className="m-0 grid gap-[6px]">{children}</dl>
-    </section>
-  );
-}
-
-function ReportRow({ label, value }) {
-  return (
-    <div className="grid grid-cols-[190px_minmax(0,_1fr)] gap-[10px] text-[11.5px] later-2:[&_dt]:text-[#b9c1d5] [&_dd]:m-0 later:[&_dd]:text-[#edf0fa] max-[721px]:later:grid-cols-[1fr] max-[721px]:later:gap-[2px] print:[body.ap-print-report_&_dt]:text-[#111827]! print:[body.ap-print-report_&_dd]:text-[#111827]!">
-      <dt>{label}</dt>
-      <dd>{value || '—'}</dd>
-    </div>
-  );
-}
-
-function ApplicantReportDialog({ report, onClose }) {
-  const data = report?.data;
-  const titleId = useRef(`ap-report-title-${++dialogCounter}`).current;
-
-  // Flow-chart state comes from the same data the sections below render — the
-  // marks show real checkpoints, never a hardcoded "all done" assumption.
-  const stageDone = data ? Object.fromEntries(
-    data.approval.checkpoints.map((point) => [point.key, Boolean(point.done)]),
-  ) : {};
-  if (data) stageDone.approval = data.approval.approved_at != null;
-
-  useEffect(() => {
-    lockBodyScroll();
-    return unlockBodyScroll;
-  }, []);
-
-  useEffect(() => {
-    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const buildRows = () => {
-    if (!data) return [];
-    const rows = [];
-    data.qualification.items.forEach((item) => rows.push([
-      'Qualification', item.label, item.completed ? 'Completed' : 'Pending',
-      item.completed_at ? formatDate(item.completed_at) : '', item.recorded_by || '',
-    ]));
-    data.activities.items.forEach((item) => rows.push([
-      'Activities', item.label, item.completed ? 'Completed' : 'Pending',
-      item.completed_at ? formatDate(item.completed_at) : '', item.recorded_by || '',
-    ]));
-    rows.push(['LOI', 'Submission date', data.loi.submission_date ? formatDate(data.loi.submission_date) : '', '', data.loi.received_by || '']);
-    rows.push(['LOI', 'Verification', titleCase((data.loi.verification_status || '').replaceAll('_', ' ')), data.loi.verified_at ? formatDate(data.loi.verified_at) : '', data.loi.verified_by || '']);
-    data.payment.history.forEach((entry, index) => rows.push([
-      'Payment', `Transaction ${index + 1} · ${titleCase(entry.payment_type || '')}`, money(entry.amount),
-      entry.payment_date ? formatDate(entry.payment_date) : '', entry.verified_by || entry.recorded_by || '',
-    ]));
-    data.approval.checkpoints.forEach((point) => rows.push([
-      'Approval', point.label, point.done ? 'Verified' : 'Pending', '', '',
-    ]));
-    return rows;
-  };
-
-  const exportReport = (kind) => {
-    if (!data) return;
-    const headers = ['Stage', 'Item', 'Value', 'Date', 'By'];
-    // The permanent IDs head every export (the backup reference for the record).
-    const rows = [
-      ['Record', 'Applicant ID', data.applicant.applicant_code || '—', '', ''],
-      ['Record', 'Lead ID', data.applicant.lead_code || 'No source lead', '', ''],
-      ...buildRows(),
-    ];
-    const name = `${data.applicant.applicant_code || `applicant-${data.applicant.id}`}-${data.applicant.full_name}`.replace(/[^\w-]+/g, '-').toLowerCase();
-    const subtitle = `${data.applicant.full_name}${data.applicant.applicant_code ? ` · ${data.applicant.applicant_code}` : ''} · Approved ${data.applicant.approved_at ? formatDate(data.applicant.approved_at) : '—'}`;
-    if (kind === 'pdf') downloadPdf(name, headers, rows, 'Full Applicant Information', subtitle);
-    else downloadCsv(name, headers, rows);
-  };
-
-  const printReport = () => {
-    document.body.classList.add('ap-print-report');
-    const clear = () => {
-      document.body.classList.remove('ap-print-report');
-      window.removeEventListener('afterprint', clear);
-    };
-    window.addEventListener('afterprint', clear);
-    window.print();
-  };
-
-  return createPortal(
-    <div className="contents print:[body.ap-print-report_&]:block!">
-      <div className="fixed inset-0 flex items-center justify-center [box-sizing:border-box] p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] [overscroll-behavior:contain] max-[721px]:later:p-[10px] print:[body.ap-print-report_&]:static print:[body.ap-print-report_&]:p-0 print:[body.ap-print-report_&]:[background:#fff]" style={{ zIndex: 2147482600 }}>
-        <div className="ap-dialog flex flex-col [box-sizing:border-box] w-[min(900px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[10px] [background:#0f1626] text-[#e7ebf5] [box-shadow:0_28px_80px_rgba(2,_6,_18,_.65),_0_0_0_1px_rgba(129,_117,_255,_.05)] [&.is-medium]:w-[min(680px,_100%)] later:[&.is-small]:w-[min(460px,_100%)] max-[721px]:later:w-full max-[721px]:later:max-h-[calc(100dvh_-_20px)] print:[body.ap-print-report_&]:w-full print:[body.ap-print-report_&]:max-w-[none] print:[body.ap-print-report_&]:max-h-[none] print:[body.ap-print-report_&]:h-auto print:[body.ap-print-report_&]:border-0 print:[body.ap-print-report_&]:rounded-[0] print:[body.ap-print-report_&]:[box-shadow:none] later-3:[&.is-payment]:w-[min(1120px,_100%)] is-large ap-report-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-          <header className="flex flex-none items-center justify-between gap-4 p-[16px_22px] border-b border-b-[#1f2842] [&_h2]:m-0 [&_h2]:text-[#f1f3fb] [&_h2]:text-[17px] [&_h2]:font-[700] [&_h2]:leading-[1.35] [&_h2]:[overflow-wrap:anywhere] max-[721px]:later:p-[13px_16px] print:[body.ap-print-report_&]:hidden">
-            <h2 id={titleId}>
-              {data ? <>Applicant information · {data.applicant.full_name}</> : 'Applicant information'}
-            </h2>
-            <button type="button" className="inline-grid flex-none place-items-center w-[32px] h-[32px] p-0 border border-transparent rounded-[8px] [background:transparent] text-[#aab4c8] text-[15px] cursor-pointer [transition:color_.15s_ease,_background_.15s_ease,_border-color_.15s_ease] later-5:hover:text-[#fff] hover:[background:#1a2133] hover:border-[#303a50] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px]" onClick={onClose} aria-label="Close">
-              <FaXmark aria-hidden="true" />
-            </button>
-          </header>
-          <div className="ap-dialog-body flex-[1_1_auto] min-h-0 p-[18px_22px] overflow-y-auto [overscroll-behavior:contain] [scrollbar-width:thin] [scrollbar-color:#39435b_transparent] text-[#e7ebf5] [&::-webkit-scrollbar]:w-[7px] [&::-webkit-scrollbar-thumb]:[background:#39435b] [&::-webkit-scrollbar-thumb]:rounded-[99px] max-[721px]:later:p-[14px_16px] print:[body.ap-print-report_&]:overflow-visible print:[body.ap-print-report_&]:p-0 [.ap-dialog.is-payment_&]:flex [.ap-dialog.is-payment_&]:flex-col [.ap-dialog.is-payment_&]:overflow-y-auto [.ap-dialog.is-payment_&>*]:flex-none [.ap-dialog.is-payment_&>form#update-applicant-form]:flex [.ap-dialog.is-payment_&>form#update-applicant-form]:flex-col [.ap-dialog.is-payment_&>form#update-applicant-form]:min-h-0 max-[821px]:later:[.ap-dialog.is-payment_&]:overflow-y-auto later:[.ap-dialog.is-payment_&>form#update-applicant-form]:flex-none later-2:[.ap-dialog.is-payment_&]:overflow-x-hidden">
-            {report?.loading && <LoadingState />}
-            {report?.error && <Notice type="error">{report.error}</Notice>}
-            {data && (
-              <div className="grid gap-[14px]">
-                <header className="flex items-start justify-between gap-[18px] p-4 border border-[#2a3041] rounded-[12px] [background:#141a28] later-2:[&_h3]:m-[2px_0_4px] later:[&_h3]:text-[#fff] later-5:[&_h3]:text-[19px] [&_p]:m-0 later:[&_p]:text-[#9ba5bd] later-2:[&_p]:text-[11.5px] max-[721px]:flex-col print:[body.ap-print-report_&]:[break-inside:avoid] print:[body.ap-print-report_&]:[background:#fff] print:[body.ap-print-report_&]:border-[#cbd5e1] print:[body.ap-print-report_&_h3]:text-[#111827]! print:[body.ap-print-report_&_p]:text-[#111827]!">
-                  <div>
-                    <span className="block text-[#8f9bbd] text-[10px] font-[700] tracking-[.14em] uppercase">Approved applicant</span>
-                    <h3>{data.applicant.full_name}</h3>
-                    <p>
-                      {data.applicant.preferred_brand?.name || 'No brand'}
-                      {data.applicant.email ? ` · ${data.applicant.email}` : ''}
-                      {data.applicant.phone ? ` · ${data.applicant.phone}` : ''}
-                    </p>
-                    {data.applicant.address && <p>{data.applicant.address}</p>}
-                    {/* Overview: the permanent IDs — the backup reference for this record. */}
-                    <dl className="flex flex-wrap gap-[6px_18px] m-[8px_0_0] later-2:[&_div]:grid later-2:[&_div]:gap-[1px] later-4:[&_dt]:text-[#9ba5bd] later-3:[&_dt]:text-[10px] [&_dt]:tracking-[.04em] [&_dt]:uppercase [&_dd]:m-0">
-                      <div><dt>Applicant ID</dt><dd><RecordCode code={data.applicant.applicant_code} label="Applicant ID" size="md" /></dd></div>
-                      <div><dt>Source Lead ID</dt><dd>{data.applicant.lead_code
-                        ? <RecordCode code={data.applicant.lead_code} label="Lead ID" size="md" />
-                        : <span className="record-code inline-flex items-center gap-1 max-w-full whitespace-nowrap [&.is-empty]:text-[color:var(--muted,_#8f9ab2)] is-empty">No source lead</span>}</dd></div>
-                    </dl>
-                  </div>
-                  <div className="grid gap-[2px] p-[8px_12px] border border-[#2f6b4b] rounded-[10px] [background:rgba(20,_83,_55,_.25)] text-right later:[&_span]:text-[#6ee7b7] [&_span]:text-[9.5px] later:[&_span]:tracking-[.07em] [&_span]:uppercase later-2:[&_strong]:text-[#d1fae5] later-2:[&_strong]:text-[12px] later-4:[&_small]:text-[#9ba5bd] later-3:[&_small]:text-[10px]">
-                    <span>Approved</span>
-                    <strong>{formatDate(data.applicant.approved_at)}</strong>
-                    <small>{data.approval.approved_by || '—'}</small>
-                  </div>
-                </header>
-
-                <div className="flex flex-wrap gap-2 items-center p-[10px_12px] border border-[#2a3041] rounded-[10px] [background:#0c111d] print:[body.ap-print-report_&]:[break-inside:avoid] print:[body.ap-print-report_&]:[background:#fff] print:[body.ap-print-report_&]:border-[#cbd5e1]" aria-label="Approval process">
-                  {REPORT_STAGES.map((stage) => (
-                    <div className="flex items-center gap-[6px] text-[#9ba5bd] text-[10px] [&_.ap-node]:inline-grid [&_.ap-node]:w-[20px] [&_.ap-node]:h-[20px] [&_.ap-node]:place-items-center [&_.ap-node]:rounded-[50%] [&_.ap-node]:[background:rgba(52,_211,_153,_.16)] [&_.ap-node]:text-[#34d399] [&_.ap-node]:text-[9px]" key={stage.key}>
-                      <span className="ap-node relative z-1 place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex items-center justify-center later:w-[25px] later:h-[25px] rounded-[50%] later:[background:#20263b] later:border later:border-[#3a4261] later:text-[#9ba5bd] later:text-[10px] font-[700] [#update-applicant-form_&]:w-[23px] [#update-applicant-form_&]:h-[23px]" aria-hidden="true">{stage.key === 'approval' ? (stageDone.approval ? <FaCheck /> : '—') : (stageDone[stage.key] ? <FaCheck /> : '—')}</span>
-                      <small>{stage.label}</small>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-[6px] text-[#9ba5bd] text-[10px] [&_.ap-node]:inline-grid [&_.ap-node]:w-[20px] [&_.ap-node]:h-[20px] [&_.ap-node]:place-items-center [&_.ap-node]:rounded-[50%] [&_.ap-node]:[background:rgba(52,_211,_153,_.16)] [&_.ap-node]:text-[#34d399] [&_.ap-node]:text-[9px]">
-                    <span className="ap-node relative z-1 place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex items-center justify-center later:w-[25px] later:h-[25px] rounded-[50%] later:[background:#20263b] later:border later:border-[#3a4261] later:text-[#9ba5bd] later:text-[10px] font-[700] [#update-applicant-form_&]:w-[23px] [#update-applicant-form_&]:h-[23px]" aria-hidden="true">{stageDone.approval ? <FaCheck /> : '—'}</span>
-                    <small>6 · Approved</small>
-                  </div>
-                </div>
-
-                <ReportSection title="Stage 1 · Qualification">
-                  {data.qualification.items.map((item) => (
-                    <ReportRow
-                      key={item.key}
-                      label={item.label}
-                      value={item.completed
-                        ? `${item.completed_at ? formatDate(item.completed_at) : 'Completed'}${item.recorded_by ? ` · ${item.recorded_by}` : ''}`
-                        : 'Pending'}
-                    />
-                  ))}
-                  <ReportRow label="Qualified on" value={data.qualification.qualified_at ? formatDate(data.qualification.qualified_at) : ''} />
-                  <ReportRow label="Qualified by" value={data.qualification.qualified_by} />
-                </ReportSection>
-
-                <ReportSection title="Stage 2 · Activities accomplishment">
-                  {data.activities.items.map((item) => (
-                    <ReportRow
-                      key={item.key}
-                      label={item.label}
-                      value={[
-                        item.scheduled_at ? `Scheduled ${fmtDateTime(item.scheduled_at)}` : 'Not scheduled',
-                        item.completed_at ? `Completed ${formatDate(item.completed_at)}` : null,
-                        item.recorded_by ? `Recorded by ${item.recorded_by}` : null,
-                      ].filter(Boolean).join(' · ')}
-                    />
-                  ))}
-                </ReportSection>
-
-                <ReportSection title="Stage 3 · LOI submission">
-                  <ReportRow label="Submitted date" value={data.loi.submission_date ? formatDate(data.loi.submission_date) : ''} />
-                  <ReportRow label="Received by" value={data.loi.received_by} />
-                  <ReportRow label="Submission type" value={titleCase((data.loi.submission_type || '').replaceAll('_', ' '))} />
-                  <ReportRow label="Verification" value={titleCase((data.loi.verification_status || '').replaceAll('_', ' '))} />
-                  <ReportRow label="LOI status" value={data.loi.status === 'pending' ? 'Pending' : data.loi.status === 'complete' ? 'Complete' : ''} />
-                  <ReportRow label="Verified on" value={data.loi.verified_at ? formatDate(data.loi.verified_at) : ''} />
-                  <ReportRow label="Verified by" value={data.loi.verified_by} />
-                  <ReportRow label="LOI document" value={data.loi.document?.original_name} />
-                </ReportSection>
-
-                <ReportSection title="Stage 4 · Payment submission">
-                  <ReportRow label="Package" value={data.payment.plan.package_name} />
-                  <ReportRow label="Total required" value={data.payment.plan.total_required_amount == null ? '' : money(data.payment.plan.total_required_amount)} />
-                  {/* Discount snapshot (saved numbers; never re-derived from a promo). */}
-                  <ReportRow label="Original price" value={data.payment.plan.discount ? money(data.payment.plan.discount.original_amount) : ''} />
-                  <ReportRow label="Discount" value={data.payment.plan.discount ? (data.payment.plan.discount.discount_percent > 0 ? `${data.payment.plan.discount.discount_percent}%` : 'None') : ''} />
-                  <ReportRow label="Promo" value={data.payment.plan.discount?.promo_name} />
-                  <ReportRow label="Final total" value={data.payment.plan.discount ? money(data.payment.plan.discount.final_amount) : ''} />
-                  <ReportRow label="Discount set by" value={data.payment.plan.discount?.set_by} />
-                  <ReportRow label="Discount date" value={data.payment.plan.discount?.set_at ? formatDate(data.payment.plan.discount.set_at) : ''} />
-                  <ReportRow label="Initial payment" value={data.payment.plan.initial_payment_amount == null ? '' : money(data.payment.plan.initial_payment_amount)} />
-                  <ReportRow label="Verified payment" value={money(data.payment.summary.verified_amount)} />
-                  <ReportRow label="Pending verification" value={money(data.payment.summary.pending_amount)} />
-                  <ReportRow label="Remaining balance" value={data.payment.summary.remaining_balance == null ? '' : money(data.payment.summary.remaining_balance)} />
-                  <ReportRow label="Fully paid on" value={data.payment.summary.fully_paid_at ? formatDate(data.payment.summary.fully_paid_at) : ''} />
-                  <ReportRow label="Progress" value={`${Math.round(Number(data.payment.summary.payment_percent) || 0)}%`} />
-                </ReportSection>
-
-                {data.payment.history.length > 0 && (
-                  <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer [&_table]:text-[11px]">
-                    <table>
-                      <thead><tr><th>#</th><th>Date</th><th>Type</th><th>Method</th><th>Amount</th><th>Status</th><th>Submitted to</th><th>Confirmed by</th></tr></thead>
-                      <tbody>
-                        {data.payment.history.map((entry, index) => (
-                          <tr key={entry.id}>
-                            <td>{index + 1}</td>
-                            <td>{formatDate(entry.payment_date)}</td>
-                            <td>{titleCase(entry.payment_type || '—')}</td>
-                            <td>{titleCase(entry.payment_method || '—')}</td>
-                            <td>{money(entry.amount)}</td>
-                            <td><StatusBadge value={entry.status} /></td>
-                            <td>{entry.recorded_by || '—'}</td>
-                            <td>{entry.verified_by ? `${entry.verified_by}${entry.verified_at ? ` · ${formatDate(entry.verified_at)}` : ''}` : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                <ReportSection title="Stage 5 · Approval">
-                  {data.approval.checkpoints.map((point) => (
-                    <ReportRow key={point.key} label={point.label} value={point.done ? 'Verified' : 'Pending'} />
-                  ))}
-                  <ReportRow label="Reviewed on" value={data.approval.reviewed_at ? fmtDateTime(data.approval.reviewed_at) : ''} />
-                  <ReportRow label="Reviewed by" value={data.approval.reviewed_by} />
-                  <ReportRow label="Approved on" value={data.approval.approved_at ? fmtDateTime(data.approval.approved_at) : ''} />
-                  <ReportRow label="Approved by" value={data.approval.approved_by} />
-                  <ReportRow label="Approval remarks" value={data.approval.remarks} />
-                </ReportSection>
-              </div>
-            )}
-          </div>
-          <footer className="ap-dialog-foot flex flex-none items-center justify-end gap-[10px] p-[14px_22px] border-t border-t-[#1f2842] [background:rgba(8,_12,_22,_.45)] max-[721px]:later:p-[12px_16px] max-[721px]:flex-wrap [&_.ap-modal-save]:min-h-[36px] [&_.ap-modal-save]:p-[0_16px] [&_.ap-modal-save]:rounded-[7px] [&_.ap-modal-save]:[box-shadow:none] [&_.ap-modal-save]:text-[10px] [&_.ap-modal-save]:font-[750] [&_.ap-modal-save]:tracking-[.08em] [&_.ap-modal-save]:border [&_.ap-modal-save]:border-[#5656db] [&_.ap-modal-save]:[background:linear-gradient(110deg,_#3978e8,_#7951dc)] [&_.ap-modal-save]:text-[#fff] [&_.ap-modal-save:hover:not(:disabled)]:[background:linear-gradient(110deg,_#4b88f2,_#8962e8)] [&_.ap-modal-save:hover:not(:disabled)]:[box-shadow:none] [&_.ap-modal-save:hover:not(:disabled)]:[filter:none] [&_.ap-modal-save:hover:not(:disabled)]:[transform:none] print:[body.ap-print-report_&]:hidden">
-            <button type="button" onClick={printReport} disabled={!data}><FaPrint aria-hidden="true" /> Print</button>
-            <button type="button" onClick={() => exportReport('csv')} disabled={!data}><FaFileCsv aria-hidden="true" /> Export</button>
-            <button type="button" onClick={() => exportReport('pdf')} disabled={!data}><FaFilePdf aria-hidden="true" /> Download PDF</button>
-            <span className="flex-1" />
-            <button type="button" className="[.ap-dialog-foot_&]:min-h-[36px] [.ap-dialog-foot_&]:p-[0_16px] [.ap-dialog-foot_&]:rounded-[7px] [.ap-dialog-foot_&]:[box-shadow:none] [.ap-dialog-foot_&]:text-[10px] [.ap-dialog-foot_&]:font-[750] [.ap-dialog-foot_&]:tracking-[.08em] [.ap-dialog-foot_&]:border [.ap-dialog-foot_&]:border-[#592b35] [.ap-dialog-foot_&]:[background:#351923] [.ap-dialog-foot_&]:text-[#ffb2b8] [.ap-dialog-foot_&:hover:not(:disabled)]:border-[#8a3b49] [.ap-dialog-foot_&:hover:not(:disabled)]:[background:#49202b]" onClick={onClose}>CLOSE</button>
-          </footer>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
+/* The Application Detail report lives in components/applicants/ApplicationDetailReport.jsx. */
 
 export default function Applicants() {
   const { role, user } = useAuth();
@@ -1625,6 +1977,11 @@ export default function Applicants() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [detailFolder, setDetailFolder] = useState('active');
+  // Date range and the other server-side filters (Pipeline, Archive, Application Detail).
+  const [filters, setFilters] = useState({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' });
+  const filterParams = Object.fromEntries(Object.entries(filters).filter(([key, value]) => value && !(key === 'date_basis' && !filters.from && !filters.to)));
+  const filterKey = JSON.stringify(filterParams);
+  const [exporting, setExporting] = useState(false);
   const [detailView, setDetailView] = useState(readDetailView);
   const [saving, setSaving] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
@@ -1640,6 +1997,12 @@ export default function Applicants() {
   // Phase 2: [Confirm Qualified] opens a double-confirmation dialog; the schedule
   // window in the Qualified stage stays locked until [Set Schedule] is clicked.
   const [qualifiedConfirm, setQualifiedConfirm] = useState(false);
+  // Required reasons (the API refuses fewer than 5 characters).
+  const [qualifiedRemarks, setQualifiedRemarks] = useState('');
+  const [undoLoiForm, setUndoLoiForm] = useState(null);
+  // Assigned Sales user: Admin assigns or reassigns (a reassignment needs a reason).
+  const [assignForm, setAssignForm] = useState(null);
+  const [salesUsers, setSalesUsers] = useState([]);
   const [loiDraft, setLoiDraft] = useState(null);
   // Lightbox payload for a previewed LOI image ({ url, name }), or null.
   const [loiLightbox, setLoiLightbox] = useState(null);
@@ -1649,7 +2012,7 @@ export default function Applicants() {
   const [rejectForm, setRejectForm] = useState(null);
   // Application Detail read-only report.
   const [report, setReport] = useState(null);
-  // Payment Submission stage: inline payment entry form, inline Total required
+  // Payment Record stage: inline payment entry form, inline Total required
   // editor, and the Admin "Return to Sales" note dialog.
   // ADD PAYMENT only appends to `paymentDrafts` — it never calls the API.
   // Save New Record turns the drafts into one pending Sales Report.
@@ -1668,7 +2031,7 @@ export default function Applicants() {
   const [savingTotal, setSavingTotal] = useState(false);
   const [totalEditError, setTotalEditError] = useState('');
   const [returnForm, setReturnForm] = useState(null);
-  // UI-only presentation state for the redesigned Payment Submission panel:
+  // UI-only presentation state for the redesigned Payment Record panel:
   // Admin's inline Total-required edit and the collapsed Sales Report card.
   // No behavior, handler or API call depends on them.
   const [totalEditing, setTotalEditing] = useState(false);
@@ -1708,6 +2071,7 @@ export default function Applicants() {
           per_page: PAGE_SIZE,
           search,
           status,
+          ...filterParams,
           ...(tab === 'archived' ? { archived: 1 } : {}),
         }),
       api.get('/brands'),
@@ -1715,7 +2079,7 @@ export default function Applicants() {
         ? api.get('/applicants/active-franchisees', { page, per_page: PAGE_SIZE, search })
         : Promise.resolve({ data: [] }),
       tab === 'detail'
-        ? api.get('/applicants/application-detail', { page, per_page: DETAIL_PAGE_SIZE, search, folder: detailFolder })
+        ? api.get('/applicants/application-detail', { page, per_page: DETAIL_PAGE_SIZE, search, folder: detailFolder, status, ...filterParams })
         : Promise.resolve({ data: [], meta: null }),
     ]);
 
@@ -1730,7 +2094,48 @@ export default function Applicants() {
       detailRows: detail.data || [],
       detailMeta: detail.meta || null,
     };
-  }, [page, search, status, tab, detailFolder]);
+  }, [page, search, status, tab, detailFolder, filterKey]);
+
+  // Assigned Sales choices: Admin picks any Sales user; a Sales user filters to their own.
+  const [salesChoices, setSalesChoices] = useState([]);
+  useEffect(() => {
+    if (role !== 'admin') return undefined;
+    let active = true;
+    api.get('/applicants/sales-users').then((result) => { if (active) setSalesChoices(result.data || []); }).catch(() => {});
+    return () => { active = false; };
+  }, [role]);
+
+  /** Exports every filtered row (all pages), with the existing CSV/PDF export. */
+  const exportFiltered = async (kind) => {
+    setExporting(true);
+    setActionError('');
+    try {
+      const detail = tab === 'detail';
+      const path = detail ? '/applicants/application-detail' : '/applicants';
+      const base = detail ? { search, folder: detailFolder, status, ...filterParams } : { search, status, ...filterParams, ...(tab === 'archived' ? { archived: 1 } : {}) };
+      const all = [];
+      for (let p = 1; p <= 100; p += 1) {
+        const result = await api.get(path, { ...base, page: p, per_page: 100 });
+        all.push(...(result.data || []));
+        if (!result.meta || p >= Number(result.meta.last_page || 1)) break;
+      }
+      const headers = ['Applicant ID', 'Name', 'Email', 'Phone', 'Brand', 'Stage', 'Days in stage', 'Overdue', 'Assigned Sales', 'Date applied', 'Approved', 'Rejected'];
+      const rows = all.map((a) => [
+        a.applicant_code || '', a.full_name || '', a.email || '', a.phone || '', a.preferred_brand?.name || a.brand || '',
+        a.status_label || titleCase(String(a.status || '').replace(/_/g, ' ')), a.days_in_stage ?? '', a.overdue ? 'Yes' : 'No',
+        a.assigned_sales?.full_name || 'Unassigned', a.application_date ? formatDate(a.application_date) : '',
+        a.approved_at ? formatDate(a.approved_at) : '', a.rejected_at ? formatDate(a.rejected_at) : '',
+      ]);
+      const range = filters.from || filters.to ? `${filters.from || '…'} to ${filters.to || '…'} (${filters.date_basis})` : 'All dates';
+      const name = `applicants-${tab}-${new Date().toISOString().slice(0, 10)}`;
+      if (kind === 'pdf') downloadPdf(name, headers, rows, 'Applicants', `${range} · ${rows.length} record(s)`);
+      else downloadCsv(name, headers, rows);
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const canManage = ['admin', 'sales'].includes(role);
   // One role check drives the whole modal: the tracker, the checklist and every
@@ -1738,6 +2143,8 @@ export default function Applicants() {
   const isSalesRole = role === 'sales';
   const canEditDetails = can(role, 'applicants.update');
   const isAdminRole = can(role, 'applicants.transition');
+  // Only the assigned Sales user acts for an applicant (the API enforces the same).
+  const isAssignedSales = isSalesRole && Boolean(editing?.assigned_sales_user_id) && Number(editing.assigned_sales_user_id) === Number(user?.id);
 
   const closeEditor = () => {
     setEditing(null);
@@ -1942,6 +2349,74 @@ export default function Applicants() {
     }
   };
 
+  /* ---------- Activity review (Admin) and Brand Confirmation ---------- */
+  const runRequest = async (request, message) => {
+    if (!editing) return;
+    setActing(true);
+    setActionError('');
+    setSuccess('');
+    try {
+      const result = await request();
+      await refreshApplicant(editing.id);
+      setSuccess(result?.message || message);
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    } finally {
+      setActing(false);
+    }
+  };
+  const setAgreedAmount = (form) => runRequest(() => api.patch(`/applicants/${editing.id}/payment-plan`, form), 'Agreed Package Amount saved.');
+  const submitPaymentEntry = (body) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries`, body), 'Payment recorded — waiting for Admin to verify it.');
+  const verifyPaymentEntry = (id) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${id}/verify`, {}), 'Payment verified.');
+  const returnPaymentEntry = (id, reason) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${id}/return`, { reason }), 'Payment returned to Sales.');
+  const logApplicantFollowUp = (body) => runRequest(() => api.post(`/applicants/${editing.id}/follow-ups`, body), 'Follow-up logged.');
+  const submitRequirement = (key, body) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}`, body), 'Sent to Admin for review.');
+  const acceptRequirement = (key) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/accept`, {}), 'Requirement accepted.');
+  const returnRequirement = (key, reason) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/return`, { reason }), 'Requirement returned to Sales.');
+  const [loiReturn, setLoiReturn] = useState(null);
+  const returnLoi = (reason) => runRequest(async () => { const result = await api.post(`/applicants/${editing.id}/loi/return`, { reason }); setLoiReturn(null); return result; }, 'LOI returned to Sales.');
+  const markActivityAttended = (activity) => runRequest(() => api.post(`/activities/${activity.id}/attended`, {}), 'Marked Attended.');
+  const returnActivity = (activity, reason) => runRequest(() => api.post(`/activities/${activity.id}/return`, { reason }), 'Returned to Sales.');
+  const submitBrand = (form) => runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation`, form), 'Brand Confirmation sent to Admin.');
+  const returnBrand = (reason) => runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation/return`, { reason }), 'Brand Confirmation returned to Sales.');
+  // Confirm Brand asks twice: the second dialog names the brand and the applicant.
+  const [brandConfirmDialog, setBrandConfirmDialog] = useState(null);
+  const confirmBrand = async () => {
+    setBrandConfirmDialog(null);
+    await runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation/confirm`, { confirmed: true }), 'Brand confirmed and locked.');
+  };
+
+  /* ---------- Assigned Sales user (Admin) ---------- */
+  const openAssign = async () => {
+    setAssignForm({ assigned_sales_user_id: '', reason: '' });
+    try {
+      const result = await api.get('/applicants/sales-users');
+      setSalesUsers(result.data || []);
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    }
+  };
+
+  const saveAssignment = async () => {
+    if (!editing || !assignForm) return;
+    setActing(true);
+    setActionError('');
+    setSuccess('');
+    try {
+      const result = await api.post(`/applicants/${editing.id}/assign-sales`, {
+        assigned_sales_user_id: assignForm.assigned_sales_user_id ? Number(assignForm.assigned_sales_user_id) : null,
+        reason: assignForm.reason.trim() || null,
+      });
+      setAssignForm(null);
+      await refreshApplicant(editing.id);
+      setSuccess(result.message || 'Sales assignment saved.');
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    } finally {
+      setActing(false);
+    }
+  };
+
   /* ---------- Phase 2: stage actions driven by the single primary button ---------- */
   const refreshApplicant = async (id) => {
     detailCache.current.clear();
@@ -1966,9 +2441,10 @@ export default function Applicants() {
           // API requires; the Qualified date is stamped by this call.
           await api.post(`/applicants/${editing.id}/confirm-qualified`, {
             confirmed: true,
-            remarks: payload?.remarks || `Qualified confirmed by ${authLabel}`,
+            remarks: payload?.remarks || '',
           });
           setQualifiedConfirm(false);
+          setQualifiedRemarks('');
           setSuccess('Applicant confirmed as Qualified — the Qualified date is saved.');
           break;
         case 'setSchedule':
@@ -1991,8 +2467,9 @@ export default function Applicants() {
         case 'undoLoi':
           await api.patch(`/applicants/${editing.id}/status`, {
             status: 'scheduled',
-            remarks: 'LOI confirmation undone.',
+            remarks: payload?.remarks || '',
           });
+          setUndoLoiForm(null);
           setSuccess('LOI confirmation undone — back to Scheduled.');
           break;
         case 'review':
@@ -2028,10 +2505,10 @@ export default function Applicants() {
   //  - [Complete]: Verified + submission date; a soft copy (Soft copy / Email)
   //    also needs its uploaded image. Hard copy: the image is optional.
   //  - [Proceed]: soft copy only, type + date — image/verification may follow.
-  //    The LOI becomes Pending and the applicant moves to Payment Submission.
+  //    The LOI becomes Pending and the applicant moves to Payment Record.
   //  - Uploading never completes the LOI.
   const loiIsSoft = LOI_SOFT_TYPES.includes(loiDraft?.submission_type);
-  const loiSavedDocument = (editing?.documents || []).find((file) => file.type === 'loi') || null;
+  const loiSavedDocument = currentLoiDocument(editing?.documents);
   const loiHasImage = Boolean(loiDraft?.file) || Boolean(loiSavedDocument && !loiDraft?.removeDocument);
   const loiDateOk = Boolean(loiDraft?.submission_date) && loiDraft.submission_date <= localDateInputValue();
   const loiPending = editing?.loi_status === 'pending';
@@ -2049,15 +2526,23 @@ export default function Applicants() {
   const saveLoiRecord = async () => {
     const removedDocument = loiDraft.removeDocument ? loiSavedDocument : null;
     const body = new FormData();
-    if (loiDraft.submission_date) body.append('submission_date', loiDraft.submission_date);
-    body.append('received_by', loiDraft.received_by || authLabel);
-    body.append('submission_type', loiDraft.submission_type);
-    body.append('verification_status', loiDraft.verification_status);
+    if (isAdminRole) {
+      // Admin only verifies: the details and the scan come from the assigned Sales user.
+      body.append('verification_status', loiDraft.verification_status);
+    } else {
+      if (removedDocument && !loiDraft.file) {
+        throw new Error('Choose the replacement scan. The old file stays in the history, marked Replaced.');
+      }
+      if (loiDraft.submission_date) body.append('submission_date', loiDraft.submission_date);
+      body.append('received_by', loiDraft.received_by || authLabel);
+      body.append('submission_type', loiDraft.submission_type);
+      if (loiDraft.file) body.append('file', loiDraft.file);
+    }
     if (loiDraft.remarks.trim()) body.append('remarks', loiDraft.remarks.trim());
-    if (loiDraft.file) body.append('file', loiDraft.file);
     await api.post(`/applicants/${editing.id}/loi`, body);
-    // Upload first, then remove the old file: the history keeps both rows.
-    if (removedDocument) {
+    // Admin may remove an unverified scan (it is only marked Removed). A Sales upload already
+    // marks the old scan Replaced, so nothing else is sent.
+    if (removedDocument && isAdminRole) {
       await api.delete(`/applicants/${editing.id}/documents/${removedDocument.id}`);
     }
   };
@@ -2078,10 +2563,10 @@ export default function Applicants() {
         });
         setSuccess(loiPending
           ? 'LOI Complete — For Approval is no longer blocked by the LOI.'
-          : 'LOI Complete — the applicant is now at Payment Submission.');
+          : 'LOI Complete — the applicant is now at Payment Record.');
       } else if (kind === 'proceed') {
         await api.post(`/applicants/${editing.id}/loi/proceed`, {});
-        setSuccess('Moved to Payment Submission with the LOI PENDING. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
+        setSuccess('Moved to Payment Record with the LOI PENDING. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
       } else {
         setSuccess('LOI record saved. Uploading does not complete the LOI — click Complete when it is verified.');
       }
@@ -2095,27 +2580,47 @@ export default function Applicants() {
   const completeLoiStage = () => runLoiAction('complete');
 
   /** The LOI action row (Admin): Save · Proceed (soft copy, LOI stage) · Complete. */
-  const loiActions = isAdminRole && loiDraft ? (
+  const loiActions = (isAdminRole || isAssignedSales) && loiDraft ? (
     <div className="mt-[14px] pt-3 border-t border-t-[#293246] [&_.ap-actions]:justify-end [&_.ap-actions]:flex-wrap [&_.ap-actions]:gap-2">
       {loiPending && (
         <p className="m-[0_0_10px] p-[10px_12px] rounded-[10px] border border-[rgba(245,_158,_11,_.4)] [background:rgba(245,_158,_11,_.1)] text-[#fde3a7] text-[13px] leading-[1.5]" role="status">
-          <strong>LOI Pending.</strong> Upload the soft-copy image, mark it Verified and click Complete. For Approval stays blocked until then.
+          <strong>LOI Pending.</strong> {isAdminRole ? 'The assigned Sales user uploads the soft-copy scan; then mark it Verified and click Complete.' : 'Upload the soft-copy scan; Admin then verifies it and completes the LOI.'} For Approval stays blocked until then.
         </p>
+      )}
+      {editing?.requirements?.loi && (
+        <p className="m-[0_0_10px] text-[14px] text-[#c9d0e0]">
+          Scanned LOI (required for every LOI): <RequirementStatus status={editing.requirements.loi.status} />
+          {editing.requirements.loi.status === 'returned' && <span className="block text-[#fbbf24]">Return reason: {editing.requirements.loi.return_reason}</span>}
+        </p>
+      )}
+      {isAdminRole && editing?.requirements?.loi?.status === 'submitted' && (
+        loiReturn === null ? (
+          <button type="button" className="mb-2" disabled={acting} onClick={() => setLoiReturn('')}>Return LOI to Sales</button>
+        ) : (
+          <span className="grid gap-2 mb-2">
+            <textarea rows={2} value={loiReturn} onChange={(e) => setLoiReturn(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+            <span className="flex gap-2">
+              <button type="button" disabled={acting} onClick={() => setLoiReturn(null)}>Cancel</button>
+              <button type="button" disabled={acting || loiReturn.trim().length < 5} onClick={() => void returnLoi(loiReturn.trim())}>Return with reason</button>
+            </span>
+          </span>
+        )
       )}
       <div className="ap-actions flex flex-wrap items-center gap-[10px] mt-[14px]">
         <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={acting} onClick={() => void runLoiAction('save')}>
           Save LOI
         </button>
-        {draft?.status === 'loi_submitted' && loiIsSoft && (
+        {isAdminRole && draft?.status === 'loi_submitted' && loiIsSoft && (
           <button
             type="button"
             disabled={acting || Boolean(loiProceedIssue)}
-            title={loiProceedIssue || 'Move to Payment Submission now; the LOI stays Pending.'}
+            title={loiProceedIssue || 'Move to Payment Record now; the LOI stays Pending.'}
             onClick={() => void runLoiAction('proceed')}
           >
             Proceed
           </button>
         )}
+        {isAdminRole && (
         <button
           type="button"
           className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
@@ -2125,13 +2630,14 @@ export default function Applicants() {
         >
           {acting ? 'SAVING…' : 'Complete'}
         </button>
+        )}
       </div>
-      {draft?.status === 'loi_submitted' && loiIsSoft && !loiReady && !loiProceedIssue && (
+      {isAdminRole && draft?.status === 'loi_submitted' && loiIsSoft && !loiReady && !loiProceedIssue && (
         <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0">
-          [Proceed] moves to Payment Submission with the LOI <strong>Pending</strong> — you must come back here to upload the image, verify it and Complete it.
+          [Proceed] moves to Payment Record with the LOI <strong>Pending</strong> — you must come back here to upload the image, verify it and Complete it.
         </p>
       )}
-      {!loiReady && <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">Complete: {loiCompleteIssue}</p>}
+      {isAdminRole && !loiReady && <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">Complete: {loiCompleteIssue}</p>}
     </div>
   ) : null;
 
@@ -2190,7 +2696,7 @@ export default function Applicants() {
     try {
       await api.patch(`/applicants/${editing.id}/status`, {
         status: 'rejected',
-        remarks: rejectForm.remarks.trim() || `Rejected by ${authLabel}`,
+        remarks: rejectForm.remarks.trim(),
       });
       setRejectForm(null);
       closeEditor();
@@ -2248,7 +2754,7 @@ export default function Applicants() {
     });
   };
 
-  /* ---------- Payment Submission stage: Sales collects, Admin confirms ---------- */
+  /* ---------- Payment Record stage: Sales collects, Admin confirms ---------- */
 
   /**
    * Sales [ADD PAYMENT]: append a temporary draft. No API call, no database
@@ -2343,7 +2849,7 @@ export default function Applicants() {
 
   /**
    * Admin [Confirm Payment] on the Sales Report card: LOCAL preview only. It
-   * fills the Payment Submission / Payment Record sections in this modal view.
+   * fills the Payment Record / Payment Record sections in this modal view.
    * SAVE APPLICANT is what persists it; closing discards the preview.
    */
   const confirmReportPreview = () => {
@@ -2540,8 +3046,10 @@ export default function Applicants() {
   // REJECTED — the remarks in payment_request are the Admin's reason.
   const paymentConfirmed = Boolean(editing?.payment_confirmed);
   const paymentsVisible = role === 'admin' || role === 'sales';
+  // FEATURE_PAYMENT_ADVANCED (off by default) comes from /auth/me: the hidden features never show without it.
+  const paymentAdvancedUi = Boolean(user?.features?.payment_advanced);
   const paymentSummary = editing?.payment_summary || null;
-  // Payment Submission state machine payload (state, derived totals, entry flags).
+  // Payment Record state machine payload (state, derived totals, entry flags).
   const paymentStage = editing?.payment_stage || null;
   const paymentPercent = Number(paymentSummary?.payment_percent) || 0;
   // Payment stage draft for the inline Sales form (new entry, or editing one).
@@ -2755,7 +3263,13 @@ export default function Applicants() {
   // Sales user initials for the compact Sales Report avatar (e.g. "SU").
   const reportInitials = String(pendingReport?.requested_by || 'Sales').trim()
     .split(/\s+/).map((word) => word[0]).join('').slice(0, 2).toUpperCase() || 'SU';
-  const qualificationDone = QUALIFICATION_ITEMS.every(({ key }) => Boolean(draft?.milestones?.[key]));
+  // Confirm Qualified needs every Qualification requirement Accepted (older records keep their checklist).
+  const qualificationSummary = editing?.requirements?.summary?.qualification;
+  const qualificationDone = qualificationSummary
+    ? qualificationSummary.complete || (qualificationSummary.legacy && QUALIFICATION_ITEMS.every(({ key }) => Boolean(draft?.milestones?.[key])))
+    : QUALIFICATION_ITEMS.every(({ key }) => Boolean(draft?.milestones?.[key]));
+  const qualificationMissing = qualificationSummary?.missing || [];
+  const activationMissing = editing?.requirements?.summary?.activation?.missing || [];
   const primary = draft
     ? resolvePrimaryAction({
       stage,
@@ -2765,6 +3279,8 @@ export default function Applicants() {
         .map((tracked) => tracked.label),
       loiReady,
       qualificationDone,
+      qualificationMissing,
+      activationMissing,
       paymentPercent,
       isAdminRole,
       isSalesRole,
@@ -2779,9 +3295,15 @@ export default function Applicants() {
   const nextActivity = (() => {
     const state = editing?.activity_state;
     if (!state) return null;
-    const index = TRACKED_ACTIVITIES.findIndex((tracked) => !state?.[tracked.type]?.done);
-    if (index <= 0) return null; // nothing Done yet, or all three Done
+    // A brand other than the tasted one: Set Again books the new Product Tasting first.
+    const retasting = editing?.brand_confirmation?.retasting_required && !editing?.brand_confirmation?.retasting_done;
+    const index = retasting ? 1 : TRACKED_ACTIVITIES.findIndex((tracked) => !state?.[tracked.type]?.done);
+    if (index < 0) return null; // all three Done
+    const noShowFirst = (editing?.schedules || []).some((row) => row.activity_type === TRACKED_ACTIVITIES[0].type && row.status === 'no_show');
+    if (index === 0 && !noShowFirst) return null; // nothing Done yet: Set Schedule instead
     const tracked = TRACKED_ACTIVITIES[index];
+    // Training waits for the Brand Confirmation (the card above explains what is missing).
+    if (tracked.type === 'training' && !editing?.brand_confirmation?.locked) return null;
     const pendingAnywhere = TRACKED_ACTIVITIES.some((item) => state?.[item.type]?.state === 'pending_admin');
     if (state?.[tracked.type]?.active || pendingAnywhere || editing?.has_pending_schedule_update) return null;
     return tracked;
@@ -2795,6 +3317,8 @@ export default function Applicants() {
     if (!state) return null;
     if (TRACKED_ACTIVITIES.findIndex((tracked) => !state?.[tracked.type]?.done) !== 0) return null;
     const tracked = TRACKED_ACTIVITIES[0];
+    // After a No Show the same activity is rescheduled with Set Again.
+    if ((editing?.schedules || []).some((row) => row.activity_type === tracked.type && row.status === 'no_show')) return null;
     const info = state?.[tracked.type] || {};
     if (info.active || info.scheduled || info.state !== 'not_scheduled') return null;
     return tracked;
@@ -2803,7 +3327,7 @@ export default function Applicants() {
   // Finished sections, under the current work and collapsed (show/hide):
   //   Qualified / Scheduling -> Qualification Assessment
   //   LOI Submission         -> Schedule Activity, Qualification Assessment
-  //   Payment Submission     -> LOI, Schedule Activity, Qualification Assessment
+  //   Payment Record     -> LOI, Schedule Activity, Qualification Assessment
   const doneSectionKeys = {
     qualified: ['qualification'],
     scheduled: ['qualification'],
@@ -2826,9 +3350,11 @@ export default function Applicants() {
             >
               <LoiPanel
                 draft={loiDraft}
-                interactive={loiPending && isAdminRole}
+                interactive={loiPending && (isAdminRole || isAssignedSales)}
+                canEditDetails={isAssignedSales}
+                canVerify={isAdminRole}
                 disabled={!loiPending || acting}
-                savedDocument={(editing.documents || []).find((file) => file.type === 'loi') || null}
+                savedDocument={currentLoiDocument(editing.documents)}
                 applicantId={editing.id}
                 receivedByName={editing.loi_received_by || authLabel}
                 onChange={setLoiDraft}
@@ -2850,19 +3376,21 @@ export default function Applicants() {
                 onPickChecked={pickScheduleMilestone}
                 onOpenCalendar={openSessionInCalendar}
                 onView={viewInActivities}
+                busy={acting}
+                onAttended={markActivityAttended}
+                onReturn={returnActivity}
+                onError={setActionError}
               />
+              <BrandConfirmationCard editing={editing} brands={remote.data?.brands} isAdminRole={false} isAssignedSales={false} busy onSubmit={() => {}} onConfirm={() => {}} onReturn={() => {}} />
             </DoneSection>
           );
         }
         return (
-          <DoneSection key={key} title="Qualification Assessment" summary={`${qualificationCount} of ${QUALIFICATION_ITEMS.length} assessed`}>
-            <QualificationAssessment
-              draft={draft}
-              log={editing.assessment_log || []}
-              isSalesRole={isSalesRole}
-              readOnly
-              onToggle={() => {}}
-            />
+          <DoneSection key={key} title="Qualification" summary={editing.requirements?.summary?.qualification?.legacy ? `Legacy checklist · ${qualificationCount} of ${QUALIFICATION_ITEMS.length} assessed` : 'Requirements accepted'}>
+            <RequirementsPanel editing={editing} stage="qualification" readOnly busy={false} onSubmit={() => {}} onAccept={() => {}} onReturn={() => {}} onError={setActionError} />
+            {(editing.assessment_log || []).length > 0 && (
+              <QualificationAssessment draft={draft} log={editing.assessment_log || []} isSalesRole={isSalesRole} readOnly onToggle={() => {}} />
+            )}
           </DoneSection>
         );
       })}
@@ -2870,8 +3398,8 @@ export default function Applicants() {
   ) : null;
 
   // Tense of the tracker label: an ongoing stage is an action (Scheduling,
-  // LOI Submission, Payment Submission); a finished one is a completed action
-  // (Scheduled, LOI Submitted, Payment Submitted).
+  // LOI Submission, Payment Record); a finished one is a completed action
+  // (Scheduled, LOI Submitted, Payment Record).
   const paymentHandedOver = paymentConfirmed
     || ['for_review', 'confirmed'].includes(paymentStage?.state);
   const loiFinished = editing?.loi_verification_status === 'verified'
@@ -2887,7 +3415,7 @@ export default function Applicants() {
     if (key === 'scheduled') return done ? 'Scheduled' : 'Scheduling';
     if (key === 'loi_submitted' && stageState === 'pending') return 'LOI Pending';
     if (key === 'loi_submitted') return done ? 'LOI Submitted' : 'LOI Submission';
-    if (key === 'payment_submitted') return done ? 'Payment Submitted' : 'Payment Submission';
+    if (key === 'payment_submitted') return done ? 'Payment Record' : 'Payment Record';
     if (key === 'active_franchisee') return 'Active Franchise';
     return titleCase(key);
   };
@@ -2898,7 +3426,7 @@ export default function Applicants() {
     const currentIndex = pipelineStages.indexOf(draft.status);
     let state = 'todo';
     if (currentIndex > -1 && index < currentIndex) {
-      // "Payment Submitted" is CHECKED only when payment_confirmed is true;
+      // "Payment Record" is CHECKED only when payment_confirmed is true;
       // without a verified payment the step keeps waiting. (Franchisee records
       // carry no payment fields, so their past step falls back to stage-based
       // truth.)
@@ -2912,7 +3440,7 @@ export default function Applicants() {
       else if (stageName === 'qualified') state = 'done';
       else if (stageName === 'scheduled') state = scheduleComplete ? 'done' : 'waiting';
       else if (stageName === 'for_approval') state = reviewDone ? 'done' : 'waiting';
-      // A pending payment request makes Payment Submitted "waiting", not checked.
+      // A pending payment request makes Payment Record "waiting", not checked.
       else if (stageName === 'payment_submitted') state = 'waiting';
       else state = 'current';
     }
@@ -3053,7 +3581,7 @@ export default function Applicants() {
             aria-label="Search applicants"
           />
         </div>
-        {tab !== 'franchisees' && tab !== 'detail' && (
+        {tab !== 'franchisees' && (
           <div className="flex-[0_0_180px] flex [&_select]:w-full [&_select]:h-[44px] [&_select]:[box-sizing:border-box] [&_select]:p-[0_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:[outline:none] [&_select]:text-text [&_select]:[background:var(--input-bg)] [&_select]:text-[13px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_select:hover]:border-line-strong later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_select:focus]:[background:var(--input-focus-bg)] max-[721px]:later:flex-[1_1_100%] max-[721px]:later:[&_select]:h-[42px]">
             <select
               value={status}
@@ -3066,6 +3594,42 @@ export default function Applicants() {
           </div>
         )}
       </div>
+
+      {tab !== 'franchisees' && (
+        <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
+          <label>From<input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} /></label>
+          <label>To<input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} /></label>
+          <label>Date basis
+            <select value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
+              <option value="applied">Date Applied</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="updated">Last Updated</option>
+            </select>
+          </label>
+          <label>Brand
+            <select value={filters.brand_id} onChange={(e) => { setPage(1); setFilters({ ...filters, brand_id: e.target.value }); }}>
+              <option value="">All brands</option>
+              {(remote.data?.brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <label>Assigned Sales
+            <select value={filters.assigned_sales_user_id} onChange={(e) => { setPage(1); setFilters({ ...filters, assigned_sales_user_id: e.target.value }); }}>
+              <option value="">Anyone</option>
+              {role === 'sales' && user?.id && <option value={user.id}>Assigned to me</option>}
+              {salesChoices.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              <option value="unassigned">Unassigned</option>
+            </select>
+          </label>
+          {(filters.from || filters.to || filters.brand_id || filters.assigned_sales_user_id) && (
+            <button type="button" onClick={() => { setPage(1); setFilters({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' }); }}>Clear filters</button>
+          )}
+          <span className="flex gap-2 ml-auto">
+            <button type="button" disabled={exporting} onClick={() => void exportFiltered('csv')}><FaFileCsv aria-hidden="true" /> Export CSV</button>
+            <button type="button" disabled={exporting} onClick={() => void exportFiltered('pdf')}><FaFilePdf aria-hidden="true" /> Export PDF</button>
+          </span>
+        </div>
+      )}
 
       {tab === 'franchisees' ? (
         <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
@@ -3206,6 +3770,15 @@ export default function Applicants() {
                         {tab === 'archived' && applicant.archived_at && (
                           <small>Archived {formatDate(applicant.archived_at)}</small>
                         )}
+                        <AssignedSalesTag sales={applicant.assigned_sales} />
+                        {typeof applicant.days_in_stage === 'number' && (
+                          <small className="block text-[#9aa6c4]">
+                            {applicant.days_in_stage} day{applicant.days_in_stage === 1 ? '' : 's'} in stage
+                            {applicant.overdue && (
+                              <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_136,_142,_.5)] text-[#ff888e] text-[11px] font-[700]" title={`More than ${applicant.overdue_after_days} days in this stage`}>Overdue</span>
+                            )}
+                          </small>
+                        )}
                       </td>
                       <td>
                         <div className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative">
@@ -3335,6 +3908,29 @@ export default function Applicants() {
                 <h3>Application stage</h3>
                 {draft.status === 'rejected' && <small className="text-[#ff888e]!">Rejected</small>}
               </div>
+              {/* Who handles this applicant: only the assigned Sales user can act for it. */}
+              <div className="flex flex-wrap items-center gap-[10px] m-[10px_0_12px] text-[14px] text-[#b9c1d5]">
+                <span>Assigned Sales:</span>
+                {editing.assigned_sales?.full_name
+                  ? <strong className="text-[#edf0fa]">{editing.assigned_sales.full_name}</strong>
+                  : <AssignedSalesTag sales={null} />}
+                {isAdminRole && !['active_franchisee', 'rejected'].includes(editing.status) && !editing.archived_at && (
+                  <button type="button" disabled={acting} onClick={() => void openAssign()}>
+                    {editing.assigned_sales_user_id ? 'Reassign' : 'Assign Sales'}
+                  </button>
+                )}
+                {isSalesRole && !isAssignedSales && (
+                  <small className="text-[#fbbf24]">
+                    {editing.assigned_sales_user_id ? 'View only: another Sales user handles this applicant.' : 'Admin must assign a Sales user first.'}
+                  </small>
+                )}
+              </div>
+              {typeof editing.days_in_stage === 'number' && (
+                <p className="m-[0_0_10px] text-[14px] text-[#9aa6c4]">
+                  {editing.days_in_stage} day{editing.days_in_stage === 1 ? '' : 's'} in the current stage
+                  {editing.overdue && <strong className="ml-2 text-[#ff888e]">Overdue (more than {editing.overdue_after_days} days)</strong>}
+                </p>
+              )}
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
               <Stepper items={stageItems} />
 
@@ -3368,7 +3964,7 @@ export default function Applicants() {
                     {primary.label}
                   </button>
                 )}
-                {/* Payment Submission: COMPLETED appears only once it can be used (Total
+                {/* Payment Record: COMPLETED appears only once it can be used (Total
                     paid == Total required, no Sales Report pending, LOI not Pending) —
                     never as a dead disabled button. The rule itself is unchanged. */}
                 {stage === 'payment_submitted' && isAdminRole && paymentStage?.can_complete && (
@@ -3377,17 +3973,17 @@ export default function Applicants() {
                     className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.ap-actions_&]:m-0 [.ap-actions_&:disabled]:text-[#7d879e] [.ap-actions_&:disabled]:border [.ap-actions_&:disabled]:border-[#2b344c] [.ap-actions_&:disabled]:[background:#131a29] later:[.ap-actions_&:disabled]:[box-shadow:none] [.ap-actions_&:disabled]:opacity-[1] [.ap-actions_&:disabled]:cursor-not-allowed later-2:[.ap-actions_&:disabled]:[transform:none]"
                     disabled={!paymentStage?.can_complete || acting || saving}
                     title={paymentStage?.can_complete
-                      ? 'Total paid matches the Total required. Move the applicant to For Approval.'
+                      ? 'The Payment Record is Fully Paid with nothing waiting for review. Move the applicant to For Approval.'
                       : paymentStage?.loi_pending
                         ? 'The LOI is still Pending — complete it in the LOI section first. For Approval is blocked until then.'
-                        : 'COMPLETED unlocks only when Total paid equals the Total required and no Sales Report is pending.'}
+                        : 'COMPLETED unlocks only when the Payment Record is Fully Paid and nothing is waiting for review.'}
                     onClick={() => void completePaymentStage()}
                   >
                     COMPLETED
                   </button>
                 )}
                 {draft.status === 'loi_submitted' && isAdminRole && (
-                  <button type="button" className="min-h-[34px] p-[0_12px] border border-[#3a4256] rounded-[10px] [background:#181d29] text-[#d6dcea] text-[11px] font-[700] [transition:background_.18s_ease,_border-color_.18s_ease] [&:hover:not(:disabled)]:[background:rgba(244,_184,_74,_.16)] [&:hover:not(:disabled)]:border-[rgba(244,_184,_74,_.7)]" disabled={acting} onClick={() => void performStageAction('undoLoi')}>
+                  <button type="button" className="min-h-[34px] p-[0_12px] border border-[#3a4256] rounded-[10px] [background:#181d29] text-[#d6dcea] text-[11px] font-[700] [transition:background_.18s_ease,_border-color_.18s_ease] [&:hover:not(:disabled)]:[background:rgba(244,_184,_74,_.16)] [&:hover:not(:disabled)]:border-[rgba(244,_184,_74,_.7)]" disabled={acting} onClick={() => setUndoLoiForm({ remarks: '' })}>
                     Undo LOI
                   </button>
                 )}
@@ -3430,15 +4026,48 @@ export default function Applicants() {
                 read-only) — once Qualified they are read-only for everyone and
                 drop into the collapsed "finished" list below. */}
             {stage === 'converted' && (
-              <QualificationAssessment
-                draft={draft}
-                log={editing.assessment_log || []}
-                isSalesRole={isSalesRole}
-                readOnly={isAdminRole}
-                onToggle={(key) => setDraft((current) => ({
-                  ...current,
-                  milestones: { ...current.milestones, [key]: !current.milestones[key] },
-                }))}
+              <>
+                <RequirementsPanel
+                  editing={editing}
+                  stage="qualification"
+                  isAdminRole={isAdminRole}
+                  isAssignedSales={isAssignedSales}
+                  busy={acting}
+                  onSubmit={submitRequirement}
+                  onAccept={acceptRequirement}
+                  onReturn={returnRequirement}
+                  onError={setActionError}
+                />
+                {/* The retired five-item checklist stays visible as history only. */}
+                {(editing.assessment_log || []).length > 0 && (
+                  <DoneSection title="Earlier qualification checklist (history)" summary="Replaced by the requirements above">
+                    <QualificationAssessment draft={draft} log={editing.assessment_log || []} isSalesRole={isSalesRole} readOnly onToggle={() => {}} />
+                  </DoneSection>
+                )}
+              </>
+            )}
+
+            {/* Approved: the signed franchise agreement must be Accepted before activation. */}
+            {stage === 'approved' && (
+              <RequirementsPanel
+                editing={editing}
+                stage="activation"
+                isAdminRole={isAdminRole}
+                isAssignedSales={isAssignedSales}
+                busy={acting}
+                onSubmit={submitRequirement}
+                onAccept={acceptRequirement}
+                onReturn={returnRequirement}
+                onError={setActionError}
+              />
+            )}
+
+            {!['active_franchisee', 'rejected'].includes(editing.status) && (
+              <FollowUpLog
+                items={editing.follow_ups || []}
+                canAdd={isAssignedSales && !editing.archived_at}
+                busy={acting}
+                onAdd={logApplicantFollowUp}
               />
             )}
 
@@ -3453,6 +4082,7 @@ export default function Applicants() {
             )}
 
             {stage === 'scheduled' && (
+              <>
               <ScheduleSection
                 editing={editing}
                 draft={draft}
@@ -3461,7 +4091,22 @@ export default function Applicants() {
                 onPickChecked={pickScheduleMilestone}
                 onOpenCalendar={openSessionInCalendar}
                 onView={viewInActivities}
+                busy={acting}
+                onAttended={markActivityAttended}
+                onReturn={returnActivity}
+                onError={setActionError}
               />
+              <BrandConfirmationCard
+                editing={editing}
+                brands={remote.data?.brands}
+                isAdminRole={isAdminRole}
+                isAssignedSales={isAssignedSales}
+                busy={acting}
+                onSubmit={submitBrand}
+                onConfirm={(current) => setBrandConfirmDialog(current)}
+                onReturn={returnBrand}
+              />
+              </>
             )}
 
             {/* Stage 3: LOI Submission panel. Admin verifies it on the field and
@@ -3469,9 +4114,11 @@ export default function Applicants() {
             {loiDraft && stage === 'loi_submitted' && (
               <LoiPanel
                 draft={loiDraft}
-                interactive={isAdminRole}
+                interactive={isAdminRole || isAssignedSales}
+                canEditDetails={isAssignedSales}
+                canVerify={isAdminRole}
                 disabled={acting}
-                savedDocument={(editing.documents || []).find((file) => file.type === 'loi') || null}
+                savedDocument={currentLoiDocument(editing.documents)}
                 applicantId={editing.id}
                 receivedByName={editing.loi_received_by || authLabel}
                 onChange={setLoiDraft}
@@ -3501,7 +4148,7 @@ export default function Applicants() {
               </>
             )}
 
-            {/* Applicant details are removed from the Payment Submission stage
+            {/* Applicant details are removed from the Payment Record stage
                 (they broke that modal's responsiveness) AND from For Approval
                 (the record above is the summary). Every other stage keeps it. */}
             {!['payment_submitted', 'for_approval'].includes(stage) && (
@@ -3521,14 +4168,25 @@ export default function Applicants() {
               </details>
             )}
 
-            {/* Stage 4: Payment Submission. Content, flow and permissions only —
+            {/* Stage 4: Payment Record. Content, flow and permissions only —
                 the tracker, the theme and the stage button spot are untouched. */}
-            {paymentsVisible && stage === 'payment_submitted' && (
+            {paymentsVisible && !paymentAdvancedUi && stage === 'payment_submitted' && (
+              <PaymentRecordPanel
+                editing={editing}
+                busy={acting}
+                onSetAmount={setAgreedAmount}
+                onSubmitEntry={submitPaymentEntry}
+                onVerify={verifyPaymentEntry}
+                onReturn={returnPaymentEntry}
+                onError={setActionError}
+              />
+            )}
+            {paymentsVisible && (paymentAdvancedUi || paymentStage?.sales_report) && stage === 'payment_submitted' && (
               <section className="flex flex-col p-3 mb-2 border border-[#273044] rounded-[11px] [background:#101521] later:flex-none later:min-h-[auto] overflow-visible h-auto max-h-[none] max-w-full" aria-labelledby="ap-payment-stage-title">
                 <div className="pay-columns grid-cols-[minmax(0,_1fr)_minmax(0,_300px)] gap-0 max-[821px]:later:flex-none max-[821px]:later:grid-cols-[1fr] later:flex-none later:min-h-[auto] [&.is-full]:grid-cols-[minmax(0,_1fr)] later:block [&.is-full]:block is-full">
                 <div className="flex flex-col min-w-0 border-r-[#273044] max-[821px]:later:pr-0 max-[821px]:later:pb-[10px] max-[821px]:later:border-r-0 max-[821px]:later:border-b max-[821px]:later:border-b-[#273044] flex-none later:min-h-[auto] later:gap-3 later-2:p-0 later-2:border-0 overflow-visible later:[.pay-columns.is-full_&]:p-0 later:[.pay-columns.is-full_&]:border-0 [.pay-columns.is-full_&]:overflow-visible max-w-full">
                   <div className="flex flex-none flex-wrap items-center justify-between gap-2 later-3:[&_h3]:m-0 later-2:[&_h3]:text-[#edf0fa] later:[&_h3]:font-[700] later:[&_h3]:tracking-[.06em] [&_h3]:uppercase later-7:[&_h3]:text-[16px]">
-                    <h3 id="ap-payment-stage-title">Payment Submission</h3>
+                    <h3 id="ap-payment-stage-title">Payment Record</h3>
                     {/* ONE header chip: the applicant's Preferred Brand / Concept
                         (read from the applicant record), with the brand's price
                         range when Products defines one. */}
@@ -3541,6 +4199,14 @@ export default function Applicants() {
                             {brandChip.range ? ` · ${brandChip.range}` : ''}
                           </span>
                         </span>
+                        {editing.brand_confirmation?.locked && (
+                          <small className="inline-flex items-center gap-[5px] text-[12px] text-[#45d991]" title="The brand can no longer be changed.">
+                            <FaLock aria-hidden="true" />
+                            {editing.brand_confirmation.legacy
+                              ? 'Locked · Legacy - brand confirmation not captured'
+                              : `Locked · confirmed by ${editing.brand_confirmation.locked_by || 'Admin'}, ${manilaDateTimeLabel(editing.brand_confirmation.locked_at)}`}
+                          </small>
+                        )}
                       </div>
                     )}
                   </div>
@@ -4196,11 +4862,14 @@ export default function Applicants() {
 
             {/* Later stages (For Approval / Approved / Active Franchise): the
                 payment record is read-only. The numbers come from the same
-                derived payload the Payment Submission stage uses. */}
-            {paymentsVisible && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
+                derived payload the Payment Record stage uses. */}
+            {paymentsVisible && !paymentAdvancedUi && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
+              <PaymentRecordPanel editing={editing} readOnly busy={false} onSetAmount={() => {}} onSubmitEntry={() => {}} onVerify={() => {}} onReturn={() => {}} onError={setActionError} />
+            )}
+            {paymentsVisible && paymentAdvancedUi && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
               <section className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#101521] [#update-applicant-form_&]:[box-shadow:none] ap-payment-ledger" aria-labelledby="ap-payment-ledger-title">
                 <div className="[&_h3]:m-0 [&_h3]:text-[0.78rem] [&_h3]:tracking-[0.09em] [&_h3]:uppercase flex later:items-center justify-between gap-3 later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap later:mb-[15px] [#update-applicant-form_&]:mb-[11px]">
-                  <h3 id="ap-payment-ledger-title">Payment Submission</h3>
+                  <h3 id="ap-payment-ledger-title">Payment Record</h3>
                   {paymentStage?.state_label && <small className="p-[3px_9px] border border-[#303749] rounded-[999px] text-[#9aa6c4] text-[10px] font-[700] tracking-[.04em] uppercase">{paymentStage.state_label}</small>}
                 </div>
                 <div className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[10px] max-[761px]:later:grid-cols-[1fr]">
@@ -4365,7 +5034,7 @@ export default function Applicants() {
                 </dd>
               </div>
             </dl>
-            <p className="m-0 p-[4px_22px_16px] text-[#7f8aa8] text-[10.5px] leading-[1.5] max-[481px]:later:p-[4px_16px_14px]">The note is shown to Sales on the Payment Submission stage.</p>
+            <p className="m-0 p-[4px_22px_16px] text-[#7f8aa8] text-[10.5px] leading-[1.5] max-[481px]:later:p-[4px_16px_14px]">The note is shown to Sales on the Payment Record stage.</p>
             <footer className="ap-subform-actions [&_.spacer]:flex-1 flex items-center gap-2 later:mt-5">
               <span className="flex-1" />
               <button type="button" onClick={() => setReturnForm(null)}>Cancel</button>
@@ -4473,7 +5142,7 @@ export default function Applicants() {
               <button
                 type="button"
                 className="min-h-[34px] p-[0_16px] rounded-[8px] text-[12px] font-[700] tracking-[.02em] [box-shadow:none] border border-[#d45160] [background:#c2404f] text-[#fff] [&:hover:not(:disabled)]:border-[#d45160] [&:hover:not(:disabled)]:[background:#d45160] [&:hover:not(:disabled)]:[filter:none] [&:hover:not(:disabled)]:[transform:none] disabled:border-[#4a2b36] disabled:[background:#2a1a21] later-5:disabled:text-[#a4787e] disabled:cursor-not-allowed"
-                disabled={acting || !rejectForm.remarks.trim()}
+                disabled={acting || rejectForm.remarks.trim().length < 5}
                 onClick={() => void rejectApplicant()}
               >
                 {acting ? 'Rejecting…' : 'Reject applicant'}
@@ -4570,11 +5239,20 @@ export default function Applicants() {
               <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Qualified date</dt><dd>{formatDate(new Date().toISOString())}</dd></div>
               <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Confirmed by</dt><dd className="later:inline-flex items-center later:gap-2 font-[600] [&_svg]:flex-none [&_svg]:text-[#45d991]"><FaUserCheck aria-hidden="true" /> {authLabel}</dd></div>
             </dl>
+            <label className="block p-[4px_22px_12px] max-[481px]:later:p-[4px_16px_10px]">
+              <span>Remarks (required, at least 5 characters)</span>
+              <textarea
+                rows={3}
+                value={qualifiedRemarks}
+                onChange={(e) => setQualifiedRemarks(e.target.value)}
+                placeholder="What was checked, and why the applicant qualifies"
+              />
+            </label>
             <p className="m-0 p-[4px_22px_16px] text-[#7f8aa8] text-[10.5px] leading-[1.5] max-[481px]:later:p-[4px_16px_14px]">Confirm this applicant as Qualified? This cannot be undone.</p>
             <footer className="ap-subform-actions [&_.spacer]:flex-1 flex items-center gap-2 later:mt-5">
               <span className="flex-1" />
               <button type="button" onClick={() => setQualifiedConfirm(false)}>Cancel</button>
-              <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={acting} onClick={() => void performStageAction('qualified')}>
+              <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => void performStageAction('qualified', { remarks: qualifiedRemarks.trim() })} disabled={acting || qualifiedRemarks.trim().length < 5}>
                 Yes, Confirm Qualified
               </button>
             </footer>
@@ -4693,7 +5371,100 @@ export default function Applicants() {
       )}
 
       {/* Application Detail: read-only Full Applicant Information report. */}
-      {report && <ApplicantReportDialog report={report} onClose={() => setReport(null)} />}
+      {report && <ApplicationDetailReport report={report} onClose={() => setReport(null)} />}
+
+      {/* Confirm Brand, second step: the lock is permanent. */}
+      {brandConfirmDialog && editing && (
+        <Dialog
+          title="Lock the brand?"
+          onClose={() => setBrandConfirmDialog(null)}
+          size="small"
+          zIndex={2147482500}
+          footer={(
+            <>
+              <button type="button" onClick={() => setBrandConfirmDialog(null)}>Cancel</button>
+              <button
+                type="button"
+                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                disabled={acting}
+                onClick={() => void confirmBrand()}
+              >
+                {acting ? 'Saving…' : 'Continue'}
+              </button>
+            </>
+          )}
+        >
+          <p className="m-0 text-[14px] leading-[1.6]">
+            This locks <strong>{brandConfirmDialog.final_brand?.name || 'this brand'}</strong> for <strong>{editing.full_name}</strong>. The brand cannot be changed after this. Continue?
+          </p>
+        </Dialog>
+      )}
+
+      {/* Undo LOI needs a reason (at least 5 characters). */}
+      {undoLoiForm && editing && (
+        <Dialog
+          title={`Undo LOI for ${editing.full_name}`}
+          onClose={() => setUndoLoiForm(null)}
+          size="small"
+          zIndex={2147482500}
+          footer={(
+            <>
+              <button type="button" onClick={() => setUndoLoiForm(null)}>Cancel</button>
+              <button
+                type="button"
+                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                disabled={acting || undoLoiForm.remarks.trim().length < 5}
+                onClick={() => void performStageAction('undoLoi', { remarks: undoLoiForm.remarks.trim() })}
+              >
+                {acting ? 'Saving…' : 'Undo LOI'}
+              </button>
+            </>
+          )}
+        >
+          <Notice type="error">{actionError}</Notice>
+          <Field label="Reason (required, at least 5 characters)" required full>
+            <textarea rows={3} value={undoLoiForm.remarks} onChange={(e) => setUndoLoiForm({ ...undoLoiForm, remarks: e.target.value })} placeholder="Why the LOI confirmation is being undone" />
+          </Field>
+        </Dialog>
+      )}
+
+      {assignForm && editing && (
+        <Dialog
+          title={editing.assigned_sales_user_id ? `Reassign Sales for ${editing.full_name}` : `Assign Sales for ${editing.full_name}`}
+          onClose={() => setAssignForm(null)}
+          size="small"
+          zIndex={2147482500}
+          footer={(
+            <>
+              <button type="button" onClick={() => setAssignForm(null)}>Cancel</button>
+              <button
+                type="button"
+                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                disabled={acting || !assignForm.assigned_sales_user_id || (Boolean(editing.assigned_sales_user_id) && assignForm.reason.trim().length < 5)}
+                onClick={() => void saveAssignment()}
+              >
+                {acting ? 'Saving…' : editing.assigned_sales_user_id ? 'Reassign' : 'Assign'}
+              </button>
+            </>
+          )}
+        >
+          <Notice type="error">{actionError}</Notice>
+          <p className="m-[0_0_12px] text-[14px] leading-[1.5]">
+            Current: <strong>{editing.assigned_sales?.full_name || 'Unassigned'}</strong>
+          </p>
+          <Field label="Sales user" required full>
+            <select value={assignForm.assigned_sales_user_id} onChange={(e) => setAssignForm({ ...assignForm, assigned_sales_user_id: e.target.value })}>
+              <option value="">Choose a Sales user…</option>
+              {salesUsers.filter((u) => u.id !== Number(editing.assigned_sales_user_id)).map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name} · {u.open_applicants} open</option>
+              ))}
+            </select>
+          </Field>
+          <Field label={editing.assigned_sales_user_id ? 'Reason (required, at least 5 characters)' : 'Note (optional)'} required={Boolean(editing.assigned_sales_user_id)} full>
+            <textarea rows={3} value={assignForm.reason} onChange={(e) => setAssignForm({ ...assignForm, reason: e.target.value })} placeholder="Why this applicant is moving to another Sales user" />
+          </Field>
+        </Dialog>
+      )}
 
       {/* "Mark as Active Franchisee" needs the business + location record. */}
       {activateForm && editing && (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { FaCircleExclamation, FaEnvelope, FaLock } from 'react-icons/fa6';
 import { firstValidationMessage } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
@@ -16,10 +16,12 @@ const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-3 focus-
 export default function BranchLogin() {
   const { loginForPortal, isAuthenticated, role, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [keepSignedIn, setKeepSignedIn] = useState(false);
-  const [error, setError] = useState('');
+  // A session signed out for being on the wrong portal arrives with a short notice.
+  const [error, setError] = useState(() => location.state?.portalNotice || '');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -95,10 +97,6 @@ export default function BranchLogin() {
               : <span className="text-[19px] leading-none font-[450] transition-transform duration-[180ms] group-hover:not-group-disabled:translate-x-[3px]" aria-hidden="true">→</span>}
           </button>
         </form>
-
-        <footer className="mt-[22px] border-t border-white/7 pt-[17px] text-center">
-          <Link className={`text-[10px] text-[#a6b0c3] transition-colors duration-[160ms] hover:text-[#e6eaff] ${focusRing}`} to="/">Looking for Franchisor Admin Sign in?</Link>
-        </footer>
       </section>
 
       {success && (

@@ -4,6 +4,7 @@ import { FaBoxesStacked, FaChartLine, FaIndustry, FaRightFromBracket, FaStore, F
 import { api, firstValidationMessage } from '../lib/api';
 import { BRANCH_VIEWS, branchPlace, breadcrumbFor, resolveView } from '../lib/branchWorkspace';
 import { useAuth } from '../context/AuthContext';
+import { BRANCH_LOGIN_PATH } from '../lib/portal';
 import { EmptyState, LoadingState, Notice } from '../components/ApiUi';
 import BranchDashboardPanel from '../components/branch/BranchDashboardPanel';
 import BranchRawMaterialsPanel from '../components/branch/BranchRawMaterialsPanel';
@@ -102,7 +103,7 @@ function BranchPortal({ preview = false }) {
 
   const handleSignOut = async () => {
     await logout();
-    navigate('/branch-login', { replace: true });
+    navigate(BRANCH_LOGIN_PATH, { replace: true });
   };
 
   return (

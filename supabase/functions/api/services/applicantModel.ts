@@ -4,7 +4,8 @@ import { PIPELINE } from '../config/roles.ts';
 
 export const APPLICANT_MODEL = 'App\\Models\\Applicant';
 export const PAYMENT_INITIAL_PERCENT = 1;
-export const PAYMENT_APPROVAL_PERCENT = 80;
+// Approval needs the record Fully Paid: the old 80% rule is gone.
+export const PAYMENT_APPROVAL_PERCENT = 100;
 
 // config/franchise.php milestones
 export const MILESTONES: Record<string, string> = {

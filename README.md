@@ -77,12 +77,48 @@ npx supabase functions deploy api --no-verify-jwt
 ```
 
 ```bash
-npx supabase secrets set ALLOWED_ORIGINS=https://your-frontend.example FEATURE_COSTING=false
+npx supabase secrets set ALLOWED_ORIGINS=https://franchisetitan-staff.vercel.app,https://franchisetitan-branch.vercel.app FEATURE_COSTING=false
 ```
 
 For a development project only: run `supabase/seed.sql`, fill in `.env` from `.env.example`, then `npm run users:create`.
 Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` wherever the frontend is built. Turn off public sign-ups
 in the dashboard if `config.toml` was not applied.
+
+## Deploy to Vercel (two portals)
+
+The frontend ships as two Vercel projects built from this same repo. Both use the same root directory and the same
+`vercel.json`, which already rewrites every route to `/index.html`, so refreshing a deep link does not 404. They also
+share one Supabase project and database. Only `VITE_PORTAL` differs:
+
+| Project | Serves | `/` opens |
+| --- | --- | --- |
+| Staff (`VITE_PORTAL=staff`) | Admin, Marketing, Sales, Logistics | staff login |
+| Branch (`VITE_PORTAL=branch`) | franchisee (branch) accounts only | branch login |
+
+Environment variables for both projects: `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The staff project also
+sets `VITE_PORTAL=staff`, and the branch project sets `VITE_PORTAL=branch`. If `VITE_PORTAL` is not set, every route
+is available, which is how local development works. Any other value stops the app at start-up.
+
+**Never put `SUPABASE_SERVICE_ROLE_KEY` or any other secret in Vercel or in a `VITE_` variable.** Every `VITE_`
+value is built into the public JavaScript.
+
+Neither site links to the other. If a session from the wrong portal reaches a site, the app signs it out and shows a
+short notice. The API also refuses the wrong portal at login.
+
+After both projects have their URLs, allow them in CORS (see `ALLOWED_ORIGINS` above).
+
+To try both portals locally, run `npm run dev:api` and then start each portal in its own terminal:
+
+```bash
+VITE_PORTAL=staff npx vite --port 5173 --strictPort
+```
+
+```bash
+VITE_PORTAL=branch npx vite --port 5174 --strictPort
+```
+
+In PowerShell, set the variable first, for example `$env:VITE_PORTAL='branch'; npx vite --port 5174 --strictPort`.
+Variables set in the shell override `.env` files.
 
 ## Import existing MySQL data
 

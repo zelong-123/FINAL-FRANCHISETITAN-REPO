@@ -3,6 +3,7 @@
 import type { Db, Row } from '../../lib/db.ts';
 import { fail } from '../../lib/http.ts';
 import { activityLabel, assertPreviousActivityDone } from '../pipeline.ts';
+import { retastingSince } from '../brandConfirmation.ts';
 
 const OFFSET_MS = 8 * 3600_000;
 export const MINUTE = 60_000;
@@ -53,6 +54,12 @@ export function longDateTime(d: Date): string {
   const s = shifted(d);
   const c = clock(d);
   return `${MONTHS[s.getUTCMonth()]} ${String(s.getUTCDate()).padStart(2, '0')}, ${s.getUTCFullYear()} ${c.g}:${c.i} ${c.A}`;
+}
+/** "Nov 11, 2026, 10:30 AM" in Manila time: the hint on a Complete that is not available yet. */
+export function availableLabel(d: Date): string {
+  const s = shifted(d);
+  const c = clock(d);
+  return `${MONTHS[s.getUTCMonth()]} ${s.getUTCDate()}, ${s.getUTCFullYear()}, ${c.g}:${c.i} ${c.A}`;
 }
 const windowLabel = (minutes: number) => {
   const h = Math.trunc(minutes / 60);
@@ -146,10 +153,12 @@ export async function assertNoConflict(db: Db, applicantId: number, startsAt: Da
 
 export async function assertSlotFree(db: Db, applicantId: number, type: string, ignoreId: number | null = null) {
   if (!TRACKED_TYPES.includes(type)) return;
+  // A No Show leaves the slot free for Set Again; a re-tasting for a new brand only looks at rows since it started.
+  const since = type === 'product_tasting' ? await retastingSince(db, applicantId) : null;
   const [existing] = await db.query(
-    `select status from activity_schedules where applicant_id = $1 and activity_type = $2 and status <> 'cancelled' and approval_status <> 'rejected'
-     and ($3::bigint is null or id <> $3::bigint) order by id desc limit 1`,
-    [applicantId, type, ignoreId],
+    `select status from activity_schedules where applicant_id = $1 and activity_type = $2 and status not in ('cancelled', 'no_show') and approval_status <> 'rejected'
+     and ($3::bigint is null or id <> $3::bigint) and ($4::timestamptz is null or created_at >= $4::timestamptz) order by id desc limit 1`,
+    [applicantId, type, ignoreId, since],
   );
   if (existing) fail('activity_type', `${activityLabel(type)} already has a ${existing.status} record for this applicant. Each activity is scheduled exactly once — move the existing date with Adjust instead of creating another one.`);
 }
@@ -167,6 +176,8 @@ export async function assertNoPendingRequest(db: Db, applicantId: number) {
 }
 
 export async function assertNotPreviouslyCompleted(db: Db, applicantId: number, type: string, ignoreId: number | null = null) {
+  // A re-tasting for a newly chosen brand is the one allowed repeat of a completed activity.
+  if (type === 'product_tasting' && await retastingSince(db, applicantId)) return;
   const completed = await db.query(`select 1 from activity_schedules where applicant_id = $1 and activity_type = $2 and status = 'completed' and ($3::bigint is null or id <> $3::bigint) limit 1`, [applicantId, type, ignoreId]);
   const key = ({ orientation: 'orientation_attended', product_tasting: 'product_tasting_attended', training: 'training_completed' } as Row)[type];
   const [a] = await db.query(`select milestones from applicants where id = $1`, [applicantId]);

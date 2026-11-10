@@ -13,17 +13,26 @@ import { applyRecordSearch } from '../services/recordSearch.ts';
 import { provisionBranch } from '../services/branchAccess.ts';
 import { renameParticipantName } from '../services/scheduleNames.ts';
 import {
-  APPLICANT_MODEL, applicantJson, hasVerifiedInitialPayment, isPaymentFullyDiscounted, loadPlan, milestoneState, MILESTONES, PAYMENT_INITIAL_PERCENT, paymentPercent,
+  APPLICANT_MODEL, applicantJson, hasVerifiedInitialPayment, isPaymentFullyDiscounted, loadApplicant, loadPlan, milestoneState, MILESTONES, PAYMENT_INITIAL_PERCENT, paymentPercent,
   QUALIFICATION_KEYS, REQUIRED_MILESTONES, verifiedPaymentTotal,
 } from '../services/applicantModel.ts';
 import {
-  ACTIVITY_ORDER, activityDoneState, activityLabel, assertLoiCompletable, assertLoiProceedable, assertQualificationChecked, assertTransition, LOI_PENDING_BLOCK, loiPending,
+  ACTIVITY_ORDER, activityDone, activityDoneState, activityLabel, assertLoiCompletable, assertLoiProceedable, assertQualificationChecked, assertTransition, LOI_PENDING_BLOCK, loiPending,
   qualificationChecked, scheduledChecked, STAGE_ORDER, stageLabel, statusLabel, TRACKED_ACTIVITY_MILESTONES,
 } from '../services/pipeline.ts';
-import { logEvent, logStageChange, transition } from '../services/applicantStage.ts';
+import { fileRef, logEvent, logStageChange, transition } from '../services/applicantStage.ts';
+import { activeSalesUser, assertAssignedSales, notifyAssignedSales, optionalReason, requireReason } from '../services/accountability.ts';
+import {
+  assertBrandUnlocked, BRAND_METHODS, brandState, latestBrandConfirmation, retastingDone, tastedBrandId,
+} from '../services/brandConfirmation.ts';
 import * as payments from '../services/paymentStage.ts';
 import { assertNoSessionOfOtherBrand, sessionsFor, syncApplicantAttendance } from '../services/scheduleHooks.ts';
-import { forgetActivity } from '../services/schedule/sync.ts';
+import { forgetActivity, releaseCompletedTastingKeys } from '../services/schedule/sync.ts';
+import { assertStageRequirements, loiRequirement } from '../services/requirements.ts';
+import { OFF_MESSAGE, paymentAdvanced, recordPayload, setAgreedAmount } from '../services/paymentRecord.ts';
+import { applicantMonitor, applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, STAGE_DAYS_SQL } from '../services/monitoring.ts';
+import { applicantHistory, REPORT_PAGES } from '../services/applicationDetail.ts';
+import { canSeeRequirementFiles, requirementsPayload } from './requirements.ts';
 
 export const applicantRoutes = new Hono<AppEnv>();
 
@@ -36,6 +45,8 @@ const admin = role('admin');
 const sales = role('sales');
 
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
+/** The date bases of the applicant filters. */
+const DATE_BASIS = (alias: string) => ({ applied: `${alias}.application_date`, approved: `${alias}.approved_at`, rejected: `${alias}.rejected_at`, updated: `${alias}.updated_at` });
 const NAME = (expr: string) => `(select jsonb_build_object('id', u.id, 'full_name', u.full_name) from users u where u.id = ${expr})`;
 const HISTORY = (id: string) => `coalesce((select jsonb_agg(to_jsonb(h) || jsonb_build_object('changed_by', ${NAME('h.changed_by_user_id')}) order by h.id)
   from applicant_status_histories h where h.applicant_id = ${id}), '[]'::jsonb)`;
@@ -77,7 +88,9 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
   const user = c.get('user');
   const name = roleName(c);
   const f = new Filter();
+  await deliverDueReminders(db, user);
   if (name === 'franchisee') f.add('applicants.user_id = ?', user.id);
+  applyDateRange(f, q, DATE_BASIS('applicants'), 'applied');
   if (boolParam(q.archived)) {
     requireRole(c, ['admin']);
     f.add('applicants.archived_at is not null');
@@ -88,10 +101,14 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
   if (q.status) f.add('applicants.status = ?', q.status);
   if (boolParam(q.eligible_for_scheduling)) f.add(`applicants.status = 'scheduled'`);
   if (q.brand_id) f.add('applicants.preferred_brand_id = ?', intParam(q.brand_id));
+  if (q.assigned_sales_user_id === 'unassigned') f.add('applicants.assigned_sales_user_id is null');
+  else if (q.assigned_sales_user_id) f.add('applicants.assigned_sales_user_id = ?', intParam(q.assigned_sales_user_id));
   const ranked = applyRecordSearch(f, q.search, ['applicants.applicant_code', LEAD_CODE_SQL], ['applicants.full_name', 'applicants.email'], ['applicants.phone']);
 
   const page = await paginate(c, db, {
     columns: `applicants.*, (select to_jsonb(b) from brands b where b.id = applicants.preferred_brand_id) as preferred_brand,
+      ${NAME('applicants.assigned_sales_user_id')} as assigned_sales,
+      ${STAGE_DAYS_SQL('applicants')} as days_in_stage,
       (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'role_id', u.role_id, 'role', (select to_jsonb(r) from roles r where r.id = u.role_id)) from users u where u.id = applicants.user_id) as "user",
       (select jsonb_build_object('id', fi.id, 'source', fi.source, 'converted_from_status', fi.converted_from_status, 'lead_code', fi.lead_code) from franchise_inquiries fi where fi.id = applicants.inquiry_id) as inquiry,
       (select count(*)::int from applicants seq where seq.archived_at is null ${name === 'franchisee' ? 'and seq.user_id = ?' : ''} and seq.id <= applicants.id) as display_no`,
@@ -115,7 +132,7 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
 
   const data = [];
   for (const row of body.data) {
-    const out: Row = { ...applicantJson(row), status_label: await statusLabel(db, row), lead: leadReference(row) };
+    const out: Row = { ...applicantJson(row), status_label: await statusLabel(db, row), lead: leadReference(row), ...applicantMonitor(row) };
     if (canSeePayments) {
       const own = paymentRows.filter((p) => p.applicant_id === row.id);
       out.has_pending_schedule_update = pendingSchedules.has(row.id);
@@ -128,6 +145,35 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
     data.push(out);
   }
   return c.json({ ...body, data });
+});
+
+/** Active Sales accounts, for the Admin pickers (convert, reassign). */
+applicantRoutes.get('/applicants/sales-users', admin, async (c) => {
+  const { db } = c.get('deps');
+  const rows = await db.query(
+    `select u.id, u.full_name, u.email, u.user_code,
+       (select count(*)::int from applicants a where a.assigned_sales_user_id = u.id and a.archived_at is null and a.status not in ('active_franchisee', 'rejected')) as open_applicants
+     from users u join roles r on r.id = u.role_id where r.name = 'sales' and u.account_status = 'active' and u.archived_at is null order by u.full_name`,
+  );
+  return ok(c, rows);
+});
+
+applicantRoutes.post('/applicants/:applicant/follow-ups', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  if (roleName(c) !== 'sales') abort(403, 'The assigned Sales user logs the follow-ups of an applicant.');
+  await assertAssignedSales(c, a);
+  if (a.archived_at || ['active_franchisee', 'rejected'].includes(a.status)) fail('applicant', 'A closed or archived applicant takes no follow-ups.');
+  const user = c.get('user');
+  const row = await db.tx(async (tx) => {
+    const saved = await createFollowUp(tx, 'applicant', a.id, user, await readInput(c));
+    await logEvent(tx, a, 'follow_up_logged', user.id, { follow_up_id: saved.id }, saved.notes, {
+      step: 'follow_up', new_values: { channel: saved.channel, outcome: saved.outcome, contacted_at: iso(saved.contacted_at), next_follow_up_at: iso(saved.next_follow_up_at) },
+    });
+    return saved;
+  });
+  return ok(c, { follow_up: row, follow_ups: await followUpsOf(db, 'applicant', a.id) }, 'Follow-up logged.', 201);
 });
 
 applicantRoutes.get('/applicants/active-franchisees', viewers, async (c) => {
@@ -172,12 +218,18 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
   const v = await validate(db, c.req.query(), { folder: ['nullable', 'in:active,approved,rejected'] });
   const folder = v.folder ?? 'approved';
   const search = c.req.query('search');
+  const q = c.req.query();
 
   const filterFor = (name: string) => {
     const f = new Filter();
     if (name === 'active') f.add(`a.archived_at is null and a.status in ('converted','qualified','scheduled','loi_submitted','payment_submitted','for_approval')`);
     if (name === 'approved') f.add(`(a.archived_at is null or a.status = 'active_franchisee') and a.status in ('approved','active_franchisee')`);
     if (name === 'rejected') f.add(`a.status = 'rejected'`);
+    applyDateRange(f, q, DATE_BASIS('a'), name === 'approved' ? 'approved' : name === 'rejected' ? 'rejected' : 'applied');
+    if (q.status) f.add('a.status = ?', q.status);
+    if (q.brand_id) f.add('a.preferred_brand_id = ?', intParam(q.brand_id));
+    if (q.assigned_sales_user_id === 'unassigned') f.add('a.assigned_sales_user_id is null');
+    else if (q.assigned_sales_user_id) f.add('a.assigned_sales_user_id = ?', intParam(q.assigned_sales_user_id));
     if (search) {
       const t = `%${search}%`;
       f.add(`(a.full_name ilike ? or a.email ilike ? or a.applicant_code ilike ? or (select fi.lead_code from franchise_inquiries fi where fi.id = a.inquiry_id) ilike ?
@@ -188,8 +240,9 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
   const f = filterFor(folder);
   const order: Row = { active: 'a.updated_at desc nulls last', approved: 'a.approved_at desc nulls last', rejected: 'a.rejected_at desc nulls last' };
   const page = await paginate(c, db, {
-    columns: `a.*, (select b.name from brands b where b.id = a.preferred_brand_id) as brand_name,
+    columns: `a.*, (select b.name from brands b where b.id = a.preferred_brand_id) as brand_name, ${STAGE_DAYS_SQL('a')} as days_in_stage,
       (select fi.lead_code from franchise_inquiries fi where fi.id = a.inquiry_id) as lead_code,
+      ${NAME('a.assigned_sales_user_id')} as assigned_sales,
       (select x.business_name from franchisees x where x.applicant_id = a.id limit 1) as business_name,
       (select l.name from franchisees x join franchise_locations l on l.franchisee_id = x.id where x.applicant_id = a.id order by l.id limit 1) as location_name,
       (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as plan,
@@ -208,6 +261,9 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
     data.push({
       id: a.id, applicant_code: a.applicant_code, lead: a.inquiry_id && a.lead_code ? { id: a.inquiry_id, lead_code: a.lead_code } : null,
       full_name: a.full_name, email: a.email, phone: a.phone, status: a.status, status_label: stageLabel(a.status),
+      assigned_sales: a.assigned_sales ?? null,
+      ...applicantMonitor(a),
+      rejected_on: a.rejected_at ? iso(a.rejected_at) : null,
       business_name: business, location: a.location_name, brand: a.brand_name, application_date: a.application_date,
       approved_at: iso(a.approved_at), updated_at: iso(a.updated_at), step: stepIndex < 0 ? null : stepIndex + 1, step_total: steps.length,
       payment_percent: await paymentPercent(db, a),
@@ -292,6 +348,8 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
        (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'phone', u.phone) from users u where u.id = a.user_id) as "user",
        (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as payment_plan,
        ${HISTORY('a.id')} as status_history,
+       ${person('assigned_sales_user_id')} as assigned_sales,
+       ${person('assigned_sales_by_user_id')} as assigned_sales_by,
        ${person('total_required_set_by_user_id')} as total_set_by,
        ${person('payment_turned_over_by_user_id')} as payment_turned_over_by,
        ${person('payment_returned_by_user_id')} as payment_returned_by,
@@ -302,7 +360,11 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
     [id],
   );
   const schedules = await db.query(
-    `select s.*, ${NAME('s.assigned_to_user_id')} as assigned_to from activity_schedules s where s.applicant_id = $1 order by s.id`, [id],
+    `select s.*, ${NAME('s.assigned_to_user_id')} as assigned_to, ${NAME('s.completion_submitted_by_user_id')} as completion_submitted_by,
+       ${NAME('s.reviewed_by_user_id')} as reviewed_by, (select b.name from brands b where b.id = s.tasted_brand_id) as tasted_brand_name,
+       coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'original_name', d.original_name, 'mime_type', d.mime_type, 'created_at', d.created_at, 'replaced_at', d.replaced_at) order by d.id)
+         from documents d where d.documentable_type = 'App\\Models\\ActivitySchedule' and d.documentable_id = s.id and d.type = 'attendance_proof'), '[]'::jsonb) as proof_documents
+     from activity_schedules s where s.applicant_id = $1 order by s.id`, [id],
   );
   const paymentRows = await db.query(
     `select p.*, coalesce((select jsonb_agg(to_jsonb(d) order by d.id) from documents d where d.documentable_type = 'App\\Models\\Payment' and d.documentable_id = p.id), '[]'::jsonb) as documents,
@@ -310,7 +372,9 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
      from payments p where p.applicant_id = $1 order by p.id`, [id],
   );
   const documents = await db.query(
-    `select d.*, ${NAME('d.uploaded_by_user_id')} as uploaded_by from documents d where d.documentable_type = $1 and d.documentable_id = $2 order by d.id`, [APPLICANT_MODEL, id],
+    `select d.*, ${NAME('d.uploaded_by_user_id')} as uploaded_by, ${NAME('d.removed_by_user_id')} as removed_by,
+       case when d.removed_at is not null then 'removed' when d.replaced_at is not null then 'replaced' else 'current' end as file_state
+     from documents d where d.documentable_type = $1 and d.documentable_id = $2 order by d.id`, [APPLICANT_MODEL, id],
   );
   const payload: Row = {
     ...applicantJson(row),
@@ -321,6 +385,10 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
     lead: row.inquiry ? { id: row.inquiry.id, lead_code: row.inquiry.lead_code } : null,
     status_label: await statusLabel(db, a),
     ...(await scheduleState(db, a)),
+    brand_confirmation: await brandPayload(db, a),
+    requirements: name === 'franchisee' ? null : await requirementsPayload(db, a, user),
+    follow_ups: name === 'franchisee' ? [] : await followUpsOf(db, 'applicant', id),
+    ...(name === 'franchisee' ? {} : applicantMonitor({ ...a, days_in_stage: (await db.query(`select ${STAGE_DAYS_SQL('x')} as d from applicants x where x.id = $1`, [id]))[0].d })),
   };
   if (name !== 'franchisee') payload.schedule_sessions = await sessionsFor(db, id);
   payload.assessment_log = (await db.query(
@@ -350,6 +418,13 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
       payment_terms: plan?.payment_terms ?? null,
     };
     payload.payment_stage = await payments.stagePayload(db, a, user);
+    payload.payment_record = await recordPayload(db, a, user, paymentAdvanced(c), canSeeRequirementFiles(user, a));
+    if (!paymentAdvanced(c)) {
+      // The advanced features are off: their fields are left out (existing discounts stay readable in payment_record).
+      for (const key of ['installment', 'can_set_schedule', 'installment_percent', 'downpayment_amount', 'installment_amount', 'can_use_downpayment', 'promo_name', 'discount_percent', 'discount_set_at', 'discount_set_by']) delete payload.payment_stage[key];
+      payload.payment_stage.can_submit_report = false;
+      payload.payment_stage.can_add_entry = false;
+    }
     payload.payment_history = paymentRows.map((p) => ({
       id: p.id, payment_type: p.payment_type, payment_method: p.payment_method, amount: Number(p.amount), payment_date: p.payment_date, status: p.status, remarks: p.remarks,
       recorded_by: p.recorded_by?.full_name ?? null, received_by: p.received_by?.full_name ?? null, received_by_user_id: p.received_by_user_id,
@@ -380,6 +455,10 @@ export function scheduleJson(s: Row): Row {
       ? Boolean(s.cancelled_at) && new Date(s.cancelled_at).getTime() > started
       : (live || s.status === 'no_show') && started < Date.now()),
     session_id: String(s.session_key ?? ''),
+    // Older completions saved before the start time are left as they are, only flagged.
+    completed_before_schedule: s.status === 'completed' && Boolean(s.completed_at) && started !== null && new Date(s.completed_at).getTime() < started,
+    legacy_completion: s.status === 'completed' && !s.completion_submitted_at,
+    available_at: started === null ? null : new Date(started).toISOString(),
   };
 }
 
@@ -387,7 +466,58 @@ applicantRoutes.get('/applicants/:applicant/report', viewers, async (c) => {
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
-  return ok(c, await reportPayload(db, a));
+  const user = c.get('user');
+  const showFiles = canSeeRequirementFiles(user, a);
+  // The seven Application Detail pages read everything below from the database.
+  const schedules = await db.query(
+    `select s.id, s.activity_type, s.title, s.starts_at, s.ends_at, s.venue, s.status, s.approval_status, s.completed_at, s.attended, s.actual_started_at, s.handler_name,
+       s.result_notes, s.no_show_reason, s.completion_submitted_at, s.review_status, s.reviewed_at, s.return_reason,
+       ${NAME('s.completion_submitted_by_user_id')} as completion_submitted_by, ${NAME('s.reviewed_by_user_id')} as reviewed_by,
+       ${NAME('s.scheduled_by_user_id')} as scheduled_by, ${NAME('s.approved_by_user_id')} as approved_by,
+       (select b.name from brands b where b.id = s.tasted_brand_id) as tasted_brand_name,
+       coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'original_name', d.original_name, 'mime_type', d.mime_type, 'replaced_at', d.replaced_at) order by d.id)
+         from documents d where d.documentable_type = 'App\\Models\\ActivitySchedule' and d.documentable_id = s.id and d.type = 'attendance_proof'), '[]'::jsonb) as proof_documents
+     from activity_schedules s where s.applicant_id = $1 order by s.starts_at, s.id`, [a.id],
+  );
+  const loiDocuments = await db.query(
+    `select d.id, d.original_name, d.mime_type, d.created_at, d.replaced_at, d.removed_at, d.removed_reason, ${NAME('d.uploaded_by_user_id')} as uploaded_by, ${NAME('d.removed_by_user_id')} as removed_by
+     from documents d where d.documentable_type = $1 and d.documentable_id = $2 and d.type = 'loi' order by d.id`, [APPLICANT_MODEL, a.id],
+  );
+  const [people] = await db.query(
+    `select ${NAME('a.assigned_sales_user_id')} as assigned_sales, ${NAME('a.qualified_by_user_id')} as qualified_by, ${NAME('a.reviewed_by_user_id')} as reviewed_by,
+       ${NAME('a.approved_by_user_id')} as approved_by, ${NAME('a.loi_confirmed_by_user_id')} as loi_confirmed_by, ${NAME('a.loi_completed_by_user_id')} as loi_completed_by,
+       ${NAME('a.payment_confirmed_by_user_id')} as payment_confirmed_by, ${STAGE_DAYS_SQL('a')} as days_in_stage,
+       (select to_jsonb(b) from brands b where b.id = a.preferred_brand_id) as brand
+     from applicants a where a.id = $1`, [a.id],
+  );
+  const base = await reportPayload(db, a);
+  return ok(c, {
+    ...base,
+    files_visible: showFiles,
+    people: {
+      ...people,
+      // Who prepared (the assigned Sales user) and who approved (Admin) must be different people.
+      prepared_and_approved_by_different_people: a.approved_by_user_id ? Number(a.approved_by_user_id) !== Number(a.assigned_sales_user_id ?? 0) : null,
+    },
+    monitor: applicantMonitor({ ...a, days_in_stage: people.days_in_stage }),
+    requirements: await requirementsPayload(db, a, user),
+    brand_confirmation: await brandPayload(db, a),
+    activity_rows: schedules.map((s) => ({ ...scheduleJson(s), proof_documents: showFiles ? s.proof_documents : null })),
+    loi_documents: showFiles ? loiDocuments : null,
+    payment_record: await recordPayload(db, a, user, paymentAdvanced(c), showFiles),
+    follow_ups: await followUpsOf(db, 'applicant', a.id),
+    history: await applicantHistory(db, a.id, showFiles),
+  });
+});
+
+/** The History page: every action in time order, optionally one report page (stage) only. */
+applicantRoutes.get('/applicants/:applicant/history', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  const page = c.req.query('page') || null;
+  if (page && !(REPORT_PAGES as readonly string[]).includes(page)) fail('page', `Choose one of: ${REPORT_PAGES.join(', ')}.`);
+  return ok(c, await applicantHistory(db, a.id, canSeeRequirementFiles(c.get('user'), a), page));
 });
 
 async function reportPayload(db: Db, a: Row): Promise<Row> {
@@ -401,7 +531,11 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
     `select p.*, ${PAYMENT_DOCS('p.id')} as documents, (select full_name from users where id = p.recorded_by_user_id) as recorded_name,
        (select full_name from users where id = p.verified_by_user_id) as verified_name from payments p where p.applicant_id = $1 order by p.id`, [id],
   );
-  const [loi] = await db.query(`select id, original_name, mime_type from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' order by id limit 1`, [APPLICANT_MODEL, id]);
+  const [loi] = await db.query(
+    `select id, original_name, mime_type from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' and removed_at is null and replaced_at is null order by id desc limit 1`,
+    [APPLICANT_MODEL, id],
+  );
+  const assignedSales = await db.query(`select full_name from users where id = $1`, [a.assigned_sales_user_id ?? null]);
   const [names] = await db.query(
     `select (select full_name from users where id = $1) as reviewed, (select full_name from users where id = $2) as loi_by, (select full_name from users where id = $3) as approved,
        (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code, (select full_name from users where id = $6) as discount_by`,
@@ -435,7 +569,8 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   return {
     applicant: {
       id, applicant_code: a.applicant_code, lead_code: names.lead_code ?? null, full_name: a.full_name, email: a.email, phone: a.phone, address: a.address, notes: a.notes,
-      status: a.status, application_date: a.application_date, approved_at: iso(a.approved_at), preferred_brand: a.preferred_brand_id && names.brand ? { id: a.preferred_brand_id, name: names.brand } : null,
+      status: a.status, status_label: await statusLabel(db, a), application_date: a.application_date, approved_at: iso(a.approved_at),
+      assigned_sales: a.assigned_sales_user_id ? { id: a.assigned_sales_user_id, full_name: assignedSales[0]?.full_name ?? null } : null, preferred_brand: a.preferred_brand_id && names.brand ? { id: a.preferred_brand_id, name: names.brand } : null,
     },
     qualification: {
       items: QUALIFICATION_KEYS.map((key) => ({ key, label: MILESTONES[key], completed: Boolean(milestones[key]), completed_at: details[key]?.on ?? null, recorded_by: details[key]?.by ?? null })),
@@ -504,14 +639,26 @@ applicantRoutes.post('/applicants', admin, async (c) => {
     status: ['nullable', `in:${STATUSES}`],
     application_date: ['nullable', 'date'],
     notes: ['nullable', 'string'],
+    assigned_sales_user_id: ['nullable', 'integer'],
   });
+  const { assigned_sales_user_id: salesId, ...fields } = v;
+  const salesUser = salesId ? await activeSalesUser(db, salesId, 'assigned_sales_user_id') : null;
+  const assignment = salesUser ? { assigned_sales_user_id: salesUser.id, assigned_sales_at: new Date(), assigned_sales_by_user_id: c.get('user').id } : {};
   const a = await db.tx(async (tx) => {
-    const row = await insertRow(tx, 'applicants', { ...v, status: v.status ?? 'converted', application_date: v.application_date ?? manilaToday() });
+    const row = await insertRow(tx, 'applicants', { ...fields, ...assignment, status: fields.status ?? 'converted', application_date: fields.application_date ?? manilaToday() });
     row.applicant_code = await assignPublicCode(tx, 'applicants', 'applicant_code', 'APL', row.id);
     await tx.query(`insert into applicant_status_histories (applicant_id, from_status, to_status, remarks, changed_by_user_id) values ($1, null, $2, 'Applicant created directly.', $3)`, [row.id, row.status, c.get('user').id]);
-    await logStageChange(tx, row.id, null, row.status, c.get('user').id, 'Applicant created directly.');
+    await logStageChange(tx, row.id, null, row.status, c.get('user').id, 'Applicant created directly.', 'created', {}, { step: 'creation', new_values: { status: row.status } });
+    if (salesUser) {
+      await logStageChange(tx, row.id, row.status, row.status, c.get('user').id, `Assigned to ${salesUser.full_name}.`, 'sales_assigned', {}, {
+        step: 'assignment', old_values: { assigned_sales_user_id: null }, new_values: { assigned_sales_user_id: salesUser.id, assigned_sales: salesUser.full_name },
+      });
+    }
     return row;
   });
+  if (salesUser) {
+    await notifyAssignedSales(db, a, 'assessment_pending', 'Applicant assigned to you', `${a.applicant_code} (${a.full_name}) is assigned to you for the qualification assessment.`, {}, c.get('user'));
+  }
   await audit(c, db, 'applicant.created', { type: APPLICANT_MODEL, id: a.id }, null, a);
   const [brand] = await db.query(`select * from brands where id = $1`, [a.preferred_brand_id]);
   return ok(c, { ...applicantJson(a), preferred_brand: brand ?? null }, 'Applicant created.', 201);
@@ -531,6 +678,7 @@ applicantRoutes.put('/applicants/:applicant', admin, async (c) => {
   });
   const brandChanging = 'preferred_brand_id' in v && Number(v.preferred_brand_id ?? 0) !== Number(a.preferred_brand_id ?? 0);
   if (brandChanging) {
+    await assertBrandUnlocked(db, a);
     const completed = await db.query(`select 1 from activity_schedules where applicant_id = $1 and activity_type = 'product_tasting' and status = 'completed' limit 1`, [a.id]);
     if ((a.milestones ?? {}).product_tasting_attended || completed.length) fail('preferred_brand_id', 'Locked after Product Tasting completion.');
     await assertNoSessionOfOtherBrand(db, a.id, v.preferred_brand_id ?? null);
@@ -546,10 +694,177 @@ applicantRoutes.put('/applicants/:applicant', admin, async (c) => {
   return ok(c, { ...applicantJson(saved), preferred_brand: brand ?? null }, 'Applicant updated.');
 });
 
+/** Admin assigns, or reassigns with a required reason, the Sales user who handles the applicant. */
+applicantRoutes.post('/applicants/:applicant/assign-sales', admin, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), { assigned_sales_user_id: ['nullable', 'integer'], reason: ['nullable', 'string', 'max:2000'] });
+  if (a.archived_at) fail('applicant', 'An archived applicant cannot be reassigned.');
+  if (['active_franchisee', 'rejected'].includes(a.status)) fail('applicant', 'A closed applicant cannot be reassigned.');
+  const next = await activeSalesUser(db, v.assigned_sales_user_id, 'assigned_sales_user_id');
+  if (Number(a.assigned_sales_user_id) === Number(next.id)) fail('assigned_sales_user_id', `${next.full_name} is already the assigned Sales user.`);
+  const reassigning = Boolean(a.assigned_sales_user_id);
+  // A first assignment may carry a note; changing an existing assignment needs a reason.
+  const reason = reassigning ? requireReason(v.reason, 'reason', 'a reassignment reason') : optionalReason(v.reason, 'reason');
+  const [previous] = reassigning ? await db.query(`select id, full_name from users where id = $1`, [a.assigned_sales_user_id]) : [];
+  const saved = await db.tx(async (tx) => {
+    const row = (await updateRow(tx, 'applicants', a.id, { assigned_sales_user_id: next.id, assigned_sales_at: new Date(), assigned_sales_by_user_id: user.id }))!;
+    await logEvent(tx, row, reassigning ? 'sales_reassigned' : 'sales_assigned', user.id, {}, reason ?? `Assigned to ${next.full_name}.`, {
+      step: 'assignment',
+      old_values: { assigned_sales_user_id: previous?.id ?? null, assigned_sales: previous?.full_name ?? null },
+      new_values: { assigned_sales_user_id: next.id, assigned_sales: next.full_name },
+    });
+    await audit(c, tx, reassigning ? 'applicant.sales_reassigned' : 'applicant.sales_assigned', { type: APPLICANT_MODEL, id: a.id },
+      { assigned_sales_user_id: previous?.id ?? null }, { assigned_sales_user_id: next.id, reason });
+    return row;
+  });
+  await notifyAssignedSales(db, saved, 'applicant_assigned', 'Applicant assigned to you', `${a.applicant_code} (${a.full_name}) is now assigned to you.${reason ? ` Reason: ${reason}` : ''}`, {}, user);
+  if (previous) await notifyUser(db, previous.id, 'applicant_unassigned', 'Applicant reassigned', `${a.applicant_code} (${a.full_name}) was reassigned to ${next.full_name}. Reason: ${reason}`, { applicant_id: a.id }, user);
+  return ok(c, await freshWithAssignment(db, a.id), reassigning ? `Reassigned to ${next.full_name}.` : `Assigned to ${next.full_name}.`);
+});
+
+const freshWithAssignment = async (db: Db, id: number) => applicantJson((await db.query(
+  `select a.*, ${NAME('a.assigned_sales_user_id')} as assigned_sales, ${NAME('a.assigned_sales_by_user_id')} as assigned_sales_by from applicants a where a.id = $1`, [id],
+))[0]);
+
 const moved = async (db: Db, id: number, extra: Row = {}) => {
   const row = await fresh(db, id);
-  return { ...row, milestone_state: milestoneState(row), ...(await scheduleState(db, row)), ...extra };
+  return { ...row, milestone_state: milestoneState(row), ...(await scheduleState(db, row)), brand_confirmation: await brandPayload(db, row), ...extra };
 };
+
+// ---- Brand Confirmation (between Product Tasting and Training) ----
+const BRAND_NAME = (expr: string) => `(select jsonb_build_object('id', b.id, 'name', b.name) from brands b where b.id = ${expr})`;
+
+async function brandPayload(db: Db, a: Row): Promise<Row> {
+  const state = await brandState(db, a);
+  const rows = await db.query(
+    `select c.*, ${BRAND_NAME('c.final_brand_id')} as final_brand, ${BRAND_NAME('c.tasted_brand_id')} as tasted_brand,
+       ${NAME('c.submitted_by_user_id')} as submitted_by, ${NAME('c.reviewed_by_user_id')} as reviewed_by
+     from applicant_brand_confirmations c where c.applicant_id = $1 order by c.id`, [a.id],
+  );
+  const [lockedBy] = a.brand_locked_by_user_id ? await db.query(`select full_name from users where id = $1`, [a.brand_locked_by_user_id]) : [];
+  const tastingDone = await activityDone(db, a, 'product_tasting');
+  const latest = rows[rows.length - 1] ?? null;
+  let blocked: string | null = null;
+  if (state.locked) blocked = state.legacy ? 'Legacy - brand confirmation not captured.' : 'The brand is confirmed and locked.';
+  else if (!tastingDone) blocked = 'Available after Product Tasting is Done (Sales marked it Complete and Admin marked it Attended).';
+  else if (latest?.status === 'submitted') blocked = 'Waiting for Admin to confirm or return the submission.';
+  return {
+    locked: state.locked, legacy: state.legacy, confirmed: state.confirmed,
+    locked_at: iso(a.brand_locked_at), locked_by: lockedBy?.full_name ?? null,
+    tasted_brand_id: await tastedBrandId(db, a),
+    retasting_required: state.retasting_required, retasting_done: state.retasting_done,
+    can_submit: !blocked && !a.archived_at && a.status === 'scheduled',
+    blocked_reason: blocked,
+    current: latest, history: rows,
+  };
+}
+
+/** Step 1: the assigned Sales user submits the applicant's final brand. */
+applicantRoutes.post('/applicants/:applicant/brand-confirmation', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  if (roleName(c) !== 'sales') abort(403, 'Only the assigned Sales user submits the Brand Confirmation. Admin reviews and confirms it.');
+  await assertAssignedSales(c, a);
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), {
+    final_brand_id: ['required', 'integer', 'exists:brands,id'],
+    confirmation_method: ['required', `in:${Object.keys(BRAND_METHODS).join(',')}`],
+    confirmed_on: ['required', 'date', 'before_or_equal:today'],
+    notes: ['nullable', 'string', 'max:2000'],
+    change_reason: ['nullable', 'string', 'max:2000'],
+  });
+  if (a.archived_at || a.status !== 'scheduled') fail('applicant', 'Brand Confirmation is done at the Scheduling stage.');
+  await assertBrandUnlocked(db, a, 'final_brand_id');
+  if (!(await activityDone(db, a, 'product_tasting'))) {
+    fail('brand_confirmation', 'Brand Confirmation is available only after Product Tasting is Done (Sales marked it Complete and Admin marked it Attended).');
+  }
+  const latest = await latestBrandConfirmation(db, a.id);
+  if (latest?.status === 'submitted') fail('brand_confirmation', 'A Brand Confirmation is already waiting for Admin. Admin must confirm or return it first.');
+  const notes = requireReason(v.notes, 'notes', 'notes');
+  const tasted = await tastedBrandId(db, a);
+  const finalBrand = Number(v.final_brand_id);
+  const differs = tasted !== null && finalBrand !== tasted;
+  const changeReason = differs ? requireReason(v.change_reason, 'change_reason', 'a reason for choosing a brand other than the one tasted') : null;
+
+  const row = await db.tx(async (tx) => {
+    const saved = await insertRow(tx, 'applicant_brand_confirmations', {
+      applicant_id: a.id, tasted_brand_id: tasted, final_brand_id: finalBrand, confirmation_method: v.confirmation_method, confirmed_on: v.confirmed_on,
+      notes, change_reason: changeReason, retasting_required: differs, status: 'submitted', submitted_by_user_id: user.id, submitted_at: new Date(),
+    });
+    if (differs) {
+      // The new brand must be tasted before Admin can confirm it: the applicant's brand follows the choice now.
+      await assertNoSessionOfOtherBrand(tx, a.id, finalBrand);
+      await releaseCompletedTastingKeys(tx, a.id);
+      await updateRow(tx, 'applicants', a.id, { preferred_brand_id: finalBrand });
+      await logEvent(tx, a, 'brand_changed', user.id, { brand_confirmation_id: saved.id }, changeReason, {
+        step: 'brand_confirmation', old_values: { preferred_brand_id: a.preferred_brand_id }, new_values: { preferred_brand_id: finalBrand },
+      });
+    }
+    await logEvent(tx, a, 'brand_confirmation_submitted', user.id, { brand_confirmation_id: saved.id }, notes, {
+      step: 'brand_confirmation',
+      new_values: { final_brand_id: finalBrand, tasted_brand_id: tasted, confirmation_method: v.confirmation_method, confirmed_on: v.confirmed_on, change_reason: changeReason, retasting_required: differs },
+    });
+    await audit(c, tx, 'applicant.brand_confirmation_submitted', { type: APPLICANT_MODEL, id: a.id }, null, saved);
+    return saved;
+  });
+  await notifyRoles(db, ['admin'], 'brand_confirmation_submitted', 'Brand Confirmation submitted',
+    `${user.full_name} submitted the final brand for ${a.full_name}.${differs ? ' It differs from the tasted brand: Product Tasting must be done again for it first.' : ''}`, { applicant_id: a.id }, user);
+  return ok(c, { ...row, brand_confirmation: await brandPayload(db, (await loadApplicant(db, a.id))!) },
+    differs ? 'Submitted. The brand differs from the tasted one, so Product Tasting must be done again for it before Admin can confirm.' : 'Brand Confirmation sent to Admin.', 201);
+});
+
+/** Step 2: Admin confirms (the brand is locked for good) — the UI asks twice before calling this. */
+applicantRoutes.post('/applicants/:applicant/brand-confirmation/confirm', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  if (roleName(c) !== 'admin') abort(403, 'Only Admin can confirm the brand.');
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), { confirmed: ['required', 'accepted'], remarks: ['nullable', 'string', 'max:2000'] });
+  const latest = await latestBrandConfirmation(db, a.id);
+  if (!latest || latest.status !== 'submitted') fail('brand_confirmation', 'There is no Brand Confirmation waiting for Admin.');
+  await assertBrandUnlocked(db, a, 'brand_confirmation');
+  if (latest.retasting_required && !(await retastingDone(db, a.id, Number(latest.final_brand_id), latest.submitted_at))) {
+    const [brand] = await db.query(`select name from brands where id = $1`, [latest.final_brand_id]);
+    fail('brand_confirmation', `${brand?.name ?? 'The new brand'} was not tasted yet. Product Tasting must be done again for it (Sales Complete + Admin Attended) before the brand can be confirmed.`);
+  }
+  await db.tx(async (tx) => {
+    await updateRow(tx, 'applicant_brand_confirmations', latest.id, { status: 'confirmed', reviewed_by_user_id: user.id, reviewed_at: new Date() });
+    await updateRow(tx, 'applicants', a.id, { brand_locked_at: new Date(), brand_locked_by_user_id: user.id });
+    await logEvent(tx, a, 'brand_confirmed', user.id, { brand_confirmation_id: latest.id }, v.remarks ?? null, {
+      step: 'brand_confirmation', old_values: { brand_locked: false }, new_values: { brand_locked: true, preferred_brand_id: latest.final_brand_id },
+    });
+    await audit(c, tx, 'applicant.brand_confirmed', { type: APPLICANT_MODEL, id: a.id }, { brand_locked_at: null }, { brand_locked_at: new Date().toISOString(), final_brand_id: latest.final_brand_id });
+  });
+  await notifyAssignedSales(db, a, 'brand_confirmed', 'Brand confirmed', `Admin confirmed and locked the brand for ${a.full_name}. Training can now be scheduled.`, {}, user);
+  return ok(c, await moved(db, a.id), 'Brand confirmed and locked. Training can now be scheduled.');
+});
+
+/** Admin returns the submission to Sales with a reason. */
+applicantRoutes.post('/applicants/:applicant/brand-confirmation/return', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  if (roleName(c) !== 'admin') abort(403, 'Only Admin can return the Brand Confirmation.');
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  const latest = await latestBrandConfirmation(db, a.id);
+  if (!latest || latest.status !== 'submitted') fail('brand_confirmation', 'There is no Brand Confirmation waiting for Admin.');
+  const reason = requireReason(v.reason, 'reason', 'a return reason');
+  await db.tx(async (tx) => {
+    await updateRow(tx, 'applicant_brand_confirmations', latest.id, { status: 'returned', reviewed_by_user_id: user.id, reviewed_at: new Date(), return_reason: reason });
+    await logEvent(tx, a, 'brand_confirmation_returned', user.id, { brand_confirmation_id: latest.id }, reason, {
+      step: 'brand_confirmation', old_values: { status: 'submitted' }, new_values: { status: 'returned' },
+    });
+    await audit(c, tx, 'applicant.brand_confirmation_returned', { type: APPLICANT_MODEL, id: a.id }, { status: 'submitted' }, { status: 'returned', reason });
+  });
+  await notifyAssignedSales(db, a, 'brand_confirmation_returned', 'Brand Confirmation returned', `Admin returned the Brand Confirmation for ${a.full_name}: ${reason}`, {}, user);
+  return ok(c, await moved(db, a.id), 'Brand Confirmation returned to Sales.');
+});
 
 applicantRoutes.patch('/applicants/:applicant/milestones', admin, async (c) => {
   const { db } = c.get('deps');
@@ -605,6 +920,20 @@ applicantRoutes.patch('/applicants/:applicant/milestones', admin, async (c) => {
     };
   }
   const saved = (await updateRow(db, 'applicants', a.id, { milestones: working, milestone_details: details }))!;
+  // Newly Attended activities: Admin's review of the latest completion is recorded too.
+  for (const type of ACTIVITY_ORDER) {
+    const key = TRACKED_ACTIVITY_MILESTONES[type];
+    if (!working[key] || stored[key]) continue;
+    const [latest] = await db.query(
+      `select id, review_status from activity_schedules where applicant_id = $1 and activity_type = $2 and status = 'completed' order by coalesce(completed_at, starts_at) desc limit 1`, [a.id, type],
+    );
+    if (latest && latest.review_status !== 'accepted') {
+      await db.query(`update activity_schedules set review_status = 'accepted', reviewed_by_user_id = $1, reviewed_at = now() where id = $2`, [user.id, latest.id]);
+    }
+    await logEvent(db, saved, 'activity_attended', user.id, { activity_id: latest?.id ?? null, activity_type: type }, null, {
+      step: type, old_values: { [key]: false }, new_values: { [key]: true },
+    });
+  }
   await syncApplicantAttendance(db, saved, user.id);
   await audit(c, db, 'applicant.milestones_updated', { type: APPLICANT_MODEL, id: a.id }, { milestones: a.milestones, milestone_details: previous }, { milestones: working, milestone_details: details });
   return ok(c, await moved(db, a.id), 'Applicant activities updated.');
@@ -624,6 +953,9 @@ applicantRoutes.put('/applicants/:applicant/assessments', sales, async (c) => {
   const a = await load(c);
   authorize(c, a, true);
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be assessed.');
+  await assertAssignedSales(c, a);
+  // Replaced by the Qualification requirements (the old checklist log stays as history).
+  fail('milestones', 'The qualification checklist was replaced by the Qualification requirements. Submit each requirement with its details and files instead.');
   if (!['converted', 'qualified'].includes(a.status)) fail('applicant', 'The qualification assessment is only editable at the Qualification stage.');
   const input = await readInput(c);
   const v = await validate(db, input, { milestones: ['present', 'array_or_object'] });
@@ -643,6 +975,13 @@ applicantRoutes.put('/applicants/:applicant/assessments', sales, async (c) => {
       await tx.query(`insert into applicant_assessment_logs (applicant_id, assessment_key, is_checked, checked_by_user_id, checked_at) values ($1, $2, $3, $4, now())`, [a.id, key, checked, user.id]);
     }
     await audit(c, tx, 'applicant.assessments_saved', { type: APPLICANT_MODEL, id: a.id }, { milestones: previous }, { milestones, changed: Object.keys(changes) });
+    if (Object.keys(changes).length) {
+      await logEvent(tx, a, 'assessment_saved', user.id, {}, null, {
+        step: 'qualification',
+        old_values: Object.fromEntries(Object.keys(changes).map((k) => [k, Boolean(previous[k])])),
+        new_values: changes,
+      });
+    }
   });
   const row = await fresh(db, a.id);
   return ok(c, await moved(db, a.id, { assessment_complete: qualificationChecked(row) }), 'Applicant assessments saved.');
@@ -666,8 +1005,17 @@ applicantRoutes.post('/applicants/:applicant/confirm-qualified', admin, async (c
     return respond('Applicant is already Qualified.');
   }
   if (a.status !== 'converted') fail('status', 'Only an applicant at the Converted stage can be confirmed as Qualified.');
-  assertQualificationChecked(a);
-  const saved = await transition(c, db, a, 'qualified', user, v.remarks ?? 'Qualified confirmed by Admin.', 'applicant.qualified');
+  await assertStageRequirements(db, a.id, 'qualification');
+  const remarks = requireReason(v.remarks, 'remarks', 'Confirm Qualified remarks');
+  // The accepted requirements stand in for the old checklist flags, so approval, progress and
+  // reports read them as before.
+  const milestones = { ...(a.milestones ?? {}) };
+  const milestoneDetails = { ...(a.milestone_details ?? {}) };
+  for (const key of QUALIFICATION_KEYS) {
+    milestones[key] = true;
+    milestoneDetails[key] ??= { on: localMinute(new Date().toISOString()), by: `${user.full_name} (Admin, requirements accepted)`, by_user_id: user.id };
+  }
+  const saved = await transition(c, db, a, 'qualified', user, remarks, 'applicant.qualified', { milestones, milestone_details: milestoneDetails });
   await stampQualified(db, saved, user.id);
   return respond('Applicant confirmed as Qualified.');
 });
@@ -749,6 +1097,10 @@ applicantRoutes.patch('/applicants/:applicant/status', admin, async (c) => {
     loi_remarks: ['nullable', 'string'],
   });
   assertLoiOptions(a, v.loi_submission_type, v.loi_verification_status);
+  // Verification is its own Admin step at the LOI stage, after Sales uploads the scan.
+  if (v.status === 'loi_submitted' && v.loi_verification_status === 'verified') {
+    fail('loi_verification_status', 'The LOI is verified at the LOI stage, after the assigned Sales user uploads the scan.');
+  }
   await assertTransition(db, a, v.status, user, v.remarks ?? null);
   let attributes: Row = {};
   if (v.status === 'loi_submitted') {
@@ -773,7 +1125,8 @@ applicantRoutes.post('/applicants/:applicant/revise', admin, async (c) => {
     remarks: ['required', 'string', 'max:2000'],
   });
   if (a.status !== 'for_approval') fail('stage', 'Revision can only be requested while the applicant is at the For Approval stage.');
-  await transition(c, db, a, v.stage, c.get('user'), `Returned to ${stageLabel(v.stage)} for revision: ${v.remarks}`, 'applicant.revision_requested', { reviewed_at: null, reviewed_by_user_id: null, review_remarks: null });
+  const reason = requireReason(v.remarks, 'remarks', 'a return reason');
+  await transition(c, db, a, v.stage, c.get('user'), `Returned to ${stageLabel(v.stage)} for revision: ${reason}`, 'applicant.revision_requested', { reviewed_at: null, reviewed_by_user_id: null, review_remarks: null });
   return ok(c, await fresh(db, a.id), 'Applicant returned for revision.');
 });
 
@@ -801,6 +1154,7 @@ applicantRoutes.post('/applicants/:applicant/activate', admin, async (c) => {
   const { db } = c.get('deps');
   const a = await load(c);
   const user = c.get('user');
+  if (a.status === 'approved') await assertStageRequirements(db, a.id, 'activation');
   await assertTransition(db, a, 'active_franchisee', user, 'Marked as active franchisee.', true);
   const [owner] = a.user_id ? await db.query(`select u.account_status, r.name as role_name from users u join roles r on r.id = u.role_id where u.id = $1`, [a.user_id]) : [];
   if (!owner || owner.role_name !== 'franchisee' || owner.account_status !== 'active') {
@@ -854,6 +1208,7 @@ applicantRoutes.post('/applicants/:applicant/portal-user', admin, async (c) => {
         ? await updateRow(tx, 'franchisees', existing.id, { user_id: user.id, franchise_status: 'active' })
         : await insertRow(tx, 'franchisees', { applicant_id: a.id, business_name: locked.full_name, approval_date: approval, user_id: user.id, franchise_status: 'active' });
       if (locked.status === 'approved') {
+        await assertStageRequirements(tx, a.id, 'activation');
         await assertTransition(tx, locked, 'active_franchisee', actor, 'Branch portal account created.', true);
         await transition(c, tx, locked, 'active_franchisee', actor, 'Branch portal account created.', 'applicant.activated');
       }
@@ -884,26 +1239,112 @@ applicantRoutes.post('/applicants/:applicant/loi', viewers, async (c) => {
     remarks: ['nullable', 'string'],
   });
   assertLoiOptions(a, v.submission_type, v.verification_status);
-  const earlier = (await db.query(`select id from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi'`, [APPLICANT_MODEL, a.id])).map((d) => d.id);
-  const document = v.file
-    ? await storeDocument(c, db, v.file, `applicants/${a.id}/loi`, { type: APPLICANT_MODEL, id: a.id }, 'loi', { submission_date: v.submission_date ?? manilaToday() })
-    : null;
-  const saved = (await updateRow(db, 'applicants', a.id, {
-    loi_submission_date: v.submission_date ?? a.loi_submission_date ?? manilaToday(),
-    loi_received_by: v.received_by ?? a.loi_received_by ?? user.full_name,
-    loi_submission_type: v.submission_type ?? a.loi_submission_type ?? 'physical',
-    loi_verification_status: v.verification_status ?? a.loi_verification_status ?? 'not_verified',
-    loi_remarks: v.remarks ?? a.loi_remarks,
-  }))!;
-  // Upload only: the file never advances the stage.
-  if (document) {
-    await logEvent(db, saved, 'loi_uploaded', user.id, { document_id: document.id, original_name: document.original_name, replaces_document_ids: earlier, loi_status: saved.loi_status }, earlier.length ? 'LOI image replaced.' : 'LOI image uploaded.');
-    await notifyRoles(db, ['admin'], 'loi_uploaded', 'LOI document uploaded', `${a.full_name} uploaded a Letter of Intent document.`, { applicant_id: a.id, document_id: document.id }, user);
+  const name = roleName(c);
+  if (name === 'franchisee') abort(403, 'Branch accounts cannot change LOI data.');
+  if (a.archived_at) fail('applicant', 'An archived applicant cannot change its LOI.');
+  if (!loiStageOpen(a)) fail('loi', 'LOI data can only be changed at the LOI stage (or for a Pending LOI at the Payment stage).');
+
+  const DETAILS = { submission_date: 'loi_submission_date', received_by: 'loi_received_by', submission_type: 'loi_submission_type' } as const;
+  const sameDay = (x: unknown, y: unknown) => String(x ?? '').slice(0, 10) === String(y ?? '').slice(0, 10);
+  const changedDetails = (Object.entries(DETAILS) as [keyof typeof DETAILS, string][])
+    .filter(([key, column]) => v[key] !== undefined && v[key] !== null && !(key === 'submission_date' ? sameDay(v[key], a[column]) : String(v[key]) === String(a[column] ?? '')));
+  const verificationChange = v.verification_status !== undefined && v.verification_status !== null && v.verification_status !== (a.loi_verification_status ?? 'not_verified');
+
+  if (name === 'admin') {
+    // Admin only verifies: the scan and the LOI details come from the assigned Sales user.
+    if (v.file || changedDetails.length) abort(403, 'Only the assigned Sales user records the LOI details and uploads the scan. Admin only verifies the LOI.');
+    if (verificationChange && v.verification_status === 'verified') {
+      const loi = await loiRequirement(db, a);
+      if (!loi.scan) fail('verification_status', 'There is no LOI scan to verify yet. The assigned Sales user must upload it first.');
+      if (loi.status === 'returned') fail('verification_status', 'This scan was returned. Wait for the corrected scan from Sales.');
+    }
+  } else {
+    await assertAssignedSales(c, a);
+    if (verificationChange) abort(403, 'Only Admin can set the LOI verification.');
+    if (v.file && (a.loi_verification_status === 'verified' || a.loi_status === 'complete')) {
+      fail('file', 'The LOI is already verified. Admin must set it back to Not verified before the scan can be replaced.');
+    }
   }
-  await audit(c, db, 'applicant.loi_recorded', { type: APPLICANT_MODEL, id: a.id }, null, {
+
+  const earlier = await db.query(
+    `select id, original_name, type from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' and removed_at is null and replaced_at is null`,
+    [APPLICANT_MODEL, a.id],
+  );
+  const changes: Row = {};
+  for (const [key, column] of Object.entries(DETAILS)) if (changedDetails.some(([k]) => k === key)) changes[column] = v[key];
+  if (name === 'sales') {
+    // The first save by Sales fills the defaults the old record may not have.
+    changes.loi_submission_date ??= a.loi_submission_date ?? manilaToday();
+    changes.loi_received_by ??= a.loi_received_by ?? user.full_name;
+    changes.loi_submission_type ??= a.loi_submission_type ?? 'physical';
+  }
+  if (verificationChange) changes.loi_verification_status = v.verification_status;
+  if (v.remarks !== undefined && v.remarks !== null && v.remarks !== a.loi_remarks) changes.loi_remarks = v.remarks;
+
+  const { document, saved } = await db.tx(async (tx) => {
+    const stored = v.file
+      ? await storeDocument(c, tx, v.file, `applicants/${a.id}/loi`, { type: APPLICANT_MODEL, id: a.id }, 'loi', { submission_date: changes.loi_submission_date ?? a.loi_submission_date ?? manilaToday() })
+      : null;
+    if (stored && earlier.length) {
+      // A replacement keeps the old file, marked Replaced.
+      await tx.query(`update documents set replaced_at = now(), replaced_by_document_id = $1 where id = any($2::bigint[])`, [stored.id, `{${earlier.map((d) => d.id).join(',')}}`]);
+    }
+    const row = Object.keys(changes).length ? (await updateRow(tx, 'applicants', a.id, changes))! : a;
+    const before = Object.fromEntries(Object.keys(changes).map((k) => [k, a[k] ?? null]));
+    if (Object.keys(changes).filter((k) => k !== 'loi_verification_status').length || stored) {
+      await logEvent(tx, row, stored ? (earlier.length ? 'loi_replaced' : 'loi_uploaded') : 'loi_details_saved', user.id,
+        { loi_status: row.loi_status, replaces_document_ids: earlier.map((d) => d.id) },
+        stored ? (earlier.length ? 'LOI scan replaced.' : 'LOI scan uploaded.') : 'LOI details saved.', {
+          step: 'loi',
+          old_values: Object.fromEntries(Object.entries(before).filter(([k]) => k !== 'loi_verification_status')),
+          new_values: Object.fromEntries(Object.entries(changes).filter(([k]) => k !== 'loi_verification_status')),
+          attachments: [fileRef(stored), ...earlier.map((d) => ({ ...fileRef(d), state: 'replaced' }))].filter(Boolean) as Row[],
+        });
+    }
+    if (verificationChange) {
+      await logEvent(tx, row, 'loi_verification_changed', user.id, {}, v.remarks ?? null, {
+        step: 'loi', old_values: { loi_verification_status: a.loi_verification_status ?? 'not_verified' }, new_values: { loi_verification_status: v.verification_status },
+      });
+    }
+    return { document: stored, saved: row };
+  });
+  if (document) {
+    await notifyRoles(db, ['admin'], 'loi_uploaded', 'LOI scan uploaded', `${user.full_name} uploaded the Letter of Intent scan for ${a.full_name}. Review and verify it.`, { applicant_id: a.id, document_id: document.id }, user);
+  }
+  if (verificationChange) {
+    await notifyAssignedSales(db, saved, 'loi_verification', 'LOI verification updated', `Admin set the LOI of ${a.full_name} to ${String(v.verification_status).replace('_', ' ')}.`, {}, user);
+  }
+  await audit(c, db, 'applicant.loi_recorded', { type: APPLICANT_MODEL, id: a.id }, pick(a, Object.keys(changes)), {
     document_id: document?.id ?? null, ...pick(saved, ['loi_submission_date', 'loi_received_by', 'loi_submission_type', 'loi_verification_status']),
   });
   return ok(c, document ?? applicantJson(saved), document ? 'LOI record saved with attachment.' : 'LOI record saved.', document ? 201 : 200);
+});
+
+/** The LOI is open at the LOI stage, and for a Pending LOI at the Payment stage. */
+const loiStageOpen = (a: Row) => a.status === 'loi_submitted' || (a.status === 'payment_submitted' && loiPending(a));
+
+/** Admin returns the LOI scan to Sales with a reason (the LOI requirement becomes Returned). */
+applicantRoutes.post('/applicants/:applicant/loi/return', admin, async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  if (a.archived_at || !loiStageOpen(a)) fail('loi', 'The LOI can only be returned at the LOI stage (or for a Pending LOI at the Payment stage).');
+  const loi = await loiRequirement(db, a);
+  if (loi.status !== 'submitted') fail('loi', loi.status === 'accepted' ? 'The LOI is already verified.' : 'There is no LOI scan waiting for review.');
+  const reason = requireReason(v.reason, 'reason', 'a return reason');
+  await db.tx(async (tx) => {
+    const saved = (await updateRow(tx, 'applicants', a.id, {
+      loi_verification_status: 'not_verified', loi_returned_at: new Date(), loi_returned_by_user_id: user.id, loi_return_reason: reason,
+    }))!;
+    await logEvent(tx, saved, 'loi_returned', user.id, { document_id: loi.scan?.id ?? null }, reason, {
+      step: 'loi', old_values: { loi_verification_status: a.loi_verification_status, requirement: 'submitted' }, new_values: { loi_verification_status: 'not_verified', requirement: 'returned' },
+      attachments: loi.scan ? [{ document_id: loi.scan.id, original_name: loi.scan.original_name, type: 'loi', state: 'returned' }] : [],
+    });
+    await audit(c, tx, 'applicant.loi_returned', { type: APPLICANT_MODEL, id: a.id }, { loi_verification_status: a.loi_verification_status }, { reason });
+  });
+  await notifyAssignedSales(db, a, 'loi_returned', 'LOI returned', `Admin returned the LOI scan of ${a.full_name}: ${reason}`, {}, user);
+  return ok(c, await freshWithHistory(db, a.id), 'LOI returned to Sales.');
 });
 
 applicantRoutes.post('/applicants/:applicant/loi/complete', admin, async (c) => {
@@ -917,12 +1358,12 @@ applicantRoutes.post('/applicants/:applicant/loi/complete', admin, async (c) => 
     await assertLoiCompletable(db, a);
     await db.tx(async (tx) => {
       const saved = await updateRow(tx, 'applicants', a.id, { loi_status: 'complete', loi_completed_at: new Date(), loi_completed_by_user_id: user.id });
-      await logEvent(tx, saved!, 'loi_completed', user.id, { submission_type: a.loi_submission_type, completed_after_proceed: true }, 'Pending LOI completed at Payment Submission.');
+      await logEvent(tx, saved!, 'loi_completed', user.id, { submission_type: a.loi_submission_type, completed_after_proceed: true }, 'Pending LOI completed at the Payment Record stage.');
       await audit(c, tx, 'applicant.loi_completed', { type: APPLICANT_MODEL, id: a.id }, { loi_status: 'pending' }, { loi_status: 'complete' });
     });
     return ok(c, await freshWithHistory(db, a.id), 'LOI Complete — For Approval is no longer blocked by the LOI.');
   }
-  if (a.status !== 'loi_submitted') fail('status', 'Only an applicant at LOI Submission (or a Pending LOI at Payment Submission) can be completed.');
+  if (a.status !== 'loi_submitted') fail('status', 'Only an applicant at LOI Submission (or a Pending LOI at the Payment Record stage) can be completed.');
   await assertLoiCompletable(db, a);
   const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'LOI verified and confirmed by Admin.';
   await assertTransition(db, a, 'payment_submitted', user, remarks, true);
@@ -931,7 +1372,7 @@ applicantRoutes.post('/applicants/:applicant/loi/complete', admin, async (c) => 
   });
   await logEvent(db, saved, 'loi_completed', user.id, { submission_type: a.loi_submission_type }, 'LOI Complete.');
   if (a.user_id) await notifyUser(db, a.user_id, 'applicant_status', 'Application status updated', 'Your Letter of Intent has been verified. Submit your payment requirements next.', { applicant_id: a.id, status: 'payment_submitted' });
-  return ok(c, await freshWithHistory(db, a.id), 'LOI verified — the applicant is now at Payment Submission.');
+  return ok(c, await freshWithHistory(db, a.id), 'LOI verified — the applicant is now at the Payment Record stage.');
 });
 
 applicantRoutes.post('/applicants/:applicant/loi/proceed', admin, async (c) => {
@@ -942,7 +1383,7 @@ applicantRoutes.post('/applicants/:applicant/loi/proceed', admin, async (c) => {
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be moved forward.');
   if (a.status !== 'loi_submitted') fail('status', '[Proceed] is only available at the LOI Submission stage.');
   assertLoiProceedable(a);
-  const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'LOI Pending — soft copy to follow. Proceeded to Payment Submission by Admin.';
+  const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'LOI Pending — soft copy to follow. Proceeded to Payment Record by Admin.';
   await assertTransition(db, a, 'payment_submitted', user, remarks, true);
   await db.tx(async (tx) => {
     const saved = await transition(c, tx, a, 'payment_submitted', user, remarks, 'applicant.loi_proceeded', {
@@ -952,7 +1393,7 @@ applicantRoutes.post('/applicants/:applicant/loi/proceed', admin, async (c) => {
     await logEvent(tx, saved, 'loi_proceeded', user.id, { submission_type: a.loi_submission_type, has_image: hasImage, verification_status: a.loi_verification_status }, 'LOI Pending — must be completed before For Approval.');
   });
   if (a.user_id) await notifyUser(db, a.user_id, 'applicant_status', 'Application status updated', 'You can now submit your payment requirements. Please send the soft copy of your Letter of Intent as well.', { applicant_id: a.id, status: 'payment_submitted' });
-  return ok(c, await freshWithHistory(db, a.id), 'Moved to Payment Submission with the LOI Pending. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
+  return ok(c, await freshWithHistory(db, a.id), 'Moved to Payment Record with the LOI Pending. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
 });
 
 // ---- documents ----
@@ -964,21 +1405,30 @@ const loadDocument = async (c: Context<AppEnv>, type: string, ownerId: number): 
 applicantRoutes.get('/applicants/:applicant/documents/:document/download', viewers, async (c) => {
   const a = await load(c);
   authorize(c, a);
+  if (!canSeeRequirementFiles(c.get('user'), a)) abort(403, 'Only Admin and the assigned Sales user can open applicant files.');
   return downloadDocument(c, await loadDocument(c, APPLICANT_MODEL, a.id));
 });
 
 applicantRoutes.delete('/applicants/:applicant/documents/:document', viewers, async (c) => {
-  const { db, files } = c.get('deps');
+  const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
   requireRole(c, ['admin']);
   const d = await loadDocument(c, APPLICANT_MODEL, a.id);
-  await files.remove(d.disk, [d.path]).catch(() => {});
-  await db.query(`delete from documents where id = $1`, [d.id]);
-  if (d.type === 'loi') {
-    await logEvent(db, a, 'loi_image_removed', c.get('user').id, { document_id: d.id, original_name: d.original_name, uploaded_by_user_id: d.uploaded_by_user_id, uploaded_at: iso(d.created_at) }, 'LOI image removed.');
+  if (d.removed_at) return ok(c, null, 'Document was already removed.');
+  if (d.type === 'loi' && (a.loi_verification_status === 'verified' || a.loi_status === 'complete' || !loiStageOpen(a))) {
+    fail('document', 'The LOI scan is locked: it is verified, complete, or the applicant is past the LOI stage. Upload a replacement instead; the old file stays in the history.');
   }
-  await audit(c, db, 'applicant.document_removed', { type: APPLICANT_MODEL, id: a.id }, { document_id: d.id, original_name: d.original_name, type: d.type });
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  const reason = optionalReason(v.reason, 'reason');
+  // Never hard-deleted while linked to the applicant: the row and the stored file stay, marked Removed.
+  await db.query(`update documents set removed_at = now(), removed_by_user_id = $1, removed_reason = $2 where id = $3`, [c.get('user').id, reason, d.id]);
+  await logEvent(db, a, d.type === 'loi' ? 'loi_image_removed' : 'document_removed', c.get('user').id, {}, reason, {
+    step: d.type === 'loi' ? 'loi' : 'documents',
+    old_values: { document_id: d.id, uploaded_by_user_id: d.uploaded_by_user_id, uploaded_at: iso(d.created_at) },
+    attachments: [{ ...fileRef(d), state: 'removed' }],
+  });
+  await audit(c, db, 'applicant.document_removed', { type: APPLICANT_MODEL, id: a.id }, { document_id: d.id, original_name: d.original_name, type: d.type }, { reason });
   return ok(c, null, 'Document removed.');
 });
 
@@ -986,6 +1436,7 @@ applicantRoutes.get('/applicants/:applicant/payments/:payment/documents/:documen
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a);
+  if (!canSeeRequirementFiles(c.get('user'), a)) abort(403, 'Only Admin and the assigned Sales user can open payment receipts.');
   const [p] = await db.query(`select id from payments where id = $1 and applicant_id = $2`, [routeId(c, 'payment'), a.id]);
   requireFound(p);
   return downloadDocument(c, await loadDocument(c, PAYMENT_MODEL, p.id));
@@ -1002,9 +1453,11 @@ const entryRules = {
 const REQUEST_MODEL = 'App\\Models\\PaymentRequest';
 
 applicantRoutes.post('/applicants/:applicant/payments', sales, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', 'Record each payment with Add payment entry (date, amount, method, OR/AR number, reference number and receipt).');
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  await assertAssignedSales(c, a);
   const user = c.get('user');
   const input = await readInput(c);
   if (a.payment_stage_state !== null) {
@@ -1013,7 +1466,7 @@ applicantRoutes.post('/applicants/:applicant/payments', sales, async (c) => {
     await audit(c, db, 'payment.report_submitted', { type: REQUEST_MODEL, id: request.id }, null, request);
     return ok(c, request, 'Sales Report sent to Admin for confirmation.', 201);
   }
-  // Records from before the Payment Submission state machine.
+  // Records from before the Payment Record state machine.
   if (!['loi_submitted', 'for_approval', 'approved'].includes(a.status)) fail('status', 'Payments may be recorded after LOI submission.');
   if ((await db.query(`select 1 from payments where applicant_id = $1 and status in ('pending', 'for_revision') limit 1`, [a.id])).length) fail('status', 'A payment report is already awaiting Admin review.');
   const v = await validate(db, input, {
@@ -1045,11 +1498,13 @@ applicantRoutes.post('/applicants/:applicant/payments', sales, async (c) => {
 const paymentDocuments = (db: Db, id: number) => db.query(`select * from documents where documentable_type = $1 and documentable_id = $2 order by id`, [PAYMENT_MODEL, id]);
 
 applicantRoutes.put('/applicants/:applicant/payments/:payment', sales, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be edited after it is submitted. Admin returns it and Sales records a corrected entry.');
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  await assertAssignedSales(c, a);
   const user = c.get('user');
-  if (a.payment_stage_state !== null) fail('payment', 'This payment belongs to the Payment Submission stage — use Edit or Delete on the payment record instead.');
+  if (a.payment_stage_state !== null) fail('payment', 'This payment belongs to the Payment Record stage — use Edit or Delete on the payment record instead.');
   const [p] = await db.query(`select * from payments where id = $1`, [routeId(c, 'payment')]);
   requireFound(p);
   if (p.applicant_id !== a.id) abort(404, 'Record not found.');
@@ -1080,17 +1535,25 @@ applicantRoutes.patch('/applicants/:applicant/payments/:payment/verify', admin, 
   const [p] = await db.query(`select * from payments where id = $1`, [routeId(c, 'payment')]);
   requireFound(p);
   if (p.applicant_id !== a.id) abort(404, 'Record not found.');
-  if (a.payment_stage_state !== null) fail('payment', 'Use Confirm payment or Return to Sales in the Payment Submission stage.');
+  if (a.payment_stage_state !== null) fail('payment', 'Use Confirm payment or Return to Sales in the Payment Record stage.');
   const v = await validate(db, await readInput(c), {
     status: ['required', 'in:verified,for_revision,rejected'],
     remarks: ['required_if:status,for_revision,rejected', 'nullable', 'string'],
   });
+  if (['for_revision', 'rejected'].includes(v.status)) v.remarks = requireReason(v.remarks, 'remarks', 'a return reason');
+  // With the advanced features off, this older review only marks the entry: it never moves the stage.
+  // The applicant then finishes through the Payment Record (Agreed Package Amount, then COMPLETED when Fully Paid).
+  const moveStage = paymentAdvanced(c);
+  if (!moveStage && v.status === 'rejected') fail('status', `${OFF_MESSAGE} Return the entry (For revision) instead of rejecting the payment request.`);
   if (!['pending', 'for_revision'].includes(p.status)) fail('payment', 'Only payments awaiting verification can be reviewed.');
   if (v.status === 'rejected' && a.status !== 'payment_submitted') fail('status', 'Only an initial payment request at the "Payment Submitted" stage can be rejected; later installments remain at their current stage.');
   await db.tx(async (tx) => {
     const saved = await updateRow(tx, 'payments', p.id, { status: v.status, verified_by_user_id: user.id, verified_at: new Date(), remarks: v.remarks ?? p.remarks });
     await payments.syncLedger(tx, saved!);
-    if (v.status === 'verified' && a.status === 'payment_submitted') {
+    await logEvent(tx, a, 'payment_entry_reviewed', user.id, { payment_id: p.id }, v.remarks ?? null, {
+      step: 'payment_record', old_values: { payment_id: p.id, status: p.status }, new_values: { payment_id: p.id, status: v.status },
+    });
+    if (moveStage && v.status === 'verified' && a.status === 'payment_submitted') {
       const remarks = v.remarks ?? 'Payment verified by Admin.';
       await assertTransition(tx, a, 'for_approval', user, remarks, true);
       await transition(c, tx, a, 'for_approval', user, remarks, 'applicant.payment_confirmed', { payment_confirmed_at: new Date(), payment_confirmed_by_user_id: user.id, payment_remarks: v.remarks ?? null });
@@ -1104,9 +1567,11 @@ applicantRoutes.patch('/applicants/:applicant/payments/:payment/verify', admin, 
 });
 
 applicantRoutes.patch('/applicants/:applicant/payments/:payment', sales, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be edited after it is submitted. Admin returns it and Sales records a corrected entry.');
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  await assertAssignedSales(c, a);
   const id = routeId(c, 'payment');
   const [p] = await db.query(`select * from payments where id = $1`, [id]);
   requireFound(p);
@@ -1122,9 +1587,11 @@ applicantRoutes.patch('/applicants/:applicant/payments/:payment', sales, async (
 });
 
 applicantRoutes.delete('/applicants/:applicant/payments/:payment', sales, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be deleted. Admin returns it and Sales records a corrected entry.');
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  await assertAssignedSales(c, a);
   const id = routeId(c, 'payment');
   const [p] = await db.query(`select * from payments where id = $1`, [id]);
   requireFound(p);
@@ -1134,9 +1601,11 @@ applicantRoutes.delete('/applicants/:applicant/payments/:payment', sales, async 
 });
 
 applicantRoutes.post('/applicants/:applicant/payments/report', sales, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', OFF_MESSAGE);
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  await assertAssignedSales(c, a);
   const input = await readInput(c);
   const list = await validate(db, input, { entries: ['required', 'array', 'min:1', 'max:20'] });
   const entries = await validateEach(db, list.entries, 'entries', entryRules);
@@ -1187,6 +1656,15 @@ applicantRoutes.post('/applicants/:applicant/payments/return', admin, async (c) 
 applicantRoutes.patch('/applicants/:applicant/payment-plan', admin, async (c) => {
   const { db } = c.get('deps');
   const a = await load(c);
+  if (!paymentAdvanced(c)) {
+    const input = await readInput(c);
+    const hidden = ['discount_percent', 'promo_name', 'initial_payment_amount', 'original_total_required_amount', 'other_fees', 'payment_terms'].filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== '');
+    if (hidden.length) fail(hidden[0], OFF_MESSAGE);
+    const saved = await setAgreedAmount(db, a.id, c.get('user'), { ...input, agreed_amount: input.agreed_amount ?? input.total_required_amount });
+    await audit(c, db, 'applicant.agreed_amount_set', { type: APPLICANT_MODEL, id: a.id }, { total_required_amount: a.total_required_amount }, { total_required_amount: saved.total_required_amount, reason: input.reason ?? null });
+    const [row] = await db.query(`select a.*, (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as payment_plan from applicants a where a.id = $1`, [a.id]);
+    return ok(c, applicantJson(row), 'Agreed Package Amount saved.');
+  }
   const v = await validate(db, await readInput(c), {
     package_name: ['sometimes', 'nullable', 'string', 'max:255'],
     total_required_amount: ['sometimes', 'required', 'numeric', 'gt:0'],
@@ -1204,6 +1682,7 @@ applicantRoutes.patch('/applicants/:applicant/payment-plan', admin, async (c) =>
 });
 
 applicantRoutes.patch('/applicants/:applicant/payment-schedule', admin, async (c) => {
+  if (!paymentAdvanced(c)) fail('payments', OFF_MESSAGE);
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);

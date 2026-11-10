@@ -83,7 +83,7 @@ export const PIPELINE = {
     qualified: { label: 'Qualified' },
     scheduled: { label: 'Scheduled' },
     loi_submitted: { label: 'LOI Submitted' },
-    payment_submitted: { label: 'Payment Submitted' },
+    payment_submitted: { label: 'Payment Record' },
     for_approval: { label: 'For Approval' },
     approved: { label: 'Approved' },
     active_franchisee: { label: 'Active Franchisee' },

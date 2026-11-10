@@ -13,9 +13,20 @@ export const ACTIVITY_TYPES = TRACKED_TYPES;
 
 /** ActivitySchedule::liveSlotKey: a partial-unique guard against a second live record. */
 function liveKey(a: Row): string | null {
-  if (a.approval_status === 'rejected' || a.status === 'cancelled') return null;
-  return TRACKED_TYPES.includes(a.activity_type) ? `${a.applicant_id}:${a.activity_type}` : null;
+  // A No Show gives up its slot (Set Again reschedules it), like a cancellation.
+  if (a.approval_status === 'rejected' || ['cancelled', 'no_show'].includes(a.status)) return null;
+  if (!TRACKED_TYPES.includes(a.activity_type)) return null;
+  // A completed Product Tasting keeps its own key, so a re-tasting for a newly chosen brand can be booked.
+  if (a.activity_type === 'product_tasting' && a.status === 'completed' && a.id) return `${a.applicant_id}:product_tasting:completed:${a.id}`;
+  return `${a.applicant_id}:${a.activity_type}`;
 }
+
+/** Older completed tastings still hold the plain key: release it before a re-tasting is booked. */
+export const releaseCompletedTastingKeys = (db: Db, applicantId: number) => db.query(
+  `update activity_schedules set live_key = applicant_id || ':product_tasting:completed:' || id
+   where applicant_id = $1 and activity_type = 'product_tasting' and status = 'completed' and live_key = applicant_id || ':product_tasting'`,
+  [applicantId],
+);
 
 export async function insertActivity(db: Db, fields: Row): Promise<Row> {
   return insertRow(db, 'activity_schedules', { ...fields, live_key: liveKey({ approval_status: 'immediate', status: 'pending', ...fields }) });

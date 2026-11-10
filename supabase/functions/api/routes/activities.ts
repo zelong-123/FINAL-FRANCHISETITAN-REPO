@@ -3,17 +3,22 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
-import { abort, boolParam, fail, Filter, intParam, manilaToday, ok, paginate, perPage, routeId } from '../lib/http.ts';
+import { abort, boolParam, fail, Filter, intParam, ok, paginate, perPage, routeId, updateRow } from '../lib/http.ts';
+import { downloadDocument, MAX_UPLOAD_KB, storeDocument } from '../lib/files.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
 import { notifyRoles, notifyUser } from '../services/notifications.ts';
 import { applicantJson } from '../services/applicantModel.ts';
-import { logEvent, logStageChange } from '../services/applicantStage.ts';
-import { activityLabel, isSchedulable, NOT_SCHEDULABLE, scheduledChecked, setAgainTarget, TRACKED_ACTIVITY_MILESTONES } from '../services/pipeline.ts';
+import { fileRef, logEvent, logStageChange } from '../services/applicantStage.ts';
+import {
+  ACTIVITY_ORDER, activityDone, activityLabel, isSchedulable, NOT_SCHEDULABLE, scheduledChecked, setAgainTarget, TRACKED_ACTIVITY_MILESTONES,
+} from '../services/pipeline.ts';
+import { syncActivity, syncApplicantAttendance, updateActivity } from '../services/schedule/sync.ts';
 import * as rules from '../services/schedule/rules.ts';
 import { acquireDayLocks, longDateTime, parseLocal, TRACKED_TYPES, VENUE_OPTIONS } from '../services/schedule/rules.ts';
 import { assertActivityAllowed, saveActivity } from '../services/schedule/activities.ts';
+import { assertAssignedSales, notifyAssignedSales, requireReason } from '../services/accountability.ts';
 import { scheduleJson } from './applicants.ts';
 
 export const activityRoutes = new Hono<AppEnv>();
@@ -318,6 +323,18 @@ async function adjust(c: Context<AppEnv>) {
 activityRoutes.put('/activities/:activity', staff, adjust);
 activityRoutes.put('/activities/:activity/move', admin, adjust);
 
+const PROOF_MODEL = 'App\\Models\\ActivitySchedule';
+const PROOF_TYPE = 'attendance_proof';
+const proofDocuments = (db: Db, activityId: number) => db.query(
+  `select id, original_name, mime_type, size_bytes, created_at, replaced_at, (select u.full_name from users u where u.id = d.uploaded_by_user_id) as uploaded_by
+   from documents d where documentable_type = $1 and documentable_id = $2 and type = $3 order by id`, [PROOF_MODEL, activityId, PROOF_TYPE],
+);
+
+/**
+ * Sales completes an activity: never before its exact start time (server time), with either the
+ * attendance (actual time, handler, notes, proof file) or a No Show and its reason. A completion
+ * Admin returned is corrected and submitted again here.
+ */
 activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) => {
   const { db } = c.get('deps');
   const user = c.get('user');
@@ -327,24 +344,172 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
   if (applicant?.archived_at || !['pending', 'confirmed'].includes(activity.status) || activity.approval_status !== 'immediate') {
     fail('status', `This activity has approval_status = ${activity.approval_status}. It cannot be completed until it is approved.`);
   }
-  const input = await readInput(c);
-  const v = await validate(db, input, { result_notes: ['required', 'string'], status: ['nullable', 'in:completed'], confirm_early: ['nullable', 'boolean'] });
-  const scheduledDay = rules.localDay(new Date(activity.starts_at));
-  const today = manilaToday();
-  const early = today < scheduledDay;
-  if (early && !v.confirm_early) fail('confirm_early', `Hindi pa dumarating ang araw ng scheduled activity (${scheduledDay}). Confirm the early completion to continue.`);
-  const saved = await db.tx((tx) => saveActivity(tx, activity, { status: 'completed', result_notes: v.result_notes, completed_at: new Date() }, user));
+  if (applicant) await assertAssignedSales(c, applicant);
+  const startsAt = new Date(activity.starts_at);
+  const now = new Date();
+  if (now.getTime() < startsAt.getTime()) fail('complete', `Available on ${rules.availableLabel(startsAt)}.`);
+
+  const v = await validate(db, await readInput(c), {
+    attended: ['required', 'in:yes,no,true,false,1,0'],
+    actual_started_at: ['nullable', 'date'],
+    handler_name: ['nullable', 'string', 'max:255'],
+    result_notes: ['nullable', 'string', 'max:5000'],
+    no_show_reason: ['nullable', 'string', 'max:2000'],
+    proof: ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', `max:${MAX_UPLOAD_KB}`],
+  });
+  const attended = ['yes', 'true', '1'].includes(String(v.attended));
   const type = activity.activity_type;
-  if (applicant && early) {
-    await logEvent(db, applicant, 'activity_completed_early', user.id, { activity_id: activity.id, activity_type: type, scheduled_day: scheduledDay, completed_day: today }, `${activityLabel(type)} marked Complete before its scheduled day (${scheduledDay}).`);
+  const resubmitted = activity.review_status === 'returned';
+  let changes: Row;
+  let notes: string;
+  if (attended) {
+    if (!v.actual_started_at) fail('actual_started_at', 'Enter the actual date and time the activity started.');
+    const actual = parseLocal(v.actual_started_at);
+    // Compared to the minute: the form picks a minute, the schedule may carry seconds.
+    if (actual.getTime() < Math.floor(startsAt.getTime() / 60000) * 60000) fail('actual_started_at', `The actual time cannot be before the scheduled start (${rules.availableLabel(startsAt)}).`);
+    if (actual.getTime() > now.getTime()) fail('actual_started_at', 'The actual time cannot be in the future.');
+    const handler = String(v.handler_name ?? '').trim();
+    if (!handler) fail('handler_name', 'Enter who handled the activity.');
+    notes = String(v.result_notes ?? '').trim();
+    if (notes.length < 10) fail('result_notes', 'Write notes of at least 10 characters about what happened.');
+    if (!v.proof) fail('proof', 'Attach the attendance proof (sign-in sheet or photo).');
+    changes = {
+      status: 'completed', attended: true, actual_started_at: actual, handler_name: handler, result_notes: notes, no_show_reason: null,
+      ...(type === 'product_tasting' ? { tasted_brand_id: applicant?.preferred_brand_id ?? null } : {}),
+    };
+  } else {
+    notes = requireReason(v.no_show_reason, 'no_show_reason', 'a No Show reason');
+    changes = { status: 'no_show', attended: false, actual_started_at: null, handler_name: null, no_show_reason: notes };
   }
-  if (applicant?.user_id) await notifyUser(db, applicant.user_id, 'activity_result', 'Activity result recorded', `The result for ${activity.title} has been recorded.`, { activity_id: activity.id });
+  Object.assign(changes, {
+    completed_at: now, completion_submitted_at: now, completion_submitted_by_user_id: user.id,
+    review_status: 'submitted', reviewed_by_user_id: null, reviewed_at: null, return_reason: null,
+  });
+
+  const { saved, proof, replaced } = await db.tx(async (tx) => {
+    const previousProofs = attended ? await tx.query(
+      `select id, original_name, type from documents where documentable_type = $1 and documentable_id = $2 and type = $3 and replaced_at is null and removed_at is null`,
+      [PROOF_MODEL, activity.id, PROOF_TYPE],
+    ) : [];
+    const stored = attended ? await storeDocument(c, tx, v.proof, `activities/${activity.id}/proof`, { type: PROOF_MODEL, id: activity.id }, PROOF_TYPE) : null;
+    if (stored && previousProofs.length) {
+      await tx.query(`update documents set replaced_at = now(), replaced_by_document_id = $1 where id = any($2::bigint[])`, [stored.id, `{${previousProofs.map((d) => d.id).join(',')}}`]);
+    }
+    const row = await saveActivity(tx, activity, changes, user);
+    if (applicant) {
+      await logEvent(tx, applicant, attended ? 'activity_completed' : 'activity_no_show', user.id, { activity_id: activity.id, activity_type: type },
+        notes, {
+          step: type,
+          old_values: { status: activity.status, review_status: activity.review_status ?? null },
+          new_values: {
+            status: changes.status, attended, actual_started_at: attended ? rules.iso8601(changes.actual_started_at) : null, handler_name: changes.handler_name ?? null,
+            scheduled_start: rules.iso8601(startsAt), resubmitted,
+          },
+          attachments: [fileRef(stored), ...previousProofs.map((d) => ({ ...fileRef(d), state: 'replaced' }))].filter(Boolean) as Row[],
+        });
+    }
+    return { saved: row, proof: stored, replaced: previousProofs };
+  });
+  if (applicant?.user_id && attended) await notifyUser(db, applicant.user_id, 'activity_result', 'Activity result recorded', `The result for ${activity.title} has been recorded.`, { activity_id: activity.id });
   if (applicant) {
-    await notifyRoles(db, ['admin'], 'applicant_activity_completed', 'Activity marked Complete', `${activityLabel(type)} for ${applicant.applicant_code} was marked Complete by Sales. Mark it Attended to finish it.`, { applicant_id: applicant.id, activity_id: activity.id, activity_type: type, early }, user);
+    const what = attended ? `marked Complete with attendance proof${resubmitted ? ' (corrected and resubmitted)' : ''}` : `marked No Show: ${notes}`;
+    await notifyRoles(db, ['admin'], 'applicant_activity_completed', attended ? 'Activity marked Complete' : 'Activity marked No Show',
+      `${activityLabel(type)} for ${applicant.applicant_code} was ${what}. Review the proof and mark it Attended or Return it.`, { applicant_id: applicant.id, activity_id: activity.id }, user);
   }
-  await audit(c, db, 'activity.completed', { type: MODEL, id: activity.id }, activity, { ...saved, completed_early: early });
-  return ok(c, await plain(db, activity.id), early ? 'Activity result recorded (completed early).' : 'Activity result recorded.');
+  await audit(c, db, attended ? 'activity.completed' : 'activity.no_show', { type: MODEL, id: activity.id }, activity, { ...saved, proof_document_id: proof?.id ?? null, replaced_document_ids: replaced.map((d: Row) => d.id) });
+  return ok(c, { ...(await plain(db, activity.id)), proof_documents: await proofDocuments(db, activity.id) }, attended ? 'Activity completed — waiting for Admin to review the proof.' : 'Activity marked No Show. Use Set Again to reschedule it.');
 });
+
+/** Admin reviewed the proof and notes: Attended (the milestone is saved) — the second half of Done. */
+activityRoutes.post('/activities/:activity/attended', admin, async (c) => {
+  const { db } = c.get('deps');
+  const user = c.get('user');
+  const loaded = await load(c);
+  const { applicant } = loaded;
+  const activity = stripRelation(loaded);
+  if (!applicant || applicant.archived_at) fail('applicant', 'An archived applicant cannot be updated.');
+  if (activity.status !== 'completed') fail('status', 'Only an activity Sales marked Complete can be marked Attended.');
+  if (activity.review_status === 'accepted') return ok(c, await plain(db, activity.id), 'Already marked Attended.');
+  const type = activity.activity_type;
+  const key = TRACKED_ACTIVITY_MILESTONES[type];
+  if (!key) fail('activity_type', 'Only Orientation, Product Tasting and Training are tracked.');
+  const index = ACTIVITY_ORDER.indexOf(type);
+  if (index > 0) {
+    const previous = ACTIVITY_ORDER[index - 1];
+    if (!(await activityDone(db, applicant, previous))) fail('activity_type', `${activityLabel(previous)} must be Done before ${activityLabel(type)} can be marked Attended.`);
+  }
+  const milestones = { ...(applicant.milestones ?? {}) };
+  const details = { ...(applicant.milestone_details ?? {}) };
+  const firstTime = !milestones[key];
+  if (firstTime) {
+    milestones[key] = true;
+    const at = activity.actual_started_at ?? activity.completed_at ?? activity.starts_at;
+    details[key] = { on: rules.iso8601(at)?.slice(0, 16), by: `${user.full_name} (Admin)`, by_user_id: user.id };
+  }
+  await db.tx(async (tx) => {
+    if (firstTime) await updateRow(tx, 'applicants', applicant.id, { milestones, milestone_details: details });
+    await tx.query(`update activity_schedules set review_status = 'accepted', reviewed_by_user_id = $1, reviewed_at = now() where id = $2`, [user.id, activity.id]);
+    const fresh = (await tx.query(`select * from applicants where id = $1`, [applicant.id]))[0];
+    await syncApplicantAttendance(tx, fresh, user.id);
+    await logEvent(tx, applicant, 'activity_attended', user.id, { activity_id: activity.id, activity_type: type }, null, {
+      step: type, old_values: { review_status: activity.review_status ?? null, [key]: Boolean(applicant.milestones?.[key]) }, new_values: { review_status: 'accepted', [key]: true },
+    });
+    await audit(c, tx, 'activity.attended', { type: MODEL, id: activity.id }, { review_status: activity.review_status }, { review_status: 'accepted' });
+  });
+  await notifyAssignedSales(db, applicant, 'activity_attended', 'Activity accepted', `Admin marked ${activityLabel(type)} for ${applicant.full_name} as Attended.`, { activity_id: activity.id }, user);
+  return ok(c, await plain(db, activity.id), `${activityLabel(type)} marked Attended.`);
+});
+
+/** Admin returns a completion (or No Show) to Sales with a reason; Sales corrects and submits again. */
+activityRoutes.post('/activities/:activity/return', admin, async (c) => {
+  const { db } = c.get('deps');
+  const user = c.get('user');
+  const loaded = await load(c);
+  const { applicant } = loaded;
+  const activity = stripRelation(loaded);
+  if (!applicant || applicant.archived_at) fail('applicant', 'An archived applicant cannot be updated.');
+  if (!['completed', 'no_show'].includes(activity.status) || !activity.completion_submitted_at) fail('status', 'Only a completion Sales submitted can be returned.');
+  if (activity.review_status === 'accepted') fail('status', 'This activity is already marked Attended and cannot be returned.');
+  if (activity.status === 'no_show') {
+    const [later] = await db.query(
+      `select 1 from activity_schedules where applicant_id = $1 and activity_type = $2 and id <> $3 and status not in ('cancelled', 'no_show') and approval_status <> 'rejected' limit 1`,
+      [activity.applicant_id, activity.activity_type, activity.id],
+    );
+    if (later) fail('status', 'This No Show was already rescheduled with Set Again, so it can no longer be returned.');
+  }
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  const reason = requireReason(v.reason, 'reason', 'a return reason');
+  await db.tx(async (tx) => {
+    // Back to a live, already-started schedule so Sales can complete it again. The submitted
+    // values stay in the history record and the activity log.
+    const row = await updateActivity(tx, activity, {
+      status: 'confirmed', completed_at: null, review_status: 'returned', reviewed_by_user_id: user.id, reviewed_at: new Date(), return_reason: reason,
+    });
+    await syncActivity(tx, row, user.id);
+    await logEvent(tx, applicant, 'activity_returned', user.id, { activity_id: activity.id, activity_type: activity.activity_type }, reason, {
+      step: activity.activity_type,
+      old_values: { status: activity.status, review_status: activity.review_status, attended: activity.attended, actual_started_at: rules.iso8601(activity.actual_started_at), handler_name: activity.handler_name, result_notes: activity.result_notes, no_show_reason: activity.no_show_reason },
+      new_values: { status: 'confirmed', review_status: 'returned' },
+    });
+    await audit(c, tx, 'activity.returned', { type: MODEL, id: activity.id }, activity, { review_status: 'returned', reason });
+  });
+  await notifyAssignedSales(db, applicant, 'activity_returned', 'Activity returned to Sales', `Admin returned ${activityLabel(activity.activity_type)} for ${applicant.full_name}: ${reason}`, { activity_id: activity.id }, user);
+  return ok(c, await plain(db, activity.id), 'Returned to Sales.');
+});
+
+/** The attendance proof: Admin and the assigned Sales user only. */
+activityRoutes.get('/activities/:activity/documents/:document/download', staff, async (c) => {
+  const { db } = c.get('deps');
+  const loaded = await load(c);
+  const { applicant } = loaded;
+  if (roleName(c) === 'sales') {
+    if (!applicant || applicant.archived_at) abort(404, 'Record not found.');
+    await assertAssignedSales(c, applicant);
+  }
+  const [d] = await db.query(`select * from documents where id = $1 and documentable_type = $2 and documentable_id = $3`, [routeId(c, 'document'), PROOF_MODEL, loaded.id]);
+  return downloadDocument(c, requireFound(d));
+});
+
 
 activityRoutes.delete('/activities/:activity', admin, async (c) => {
   const { db } = c.get('deps');
