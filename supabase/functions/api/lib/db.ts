@@ -18,10 +18,13 @@ const jsonText = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
  * Production adapter over postgres.js. Decoding matches what the frontend got from
  * Laravel: ids and counts are numbers, decimals stay exact strings, dates stay YYYY-MM-DD.
  * prepare:false because Supabase's pooler runs in transaction mode.
+ * ssl:false because postgres.js's TLS upgrade throws ERR_NOT_IMPLEMENTED
+ * (LibuvStreamWrap.prototype.useUserBuffer) in the Edge runtime.
  */
 export function postgresDb(postgres: any, url: string, options: { max?: number } = {}): Db & { close(): Promise<void> } {
   const sql = postgres(url, {
     prepare: false,
+    ssl: false,
     max: options.max ?? 4,
     types: {
       bigint: { to: 20, from: [20], serialize: (v: unknown) => String(v), parse: (v: string) => Number(v) },
