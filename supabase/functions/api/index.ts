@@ -15,7 +15,9 @@ const env = (name: string) => {
 const publicKey = Deno.env.get('APP_PUBLISHABLE_KEY') || env('SUPABASE_ANON_KEY');
 const secretKey = Deno.env.get('APP_SECRET_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
 
-const db = postgresDb(postgres, env('SUPABASE_DB_URL'));
+// DATABASE_URL should be the Transaction pooler string (port 6543). The injected
+// SUPABASE_DB_URL points at the direct host, which keeps dropping connections.
+const db = postgresDb(postgres, Deno.env.get('DATABASE_URL') || env('SUPABASE_DB_URL'));
 const auth = supabaseAuth(env('SUPABASE_URL'), publicKey, secretKey, db);
 const origins = (Deno.env.get('ALLOWED_ORIGINS') ?? '*').split(',').map((o) => o.trim()).filter(Boolean);
 
