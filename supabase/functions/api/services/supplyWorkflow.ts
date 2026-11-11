@@ -17,6 +17,9 @@ import * as S from './supplyStatus.ts';
 import { addWorkingDays, earliestTargetDate, isWeekend, manilaDate, nextWorkingDayOrSame, pastOneWorkingDay } from './workingDays.ts';
 
 const SUPPLY_MODEL = 'App\\Models\\SupplyRequest';
+/** Dates in notification text, as people read them (Manila): "Fri, Nov 13" and "Nov 11, 5:14 PM". */
+const dayText = (value: unknown) => (value ? new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${String(value).slice(0, 10)}T00:00:00Z`)) : 'not set');
+const timeText = (value: unknown) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value as string));
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (v: unknown) => Number(v ?? 0);
 export const roleOf = (actor: Row): string => actor.role?.name ?? actor.role_name ?? actor.role ?? '';
@@ -476,7 +479,7 @@ export async function decideFulfillment(db: Db, actor: Row, id: number, input: R
     await notifyBranch(db, s, 'supply_request_endorsed', 'Supply request partly endorsed', `${s.request_number}: the available items ship now; ${result.child!.request_number} waits for restock.`);
     await notify(db, ['logistics'], s, 'supply_request_endorsed', 'Supply request endorsed', `${s.request_number} is ready for scheduling.`);
   } else {
-    await notifyBranch(db, s, 'supply_request_on_hold', 'Supply request on hold', `${s.request_number} is on hold for restock (expected ${s.expected_restock_date}).`);
+    await notifyBranch(db, s, 'supply_request_on_hold', 'Supply request on hold', `${s.request_number} is on hold for restock (expected ${dayText(s.expected_restock_date)}).`);
   }
   return result;
 }
@@ -584,7 +587,7 @@ export async function updateRestockDate(db: Db, actor: Row, id: number, input: R
     await history(tx, sr, 'on_hold', 'restock_date_updated', actor, reason, { from: sr.expected_restock_date, to: date, revision: num(sr.restock_revision_count) + 1 });
     return (await updateRow(tx, 'supply_requests', id, { expected_restock_date: date, restock_revision_count: num(sr.restock_revision_count) + 1 }))!;
   });
-  await notifyBranch(db, saved, 'supply_request_restock_date', 'Restock date changed', `${saved.request_number}: expected restock is now ${date}. ${reason}`);
+  await notifyBranch(db, saved, 'supply_request_restock_date', 'Restock date changed', `${saved.request_number}: expected restock is now ${dayText(date)}. ${reason}`);
   return saved;
 }
 
@@ -599,7 +602,7 @@ export async function acceptSchedule(db: Db, actor: Row, id: number) {
     await history(tx, sr, 'scheduled', 'schedule_accepted', actor, `Schedule confirmed for ${date ?? 'the target date'}.`, { confirmed_delivery_date: date });
     return setStatus(tx, sr, 'scheduled', { confirmed_delivery_date: date, scheduled_by_user_id: actor.id, scheduled_at: new Date() });
   });
-  await notifyBranch(db, saved, 'supply_request_scheduled', 'Delivery scheduled', `${saved.request_number} is scheduled for ${saved.confirmed_delivery_date}.`);
+  await notifyBranch(db, saved, 'supply_request_scheduled', 'Delivery scheduled', `${saved.request_number} is scheduled for ${dayText(saved.confirmed_delivery_date)}.`);
   return saved;
 }
 
@@ -620,7 +623,7 @@ export async function requestDateChange(db: Db, actor: Row, id: number, input: R
     await history(tx, sr, sr.status, 'date_change_requested', actor, reason, { proposed_date: date, revision_id: revision.id });
     return { sr, revision };
   });
-  await notify(db, ['admin'], result.sr, 'supply_request_date_requested', 'New delivery date requested', `${result.sr.request_number}: Logistics asks to deliver on ${date}.`);
+  await notify(db, ['admin'], result.sr, 'supply_request_date_requested', 'New delivery date requested', `${result.sr.request_number}: Logistics asks to deliver on ${dayText(date)}.`);
   return result.revision;
 }
 
@@ -645,7 +648,7 @@ export async function decideDateChange(db: Db, actor: Row, id: number, input: Ro
     return { sr: saved, approve };
   });
   const s = result.sr;
-  const text = result.approve ? `${s.request_number}: new delivery date approved (${s.confirmed_delivery_date}).` : `${s.request_number}: the new delivery date was not approved.`;
+  const text = result.approve ? `${s.request_number}: new delivery date approved (${dayText(s.confirmed_delivery_date)}).` : `${s.request_number}: the new delivery date was not approved.`;
   await notify(db, ['logistics'], s, 'supply_request_date_decided', result.approve ? 'New date approved' : 'New date rejected', text);
   await notifyBranch(db, s, 'supply_request_date_decided', result.approve ? 'Delivery date changed' : 'Delivery date unchanged', text);
   return s;
@@ -746,7 +749,7 @@ export async function dispatchRequest(db: Db, actor: Row, id: number, input: Row
     const saved = await setStatus(tx, sr, 'dispatched', sr.stock_deducted_at ? {} : { stock_deducted_at: new Date() });
     return { saved, warnings: isWeekend(manilaDate(eta)) ? ['The ETA is on a weekend. Make sure the branch can receive.'] : [] };
   });
-  await notifyBranch(db, result.saved, 'supply_request_dispatched', 'Supplies on the way', `${result.saved.request_number} left the warehouse with ${driver} (${plate}), ETA ${eta.toISOString()}.`);
+  await notifyBranch(db, result.saved, 'supply_request_dispatched', 'Supplies on the way', `${result.saved.request_number} left the warehouse with ${driver} (${plate}), ETA ${timeText(eta)}.`);
   return result;
 }
 
@@ -935,6 +938,8 @@ export async function deliveryReceipt(db: Db, id: number): Promise<Row | null> {
   const items = await itemsOf(db, id);
   return {
     request_number: sr.request_number, branch: sr.branch_name, city: sr.city, brand: sr.brand_name,
+    requested_on: sr.submitted_at ?? sr.created_at, delivery_date: sr.confirmed_delivery_date ?? sr.target_delivery_date, urgency: sr.urgency, remarks: sr.remarks,
+    backorder_of: sr.parent_request_id ? (await db.query(`select request_number from supply_requests where id = $1`, [sr.parent_request_id]))[0]?.request_number ?? null : null,
     address: sr.delivery_address, contact: sr.contact_number ?? sr.branch_contact ?? null,
     items: items.filter((i) => num(i.quantity_prepared) > 0).map((i) => ({ name: i.product?.name ?? i.product_name_snapshot, unit: i.product?.unit ?? i.unit_snapshot, quantity: num(i.quantity_prepared) })),
     driver_name: delivery.driver_name, driver_contact: delivery.driver_contact, plate_number: delivery.plate_number,

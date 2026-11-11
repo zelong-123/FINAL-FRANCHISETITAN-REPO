@@ -13,6 +13,7 @@ import { audit } from '../services/users.ts';
 import { resolveWorkspace } from '../services/branchAccess.ts';
 import * as S from '../services/supplyStatus.ts';
 import * as W from '../services/supplyWorkflow.ts';
+import { maybeRunSupplyAlerts, runSupplyAlerts } from '../services/supplyAlerts.ts';
 import { earliestTargetDate } from '../services/workingDays.ts';
 
 export const supplyRoutes = new Hono<AppEnv>();
@@ -108,6 +109,7 @@ async function overdueCount(db: Db, f: Filter): Promise<number> {
 
 supplyRoutes.get('/supply-requests/stats', viewers, async (c) => {
   const { db } = c.get('deps');
+  await maybeRunSupplyAlerts(db);
   const f = await scoped(c, db);
   const byStatus = await countsByStatus(db, f);
   const where = f.where ? `${f.where} and` : 'where';
@@ -272,9 +274,13 @@ function sortRows(rows: Row[], sort: string) {
   return [...rows].sort(by[sort]);
 }
 
+/** Admin: run the overdue alerts and receipt reminders now (they also run on their own every few minutes). */
+supplyRoutes.post('/supply-requests/alerts/run', role('admin'), async (c) => ok(c, await runSupplyAlerts(c.get('deps').db, { force: true }), 'Supply alerts checked.'));
+
 /** Tab and KPI counts for the toolbar's current filters (the list returns the same in meta). */
 supplyRoutes.get('/supply-requests/counts', viewers, async (c) => {
   const { db } = c.get('deps');
+  await maybeRunSupplyAlerts(db);
   return ok(c, tabCounts(await listCandidates(c, db, c.req.query())));
 });
 
@@ -286,6 +292,7 @@ supplyRoutes.get('/supply-requests/counts', viewers, async (c) => {
  */
 supplyRoutes.get('/supply-requests', viewers, async (c) => {
   const { db } = c.get('deps');
+  await maybeRunSupplyAlerts(db);
   const q = c.req.query();
   const sort = q.sort || 'priority';
   if (!SORTS.includes(sort)) fail('sort', `The sort must be one of: ${SORTS.join(', ')}.`);

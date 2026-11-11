@@ -120,6 +120,12 @@ VITE_PORTAL=branch npx vite --port 5174 --strictPort
 In PowerShell, set the variable first, for example `$env:VITE_PORTAL='branch'; npx vite --port 5174 --strictPort`.
 Variables set in the shell override `.env` files.
 
+For the supply workflow demo (Objective 3), run `npm run dev:api:demo` instead of `npm run dev:api`: the same local
+API with branch inventory, usage history and requests in every state (`supabase/seed/supplyDemo.ts`, local only).
+Point both portals at it by also setting `VITE_SUPABASE_URL=http://127.0.0.1:54321` and
+`VITE_SUPABASE_ANON_KEY=local-dev-anon-key` in the shell, so the `.env` values are not used. The walkthrough is in
+`docs/defense-demo.md` (Objective 3).
+
 ## Import existing MySQL data
 
 `scripts/import-mysql-dump.mjs` reads a phpMyAdmin or `mysqldump` export directly, so no MySQL server is needed.

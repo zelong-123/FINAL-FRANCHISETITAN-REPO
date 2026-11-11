@@ -37,6 +37,19 @@ const KPIS = [
 ];
 const METRIC = "relative min-h-[118px] flex flex-col justify-between overflow-hidden p-[16px] border border-line rounded-[18px] text-left cursor-pointer [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease] hover:[transform:translateY(-2px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_30%,_var(--border))] focus-visible:[outline:2px_solid_var(--accent)] [&_small]:text-muted [&_small]:text-[11px] [&_small]:font-[650] [&_strong]:block [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_30px)] [&_strong]:leading-[1.05] [&_strong]:tracking-[-.04em]";
 const EMPTY_FILTERS = { search: '', brand_id: '', urgency: '', from: '', to: '', sort: 'priority' };
+/** What an empty tab means, in words. */
+const EMPTY = {
+  needs_action: ['Nothing is waiting for you.', 'New requests and steps for your role appear here.'],
+  all: ['No supply requests yet.', 'Branches create requests in their portal.'],
+  under_review: ['Nothing to review.', 'Submitted and returned requests appear here.'],
+  on_hold: ['Nothing is on hold.', 'Requests held for a restock appear here.'],
+  scheduled_preparing: ['Nothing to schedule or prepare.', 'Endorsed requests appear here.'],
+  dispatched: ['Nothing is on the road.', 'Dispatched and delivered requests appear here until the branch confirms.'],
+  discrepancy: ['No discrepancies.', 'Receipts with damaged or short items appear here.'],
+  completed: ['Nothing completed yet.', 'Finished requests appear here.'],
+  closed: ['Nothing rejected or cancelled.', 'Closed requests appear here.'],
+  overdue: ['Nothing is overdue.', 'Every request is within its working-day deadline.'],
+};
 
 function itemsSummary(request) {
   const names = (request.items || []).map((i) => i.product?.name || i.product_name_snapshot || 'Item');
@@ -227,6 +240,7 @@ export default function SupplyRequests() {
   const done = (text) => () => { setModal(null); say(text); refresh(); };
 
   const isAdmin = role === 'admin';
+  const filtersOn = Object.entries(filters).some(([k, v]) => v !== EMPTY_FILTERS[k]) || Boolean(locationId);
   return (
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:p-[22px_14px_30px]">
       <PageHeader
@@ -241,16 +255,22 @@ export default function SupplyRequests() {
         )}
       />
       <Notice type={notice.type || 'info'}>{notice.text}</Notice>
-      <Notice type="error">{remote.error}</Notice>
+      {remote.error && (
+        <div className="flex flex-wrap items-start gap-[10px] [&>div]:flex-1">
+          <Notice type="error">{`Supply requests could not be loaded. ${remote.error}`}</Notice>
+          <button type="button" className={BTN_GHOST} onClick={() => void reload()}>Retry</button>
+        </div>
+      )}
 
       <section className="grid grid-cols-5 gap-[12px] mb-[16px] max-[1100px]:grid-cols-3 max-[640px]:grid-cols-2" aria-label="Key figures">
         {KPIS.map(([key, label, caption, target]) => {
           const active = target.tab === tab && Boolean(target.overdue) === overdue;
+          const loadingFigures = !meta;
           const value = kpis[key] ?? 0;
           return (
             <button key={key} type="button" aria-pressed={active} className={`${METRIC} ${active ? '!border-accent [box-shadow:0_0_0_1px_var(--accent)]' : ''}`} onClick={() => update({ tab: target.tab, overdue: target.overdue || '' })}>
               <small>{label}</small>
-              <strong className={key === 'overdue' && value ? '!text-danger-text' : key === 'needs_action' && value ? '!text-accent-text' : ''}>{formatNumber(value)}</strong>
+              <strong className={key === 'overdue' && value ? '!text-danger-text' : key === 'needs_action' && value ? '!text-accent-text' : ''}>{loadingFigures ? '—' : formatNumber(value)}</strong>
               <small>{caption(role)}</small>
             </button>
           );
@@ -290,8 +310,10 @@ export default function SupplyRequests() {
       {locationId && <div className="mb-[10px]"><Chip tone="accent">Branch: {branchName} <button type="button" aria-label="Show every branch" className="ml-[2px] cursor-pointer [background:none] border-0 text-inherit" onClick={() => update({ location_id: '' })}><FaXmark /></button></Chip></div>}
 
       <section className={`${PANEL} overflow-hidden mb-[16px]`}>
-        {remote.loading ? <LoadingState /> : !rows.length ? (
-          <EmptyState label="No requests in this view." detail={tab === 'needs_action' ? 'Nothing is waiting for you right now.' : 'Choose another tab or clear the filters.'} />
+        {remote.loading && !remote.data ? <LoadingState label="Loading supply requests…" /> : remote.error && !remote.data ? (
+          <EmptyState label="The list is not available right now." detail="Check the connection, then press Retry above." />
+        ) : !rows.length ? (
+          <EmptyState label={EMPTY[overdue ? 'overdue' : tab]?.[0] || 'No requests in this view.'} detail={filtersOn ? 'Nothing matches these filters. Clear them to see more.' : (EMPTY[overdue ? 'overdue' : tab]?.[1] || 'Choose another tab.')} />
         ) : (
           <>
             <div className="overflow-x-auto max-[760px]:hidden">

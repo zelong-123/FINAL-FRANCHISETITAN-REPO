@@ -10,7 +10,7 @@ import { printDeliveryReceipt } from '../../lib/deliveryReceipt';
 import { getSupplyActions, waitingLine } from '../../lib/supplyActions';
 import { supplyStatusLabel } from '../../lib/supplyStatus';
 import useRemote from '../../lib/useRemote';
-import { Notice } from '../ApiUi';
+import { LoadingState, Notice } from '../ApiUi';
 import { Callout, Chip, KV, Section, StatusChip, Stepper, UrgencyChip } from './supplyUi';
 import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, STAGES, qty, stageIndex, branchLabel } from './supplyStyles';
 
@@ -187,9 +187,14 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
       <aside role="dialog" aria-label={r ? `Request ${r.request_number}` : 'Request'} className="absolute top-0 right-0 bottom-0 w-[min(720px,_100%)] overflow-y-auto [overscroll-behavior:contain] border-l border-line-strong [background:var(--panel)] [box-shadow:var(--shadow-xl)] p-[22px] pt-[calc(22px_+_env(safe-area-inset-top,0px))] max-[520px]:p-[16px] [animation:drawerIn_.24s_cubic-bezier(.2,.8,.2,1)_both]">
         <style>{'@keyframes drawerIn{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}'}</style>
         <button type="button" className={`${BTN_GHOST} ${BTN_SMALL} float-right`} onClick={onClose}><FaXmark aria-hidden="true" /> Close</button>
-        {remote.error && <Notice type="error">{remote.error}</Notice>}
+        {remote.error && (
+          <div className="clear-both pt-[8px]">
+            <Notice type="error">{`This request could not be loaded. ${remote.error}`}</Notice>
+            <button type="button" className={BTN_GHOST} onClick={() => void reload()}>Retry</button>
+          </div>
+        )}
         <Notice type="error">{error}</Notice>
-        {!r ? (!remote.error && <p className="text-muted text-[13px]">Loading request…</p>) : (
+        {!r ? (!remote.error && <div className="clear-both pt-[8px]"><LoadingState label="Loading request…" /></div>) : (
           <>
             <div className="text-accent-text text-[11px] font-[800] tracking-[.12em] [font-family:ui-monospace,monospace]">{r.request_number}</div>
             <h2 className="m-[4px_0_6px] text-text text-[22px] leading-[1.15] tracking-[-.02em]">{branchLabel(r.location)}</h2>

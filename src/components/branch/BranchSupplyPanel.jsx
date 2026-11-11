@@ -99,6 +99,41 @@ function RequestCard({ request, preview, onEdit, onCancel, onReceive }) {
   );
 }
 
+/**
+ * The branch portal has no notification bell: unread supply notifications (receipt reminder,
+ * returned, scheduled, dispatched, …) are listed here, each with Show and Mark as read.
+ */
+function SupplyUpdates({ updates, requests, onShow }) {
+  const list = (updates.data || []).filter((n) => String(n.type || '').startsWith('supply_request'));
+  if (!list.length) return null;
+  const read = async (ids) => {
+    await Promise.all(ids.map((id) => api.patch(`/notifications/${id}/read`, {}).catch(() => null)));
+    void updates.reload({ silent: true });
+  };
+  return (
+    <div className="m-[12px_16px_0] p-[10px_12px] border rounded-[12px] [border-color:color-mix(in_srgb,_var(--branch-accent,_var(--accent))_45%,_var(--border))] [background:color-mix(in_srgb,_var(--branch-accent,_var(--accent))_7%,_transparent)]" aria-live="polite">
+      <div className="flex items-center justify-between gap-2 mb-[6px]">
+        <b className="text-text text-[13px]">Supply updates ({list.length})</b>
+        <button type="button" className="p-0 border-0 [background:none] text-accent-text text-[12px] font-[700] cursor-pointer" onClick={() => read(list.map((n) => n.id))}>Mark all as read</button>
+      </div>
+      <ul className="m-0 p-0 [list-style:none] grid gap-[6px]">
+        {list.slice(0, 6).map((n) => {
+          const request = requests.find((r) => Number(r.id) === Number(n.data?.supply_request_id));
+          return (
+            <li key={n.id} className="flex flex-wrap items-start justify-between gap-[8px] text-[12.5px]">
+              <span className="min-w-0 flex-1"><b className="text-text">{n.title}</b> <span className="text-text-secondary">{n.message}</span></span>
+              <span className="flex gap-[10px]">
+                {request && <button type="button" className="p-0 border-0 [background:none] text-accent-text text-[12px] font-[700] cursor-pointer" onClick={() => { onShow(request.request_number); void read([n.id]); }}>Show</button>}
+                <button type="button" className="p-0 border-0 [background:none] text-muted text-[12px] font-[700] cursor-pointer" onClick={() => read([n.id])}>Mark as read</button>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export default function BranchSupplyPanel({ branchQuery = {}, location = null, preview = false }) {
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
@@ -135,12 +170,14 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
     [filter, preview, locationId],
   );
   const requests = remote.data || [];
+  const updates = useRemote(async () => (preview ? [] : (await api.get('/notifications', { unread_only: 1, per_page: 20 })).data || []), [preview]);
+  const reloadUpdates = updates.reload;
   const { reload } = remote;
   const loadRequests = useCallback(() => reload({ silent: true }), [reload]);
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && !receiveFor && !cancelFor) void loadRequests(); }, 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && !receiveFor && !cancelFor) { void loadRequests(); void reloadUpdates({ silent: true }); } }, 15000);
     return () => window.clearInterval(timer);
-  }, [loadRequests, receiveFor, cancelFor]);
+  }, [loadRequests, reloadUpdates, receiveFor, cancelFor]);
 
   // Live check of the whole request (bulk reason needed? duplicates? days covered? date?).
   const payload = useCallback(() => ({
@@ -158,6 +195,14 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
     return () => { alive = false; window.clearTimeout(timer); };
   }, [payload, preview, location?.id, lines.length, editing]);
   const liveCheck = lines.length ? check : null;
+
+  /** Scrolls to a request card and highlights it for a moment. */
+  const showRequest = (number) => {
+    const card = document.querySelector(`article[data-request="${number}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.animate?.([{ background: 'color-mix(in srgb, var(--accent) 16%, transparent)' }, { background: 'transparent' }], { duration: 1600 });
+  };
 
   const resetForm = () => { setLines([]); setPick(NO_PICK); setEditingLine(null); setDuplicate(null); setForm(emptyForm(location)); setEditing(null); setCheck(null); };
 
@@ -357,8 +402,14 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
               {STATUS_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </header>
-          <Notice type="error">{remote.error}</Notice>
-          {remote.loading ? <LoadingState label="Loading requests…" /> : requests.length === 0 ? (
+          {remote.error && (
+            <div className="p-[12px_16px_0]">
+              <Notice type="error">{`Your requests could not be loaded. ${remote.error}`}</Notice>
+              <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => void reload()}>Retry</button>
+            </div>
+          )}
+          {!preview && <SupplyUpdates updates={updates} requests={requests} onShow={showRequest} />}
+          {remote.loading && !remote.data ? <LoadingState label="Loading requests…" /> : requests.length === 0 ? (
             <EmptyState label={filter ? 'No requests in this view.' : 'No supply requests for this branch yet.'} detail={filter ? 'Choose another view.' : 'Add items to the list and submit your first request.'} />
           ) : (
             <div>

@@ -50,6 +50,9 @@ alter table public."supply_requests" add column if not exists "discrepancy_resol
 alter table public."supply_requests" add column if not exists "discrepancy_resolved_at" timestamptz;
 alter table public."supply_requests" add column if not exists "receipt_reminded_at" timestamptz;
 alter table public."supply_requests" add column if not exists "reservation_incomplete" boolean not null default false;
+-- Overdue alerts: the overdue state already notified, so each one is sent once.
+alter table public."supply_requests" add column if not exists "overdue_notified_key" text;
+alter table public."supply_requests" add column if not exists "overdue_notified_at" timestamptz;
 
 alter table public."supply_requests" drop constraint if exists "supply_requests_urgency_check";
 alter table public."supply_requests" add constraint "supply_requests_urgency_check" check ("urgency" in ('normal', 'urgent', 'critical'));
@@ -164,6 +167,13 @@ alter table public."supply_request_status_histories" alter column "created_at"
   set default coalesce(nullif(current_setting('franchisetitan.history_at', true), '')::timestamptz, now());
 alter table public."supply_request_status_histories" alter column "updated_at"
   set default coalesce(nullif(current_setting('franchisetitan.history_at', true), '')::timestamptz, now());
+
+-- 8b. When the overdue and receipt-reminder check last ran (it runs at most every few minutes).
+create table if not exists public."supply_job_runs" (
+  "name" text primary key,
+  "last_run_at" timestamptz not null default now()
+);
+alter table public."supply_job_runs" enable row level security;
 
 -- 9. Existing requests: map the old statuses (only rows still in an old status are touched).
 update public."supply_requests" set "status_changed_at" = coalesce("updated_at", "created_at", now()) where "status_changed_at" is null;
