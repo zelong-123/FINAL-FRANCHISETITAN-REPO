@@ -1,148 +1,209 @@
+// Branch portal: supply requests. Left: the New Request form (items with the estimate and days
+// covered, urgency, target date with the earliest-date hint, bulk reason only when needed, the
+// duplicate warning, address and contact, remarks; save as draft or submit). Right: My requests
+// with the 4-step tracker, Edit and resubmit, Cancel while editable, and Confirm Receipt.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, firstValidationMessage } from '../../lib/api';
 import {
-  REQUEST_STATUSES, combineLine, findDuplicate, putLine, removeLine, toRequestItems,
+  BRANCH_EDITABLE, BRANCH_STEPS, branchStep, combineLine, findDuplicate, putLine, removeLine, toRequestItems,
 } from '../../lib/branchWorkspace';
-import { EmptyState, LoadingState, Notice, StatusBadge } from '../ApiUi';
+import { EmptyState, LoadingState, Notice } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
-import { supplyStatusLabel } from '../../lib/supplyActions';
+import useRemote from '../../lib/useRemote';
 import EstimateHint from '../supply/EstimateHint';
+import BranchReceiptModal from './BranchReceiptModal';
+import { ReasonModal } from '../supply/SupplyModals';
+import { Callout, Chip, UrgencyChip } from '../supply/supplyUi';
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, INPUT, LABEL, qty } from '../supply/supplyStyles';
 
-const NO_FILTERS = { date: '', status: '' };
 const NO_PICK = { product_id: '', quantity: '' };
+const STATUS_FILTERS = [['', 'All requests'], ['open', 'Open'], ['returned', 'Returned'], ['draft', 'Drafts'], ['in_transit', 'On the way'], ['done', 'Received'], ['closed', 'Cancelled or rejected']];
+const FILTER_QUERY = { open: { view: 'active' }, returned: { status: 'returned' }, draft: { status: 'draft' }, in_transit: { tab: 'dispatched' }, done: { tab: 'completed' }, closed: { tab: 'closed' } };
+const PANEL_CLASS = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] flex flex-col';
+const PANEL_HEAD = 'min-h-[64px] flex flex-wrap items-center justify-between gap-3 m-[0_20px] p-[14px_4px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent,_var(--accent))_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_h2]:font-[780] [&_p]:m-[2px_0_0] [&_p]:text-muted [&_p]:text-[12px]';
+const isWeekend = (day) => Boolean(day) && [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay());
+const when = (value) => (value ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—');
+const emptyForm = (location) => ({
+  urgency: 'normal', urgency_reason: '', target_delivery_date: '', bulk_reason: '',
+  delivery_address: location?.address || location?.name || '', contact_number: location?.contact_number || '', remarks: '',
+});
 
-/**
- * Supply Request Panel: build a Request List of the branch brand's warehouse
- * products, submit it once as one request, and follow it under Request Status.
- */
+function Tracker({ request }) {
+  const { step, stopped, label } = branchStep(request.status, request.branch_received_at);
+  return (
+    <div>
+      <ol className="m-0 p-0 [list-style:none] grid grid-cols-4 gap-[4px]" aria-label={`Progress: ${label}`}>
+        {BRANCH_STEPS.map((name, index) => {
+          const state = stopped ? (index === 0 ? 'stopped' : 'todo') : index < step ? 'done' : index === step ? 'current' : 'todo';
+          return (
+            <li key={name} className="min-w-0">
+              <span className={`block h-[5px] rounded-[3px] ${{ done: '[background:var(--accent)]', current: '[background:var(--accent-2)] [box-shadow:0_0_6px_var(--accent-2)]', stopped: '[background:var(--danger)]', todo: '[background:var(--surface-strong)]' }[state]}`} />
+              <span className={`block mt-[4px] text-[10.5px] truncate ${state === 'todo' ? 'text-muted' : 'text-text-secondary font-[700]'}`}>{name}</span>
+            </li>
+          );
+        })}
+      </ol>
+      <div className={`mt-[3px] text-[12.5px] font-[700] ${stopped || request.status === 'returned' ? 'text-danger-text' : 'text-text'}`}>{label}</div>
+    </div>
+  );
+}
+
+function RequestCard({ request, preview, onEdit, onCancel, onReceive }) {
+  const editable = BRANCH_EDITABLE.includes(request.status);
+  const inTransit = ['dispatched', 'delivered'].includes(request.status) && !request.branch_received_at;
+  const d = request.delivery;
+  const date = request.confirmed_delivery_date || request.effective_delivery_date || request.target_delivery_date;
+  const received = request.branch_received_at && (request.items || []).some((i) => i.received_good !== null);
+  return (
+    <article className={`p-[13px_14px] border-b border-line last:border-b-0 ${request.status === 'returned' || inTransit ? '[box-shadow:inset_3px_0_var(--accent-2)]' : ''}`} data-request={request.request_number}>
+      <header className="flex flex-wrap items-start justify-between gap-[8px]">
+        <div className="min-w-0">
+          <strong className="block text-text text-[13px] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
+          <small className="block text-muted text-[11.5px]">Requested {formatDate(request.submitted_at || request.created_at) || '—'} · Delivery {formatDate(date) || '—'}{request.confirmed_delivery_date ? ' (confirmed)' : ''}</small>
+        </div>
+        <span className="flex flex-wrap gap-[5px]">{request.urgency !== 'normal' && <UrgencyChip urgency={request.urgency} />}{request.parent_request_number && <Chip>Backorder of {request.parent_request_number}</Chip>}</span>
+      </header>
+      <div className="mt-[9px]"><Tracker request={request} /></div>
+      <ul className="m-[8px_0_0] p-0 [list-style:none] grid gap-[3px] text-[12.5px]">
+        {(request.items || []).map((item) => (
+          <li key={item.id} className="flex justify-between gap-3 text-text-secondary">
+            <span>{item.product?.name || item.product_name_snapshot}</span>
+            <span className="text-text font-[650] whitespace-nowrap">
+              {qty(item.quantity_endorsed ?? item.quantity_requested)} {item.product?.unit || item.unit_snapshot}
+              {received && <span className="ml-[6px] text-muted font-[400]">({qty(item.received_good)} good{Number(item.received_damaged) ? `, ${qty(item.received_damaged)} damaged` : ''}{Number(item.received_short) ? `, ${qty(item.received_short)} short` : ''})</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {request.status === 'returned' && <Callout><b>Returned for correction:</b> {request.returned_reason}</Callout>}
+      {request.status === 'on_hold' && <Callout><b>On hold for restock</b> (expected {formatDate(request.expected_restock_date) || '—'}). {request.fulfillment_reason}</Callout>}
+      {request.status === 'rejected' && <Callout tone="danger"><b>Rejected:</b> {request.rejected_reason}</Callout>}
+      {request.status === 'cancelled' && <Callout tone="danger"><b>Cancelled:</b> {request.cancelled_reason}</Callout>}
+      {request.status === 'discrepancy_review' && <Callout tone="info">Received with damaged or short items. Admin is reviewing it.</Callout>}
+      {request.status === 'completed_with_discrepancy' && <Callout tone="info"><b>Discrepancy resolved:</b> {request.discrepancy_remarks}</Callout>}
+      {inTransit && d?.driver_name && (
+        <div className="mt-[9px] grid grid-cols-3 gap-[6px] max-[560px]:grid-cols-1 [&>div]:p-[7px_10px] [&>div]:rounded-[10px] [&>div]:border [&>div]:border-line [&_small]:block [&_small]:text-muted [&_small]:text-[10.5px] [&_b]:text-text [&_b]:text-[12.5px]">
+          <div><small>Driver</small><b>{d.driver_name}</b></div>
+          <div><small>Plate</small><b>{d.plate_number}</b></div>
+          <div><small>ETA</small><b>{when(d.eta_at)}</b></div>
+        </div>
+      )}
+      {!preview && (editable || inTransit) && (
+        <footer className="mt-[10px] flex flex-wrap justify-end gap-[8px]">
+          {editable && <button type="button" className={`${BTN_DANGER} ${BTN_SMALL}`} onClick={() => onCancel(request)}>Cancel request</button>}
+          {editable && <button type="button" className={`${request.status === 'returned' ? BTN_PRIMARY : BTN_GHOST} ${BTN_SMALL}`} onClick={() => onEdit(request)}>{request.status === 'returned' ? 'Edit and resubmit' : request.status === 'draft' ? 'Edit draft' : 'Edit'}</button>}
+          {inTransit && <button type="button" className={`${BTN_PRIMARY} ${BTN_SMALL}`} onClick={() => onReceive(request)}>Confirm receipt</button>}
+        </footer>
+      )}
+    </article>
+  );
+}
+
 export default function BranchSupplyPanel({ branchQuery = {}, location = null, preview = false }) {
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [lines, setLines] = useState([]);
   const [pick, setPick] = useState(NO_PICK);
-  const [editingId, setEditingId] = useState(null);
-  const [duplicate, setDuplicate] = useState(null); // { line, existing } awaiting the user's answer
-  const [targetDate, setTargetDate] = useState('');
-  const [remarks, setRemarks] = useState('');
+  const [editingLine, setEditingLine] = useState(null);
+  const [duplicate, setDuplicate] = useState(null);
+  const [form, setForm] = useState(() => emptyForm(location));
+  const [editing, setEditing] = useState(null); // the draft / submitted / returned request being edited
+  const [settings, setSettings] = useState(null);
+  const [check, setCheck] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-
-  const [requests, setRequests] = useState([]);
-  const [filters, setFilters] = useState(NO_FILTERS);
-  const [loadingRequests, setLoadingRequests] = useState(true);
-  const [statusError, setStatusError] = useState('');
-
-  // State updates only after a re-render, so a second click could still get through without this.
+  const [filter, setFilter] = useState('');
+  const [receiveFor, setReceiveFor] = useState(null);
+  const [cancelFor, setCancelFor] = useState(null);
   const submitLock = useRef(false);
-  const latestRequestsCall = useRef(0);
+  const formRef = useRef(null);
 
   useEffect(() => {
     let active = true;
-    setLoadingProducts(true);
     api.get('/branch/workspace/warehouse-products', branchQuery)
       .then((response) => { if (active) setProducts(response.data?.products || []); })
       .catch((caught) => { if (active) setError(firstValidationMessage(caught)); })
       .finally(() => { if (active) setLoadingProducts(false); });
+    api.get('/supply-settings').then((r) => { if (active) setSettings(r.data); }).catch(() => {});
     return () => { active = false; };
   }, [branchQuery]);
 
-  const loadRequests = useCallback(async (silent = false) => {
-    const call = ++latestRequestsCall.current;
-    if (!silent) setLoadingRequests(true);
-    try {
-      const response = await api.get('/branch/workspace/supply-requests', { ...branchQuery, ...filters });
-      if (call === latestRequestsCall.current) {
-        setRequests(response.data || []);
-        setStatusError('');
-      }
-    } catch (caught) {
-      if (call === latestRequestsCall.current) setStatusError(firstValidationMessage(caught));
-    } finally {
-      if (call === latestRequestsCall.current) setLoadingRequests(false);
-    }
-  }, [branchQuery, filters]);
-
-  useEffect(() => { void loadRequests(); }, [loadRequests]);
+  const locationId = location?.id;
+  const remote = useRemote(
+    async () => (await api.get('/supply-requests', { tab: 'all', sort: 'newest', per_page: 50, ...(preview && locationId ? { location_id: locationId } : {}), ...(FILTER_QUERY[filter] || {}) })).data || [],
+    [filter, preview, locationId],
+  );
+  const requests = remote.data || [];
+  const { reload } = remote;
+  const loadRequests = useCallback(() => reload({ silent: true }), [reload]);
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void loadRequests(true);
-    }, 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && !receiveFor && !cancelFor) void loadRequests(); }, 15000);
     return () => window.clearInterval(timer);
-  }, [loadRequests]);
+  }, [loadRequests, receiveFor, cancelFor]);
 
-  const resetForm = () => {
-    setPick(NO_PICK);
-    setEditingId(null);
-    setDuplicate(null);
-  };
+  // Live check of the whole request (bulk reason needed? duplicates? days covered? date?).
+  const payload = useCallback(() => ({
+    location_id: location?.id, ...form, target_delivery_date: form.target_delivery_date || null,
+    urgency_reason: form.urgency === 'normal' ? null : form.urgency_reason, items: toRequestItems(lines),
+  }), [form, lines, location?.id]);
+  useEffect(() => {
+    if (preview || !location?.id || !lines.length) return undefined;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api.post('/supply-requests/check', { ...payload(), ...(editing ? { existing_id: editing.id } : {}) })
+        .then((r) => { if (alive) setCheck(r.data); })
+        .catch(() => { if (alive) setCheck(null); });
+    }, 350);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [payload, preview, location?.id, lines.length, editing]);
+  const liveCheck = lines.length ? check : null;
+
+  const resetForm = () => { setLines([]); setPick(NO_PICK); setEditingLine(null); setDuplicate(null); setForm(emptyForm(location)); setEditing(null); setCheck(null); };
 
   const addToList = (event) => {
     event.preventDefault();
-    setError('');
-    setNotice('');
+    setError(''); setNotice('');
     const product = products.find((row) => String(row.id) === String(pick.product_id));
     const quantity = Number(pick.quantity);
-    if (!product) {
-      setError('Choose a warehouse item to add.');
-      return;
-    }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError('Quantity must be greater than zero.');
-      return;
-    }
+    if (!product) { setError('Choose a warehouse item to add.'); return; }
+    if (!Number.isFinite(quantity) || quantity <= 0) { setError('Quantity must be greater than zero.'); return; }
     const line = { product_id: product.id, name: product.name, unit: product.unit, quantity };
-    const existing = findDuplicate(lines, product.id, editingId);
-    if (existing) {
-      setDuplicate({ line, existing });
-      return;
-    }
-    setLines((current) => putLine(current, line, editingId));
-    resetForm();
+    const existing = findDuplicate(lines, product.id, editingLine);
+    if (existing) { setDuplicate({ line, existing }); return; }
+    setLines((current) => putLine(current, line, editingLine));
+    setPick(NO_PICK); setEditingLine(null);
   };
 
-  const confirmCombine = () => {
-    setLines((current) => combineLine(current, duplicate.line, editingId));
-    resetForm();
+  const editRequest = (request) => {
+    setError(''); setNotice('');
+    setEditing(request);
+    setLines((request.items || []).map((i) => ({ product_id: i.product_id, name: i.product?.name || i.product_name_snapshot, unit: i.product?.unit || i.unit_snapshot, quantity: Number(i.quantity_requested) })));
+    setForm({
+      urgency: request.urgency || 'normal', urgency_reason: request.urgency_reason || '', target_delivery_date: request.target_delivery_date || '',
+      bulk_reason: request.bulk_reason || '', delivery_address: request.delivery_address || '', contact_number: request.contact_number || '', remarks: request.remarks || '',
+    });
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const editLine = (line) => {
-    setError('');
-    setDuplicate(null);
-    setEditingId(line.product_id);
-    setPick({ product_id: String(line.product_id), quantity: String(line.quantity) });
-  };
-
-  const unselectLine = (line) => {
-    setLines((current) => removeLine(current, line.product_id));
-    if (editingId === line.product_id) resetForm();
-    if (duplicate?.existing.product_id === line.product_id) setDuplicate(null);
-  };
-
-  const submit = async () => {
+  const save = async (submit) => {
     if (submitLock.current || preview || !location?.id || lines.length === 0) return;
     submitLock.current = true;
-    setBusy(true);
-    setError('');
-    setNotice('');
+    setBusy(true); setError(''); setNotice('');
     try {
-      const response = await api.post('/supply-requests', {
-        location_id: location.id,
-        target_delivery_date: targetDate || null,
-        delivery_address: location.address || location.name,
-        remarks: remarks.trim() || null,
-        submit: true,
-        items: toRequestItems(lines),
-      });
-      const count = lines.length;
-      setLines([]);
-      setTargetDate('');
-      setRemarks('');
+      let saved;
+      if (editing) {
+        await api.put(`/supply-requests/${editing.id}`, payload());
+        saved = submit && editing.status !== 'submitted' ? (await api.post(`/supply-requests/${editing.id}/submit`, {})).data : { ...editing };
+      } else {
+        saved = (await api.post('/supply-requests', { ...payload(), submit })).data;
+      }
+      const number = saved.request_number || editing?.request_number;
+      setNotice(submit
+        ? `${number} ${editing?.status === 'returned' ? 'resubmitted under the same number' : editing ? 'updated' : 'submitted'}. Admin will review it.${(saved.warnings || []).length ? ` ${saved.warnings.join(' ')}` : ''}`
+        : `${number} saved as a draft. Submit it when you are ready.`);
       resetForm();
-      setNotice(`Request ${response.data?.request_number || ''} submitted with ${count} item${count === 1 ? '' : 's'}. Admin will review it.`);
-      // Show the new request even when the current filters would have hidden it.
-      if (filters.date || filters.status) setFilters(NO_FILTERS);
-      else await loadRequests(true);
+      await loadRequests();
     } catch (caught) {
       setError(firstValidationMessage(caught));
     } finally {
@@ -151,165 +212,180 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
     }
   };
 
-  const filtered = Boolean(filters.date || filters.status);
+  const urgent = form.urgency !== 'normal';
+  const earliest = settings ? (urgent ? settings.earliest_urgent : settings.earliest_normal) : null;
+  const targetShown = form.target_delivery_date || earliest;
+  const lineInfo = new Map((liveCheck?.items || []).map((i) => [Number(i.product_id), i]));
+  const issues = liveCheck?.issues || {};
+  const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
   return (
     <div className="branch-supply">
       <Notice type="success">{notice}</Notice>
       <Notice type="error">{error}</Notice>
 
-      <div className="grid gap-4 max-[761px]:later:grid-cols-[1fr] later-2:grid-cols-[minmax(0,_2fr)_minmax(0,_3fr)] later:items-stretch later:[&>.data-panel]:mb-0 max-[1181px]:later-3:grid-cols-[minmax(0,_1fr)]">
-        <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] flex flex-col p-0">
-          <header className="min-h-[72px] flex flex-wrap items-center justify-between gap-3 m-[0_20px] p-[14px_8px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent)_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[20px] [&_h2]:font-[800] [&_h2]:tracking-[.01em] [&_h2]:uppercase max-[761px]:later:m-[0_16px] max-[761px]:later:p-[12px_0] max-[761px]:later:min-h-0 max-[761px]:later:[&_h2]:text-[17px]"><h2>Supply Request</h2></header>
-          <div className="flex-1 min-w-0 flex flex-col p-[16px_20px_20px] max-[761px]:later:p-[14px_16px_16px]">
-            {loadingProducts ? <LoadingState label="Loading warehouse availability…" /> : products.length === 0 ? (
+      <div className="grid gap-4 grid-cols-[minmax(0,_2fr)_minmax(0,_3fr)] items-start max-[1181px]:grid-cols-1">
+        <section className={PANEL_CLASS} ref={formRef}>
+          <header className={PANEL_HEAD}>
+            <div>
+              <h2>{editing ? (editing.status === 'returned' ? `Edit and resubmit ${editing.request_number}` : `Edit ${editing.request_number}`) : 'New request'}</h2>
+              <p>{editing ? 'Same request number; the history is kept.' : 'Items from your brand’s warehouse catalog.'}</p>
+            </div>
+            {editing && <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={resetForm}>Stop editing</button>}
+          </header>
+          <div className="p-[16px_20px_20px] max-[761px]:p-[14px]">
+            {editing?.status === 'returned' && <Callout><b>Admin returned it:</b> {editing.returned_reason}</Callout>}
+            {loadingProducts ? <LoadingState label="Loading warehouse items…" /> : products.length === 0 ? (
               <EmptyState label="No warehouse items are available for this brand yet." detail="Admin adds warehouse products per brand." />
             ) : (
-              <div className="flex-1 flex flex-col gap-4 [&_form]:grid [&_form]:gap-3">
-                <form onSubmit={addToList}>
-                  <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                    <span>Item</span>
-                    <select
-                      value={pick.product_id}
-                      disabled={busy}
-                      onChange={(event) => { setDuplicate(null); setPick({ ...pick, product_id: event.target.value }); }}
-                    >
+              <div className="grid gap-[14px] mt-[4px]">
+                <form onSubmit={addToList} className="grid gap-[8px]">
+                  <div>
+                    <label className={LABEL} htmlFor="branch-pick-item">Item</label>
+                    <select id="branch-pick-item" className={INPUT} value={pick.product_id} disabled={busy || preview} onChange={(e) => { setDuplicate(null); setPick({ ...pick, product_id: e.target.value }); }}>
                       <option value="">Select an item</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name} · {formatNumber(product.available)} {product.unit} available
-                        </option>
-                      ))}
+                      {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
                     </select>
-                  </label>
-                  {!preview && <EstimateHint locationId={location?.id} productId={pick.product_id} />}
-                  <div className="flex flex-wrap items-end gap-2 [&_.branch-field]:flex-[1_1_140px] later:[&_.ghost-button]:min-h-[42px]">
-                    <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                      <span>Quantity</span>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="any"
-                        value={pick.quantity}
-                        disabled={busy}
-                        onChange={(event) => { setDuplicate(null); setPick({ ...pick, quantity: event.target.value }); }}
-                      />
-                    </label>
-                    <button type="submit" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" disabled={preview || busy}>
-                      {editingId === null ? 'Add to list' : 'Update item'}
-                    </button>
-                    {editingId !== null && <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={resetForm}>Cancel</button>}
                   </div>
+                  <div className="flex flex-wrap items-end gap-[8px]">
+                    <div className="flex-[1_1_140px]">
+                      <label className={LABEL} htmlFor="branch-pick-qty">Quantity</label>
+                      <input id="branch-pick-qty" className={INPUT} type="number" min="0.01" step="any" inputMode="decimal" value={pick.quantity} disabled={busy || preview} onChange={(e) => { setDuplicate(null); setPick({ ...pick, quantity: e.target.value }); }} />
+                    </div>
+                    <button type="submit" className={BTN_GHOST} disabled={preview}>{editingLine === null ? 'Add to list' : 'Update item'}</button>
+                    {editingLine !== null && <button type="button" className={BTN_GHOST} onClick={() => { setPick(NO_PICK); setEditingLine(null); }}>Cancel edit</button>}
+                  </div>
+                  {pick.product_id && !preview && <EstimateHint locationId={location?.id} productId={pick.product_id} />}
                 </form>
 
                 {duplicate && (
-                  <div className="grid gap-[10px] p-3 rounded-[10px] text-text-secondary text-[13px] border border-[color:color-mix(in_srgb,_var(--warning)_45%,_var(--border))] [background:color-mix(in_srgb,_var(--warning)_9%,_transparent)] [&_p]:m-0 [&_strong]:text-text [&_div]:flex [&_div]:gap-2" role="alert">
-                    <p>
-                      <strong>{duplicate.line.name}</strong> is already in the list ({formatNumber(duplicate.existing.quantity, 2)}).
-                      Combine to {formatNumber(Number(duplicate.existing.quantity) + duplicate.line.quantity, 2)}?
-                    </p>
-                    <div>
-                      <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={confirmCombine}>Combine</button>
-                      <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => setDuplicate(null)}>Cancel</button>
+                  <Callout>
+                    <b>{duplicate.line.name}</b> is already in the list ({formatNumber(duplicate.existing.quantity, 2)}). Combine to {formatNumber(Number(duplicate.existing.quantity) + duplicate.line.quantity, 2)}?
+                    <div className="mt-[8px] flex gap-[8px]">
+                      <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => { setLines((c) => combineLine(c, duplicate.line, editingLine)); setDuplicate(null); setPick(NO_PICK); setEditingLine(null); }}>Combine</button>
+                      <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => setDuplicate(null)}>Keep as is</button>
                     </div>
-                  </div>
+                  </Callout>
                 )}
 
-                <div className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                  <span>Request List</span>
+                <div>
+                  <span className={LABEL}>Request list</span>
                   {lines.length === 0 ? (
-                    <p className="m-0 p-[24px_14px] border border-input-line rounded-[10px] text-muted [background:var(--input-bg)] text-[13px] text-center">No items yet. Choose an item and quantity, then select Add to list.</p>
+                    <p className="m-0 p-[20px_14px] border border-input-line rounded-[11px] text-muted [background:var(--input-bg)] text-[13px] text-center">No items yet. Choose an item and a quantity, then Add to list.</p>
                   ) : (
-                    <ul className="max-h-[280px] overflow-y-auto m-0 p-[0_12px] border border-input-line rounded-[10px] [background:var(--input-bg)] [list-style:none] [&_li]:flex [&_li]:flex-wrap [&_li]:items-center [&_li]:gap-3 [&_li]:p-[11px_0] [&_li]:text-text [&_li]:text-[14px] [&_li+li]:[border-top:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [&_li.is-editing]:pl-[10px] [&_li.is-editing]:[box-shadow:inset_3px_0_var(--branch-accent)] [&_li>span]:flex-[1_1_120px] [&_li>span]:min-w-0 [&_li>span]:[overflow-wrap:anywhere] [&_small]:text-muted [&_small]:text-[12px]">
-                      {lines.map((line) => (
-                        <li key={line.product_id} className={editingId === line.product_id ? 'is-editing' : ''}>
-                          <span>{line.name} × {formatNumber(line.quantity, 2)} <small>{line.unit}</small></span>
-                          <button type="button" className="p-[2px_0] border-0 text-accent-text [background:transparent] text-[13px] font-[700] cursor-pointer later-5:[&.is-danger]:text-danger-text [&:hover:not(:disabled)]:[text-decoration:underline] disabled:opacity-[.5] disabled:cursor-not-allowed focus-visible:[outline:2px_solid_var(--branch-accent)] focus-visible:[outline-offset:2px] focus-visible:rounded-[3px] is-danger" disabled={busy} onClick={() => unselectLine(line)}>Unselect</button>
-                          <button type="button" className="p-[2px_0] border-0 text-accent-text [background:transparent] text-[13px] font-[700] cursor-pointer later-5:[&.is-danger]:text-danger-text [&:hover:not(:disabled)]:[text-decoration:underline] disabled:opacity-[.5] disabled:cursor-not-allowed focus-visible:[outline:2px_solid_var(--branch-accent)] focus-visible:[outline-offset:2px] focus-visible:rounded-[3px]" disabled={busy} onClick={() => editLine(line)}>Edit</button>
-                        </li>
-                      ))}
+                    <ul className="m-0 p-0 [list-style:none] grid gap-[6px]">
+                      {lines.map((line) => {
+                        const info = lineInfo.get(Number(line.product_id));
+                        return (
+                          <li key={line.product_id} className={`p-[9px_11px] border rounded-[11px] ${info?.over_bulk ? 'border-[color:var(--warning)]' : 'border-line'} ${editingLine === line.product_id ? '[background:var(--hover)]' : ''}`}>
+                            <div className="flex flex-wrap items-center justify-between gap-[8px]">
+                              <span className="text-text text-[13px] font-[650]">{line.name} × {formatNumber(line.quantity, 2)} <small className="text-muted">{line.unit}</small></span>
+                              <span className="flex gap-[10px]">
+                                <button type="button" className="p-0 border-0 [background:none] text-accent-text text-[12.5px] font-[700] cursor-pointer" onClick={() => { setEditingLine(line.product_id); setPick({ product_id: String(line.product_id), quantity: String(line.quantity) }); }}>Edit</button>
+                                <button type="button" className="p-0 border-0 [background:none] text-danger-text text-[12.5px] font-[700] cursor-pointer" onClick={() => setLines((c) => removeLine(c, line.product_id))}>Remove</button>
+                              </span>
+                            </div>
+                            <div className="mt-[4px] flex flex-wrap gap-[6px] items-center text-[11.5px] text-muted">
+                              <span>Days covered: <b className="text-text-secondary">{info?.days_covered ?? '—'}</b></span>
+                              {info?.over_bulk && <Chip tone="warning">More than {liveCheck?.bulk_percent ?? 50}% above the suggestion</Chip>}
+                            </div>
+                            {!preview && <EstimateHint locationId={location?.id} productId={line.product_id} />}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
 
-                <details className="[&_summary]:text-text-secondary [&_summary]:text-[13px] [&_summary]:font-[700] [&_summary]:cursor-pointer later:[&>div]:grid later:[&>div]:gap-3 [&>div]:mt-3 later:[&_textarea]:min-h-[70px]">
-                  <summary>Delivery date and note (optional)</summary>
+                {(liveCheck?.warnings || []).map((w) => <Callout key={w} tone="info">{w}</Callout>)}
+
+                <div className="grid grid-cols-2 gap-[10px] max-[560px]:grid-cols-1">
                   <div>
-                    <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                      <span>Target delivery date</span>
-                      <input type="date" min={new Date().toISOString().slice(0, 10)} value={targetDate} onChange={(event) => setTargetDate(event.target.value)} />
-                    </label>
-                    <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                      <span>Remarks</span>
-                      <textarea maxLength={2000} value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional note for the warehouse" />
-                    </label>
+                    <label className={LABEL} htmlFor="branch-urgency">Urgency</label>
+                    <select id="branch-urgency" className={INPUT} value={form.urgency} disabled={preview} onChange={(e) => set('urgency', e.target.value)}>
+                      <option value="normal">Normal</option><option value="urgent">Urgent</option><option value="critical">Critical</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={LABEL} htmlFor="branch-target">Target delivery date</label>
+                    <input id="branch-target" className={INPUT} type="date" min={earliest || undefined} value={form.target_delivery_date} disabled={preview} onChange={(e) => set('target_delivery_date', e.target.value)} />
+                    {earliest && <small className="block mt-[4px] text-muted text-[11.5px]">Earliest delivery date: {new Intl.DateTimeFormat('en-PH', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${earliest}T00:00:00Z`))}{form.target_delivery_date ? '' : ' (used when left blank)'}</small>}
+                    {isWeekend(targetShown) && <small className="block mt-[3px] text-[color:var(--warning-text)] text-[11.5px]">Target date is a weekend. Make sure the branch can receive.</small>}
+                    {issues.target_delivery_date && <small role="alert" className="block mt-[3px] text-danger-text text-[11.5px]">{issues.target_delivery_date}</small>}
+                  </div>
+                </div>
+                {urgent && (
+                  <div>
+                    <label className={LABEL} htmlFor="branch-urgency-reason">Why is it {form.urgency}? (required)</label>
+                    <input id="branch-urgency-reason" className={INPUT} maxLength={500} value={form.urgency_reason} onChange={(e) => set('urgency_reason', e.target.value)} placeholder="For example: out of coffee beans since this morning" />
+                    {issues.urgency_reason && form.urgency_reason && <small role="alert" className="block mt-[3px] text-danger-text text-[11.5px]">{issues.urgency_reason}</small>}
+                  </div>
+                )}
+                {(liveCheck?.bulk_required || (editing && form.bulk_reason)) && (
+                  <div>
+                    <label className={LABEL} htmlFor="branch-bulk-reason">Bulk reason (required)</label>
+                    <input id="branch-bulk-reason" className={INPUT} maxLength={500} value={form.bulk_reason} onChange={(e) => set('bulk_reason', e.target.value)} placeholder="Why more than usual? For example: town fiesta next week" />
+                    <small className="block mt-[3px] text-muted text-[11.5px]">Some quantities are more than {liveCheck?.bulk_percent ?? 50}% above the suggested quantity. This is not a block; Admin decides.</small>
+                  </div>
+                )}
+                <details open={Boolean(editing)}>
+                  <summary className="text-text-secondary text-[13px] font-[700] cursor-pointer">Delivery address, contact and remarks</summary>
+                  <div className="grid gap-[10px] mt-[10px]">
+                    <div><label className={LABEL} htmlFor="branch-address">Delivery address</label><input id="branch-address" className={INPUT} value={form.delivery_address} onChange={(e) => set('delivery_address', e.target.value)} /></div>
+                    <div><label className={LABEL} htmlFor="branch-contact">Contact number</label><input id="branch-contact" className={INPUT} value={form.contact_number} onChange={(e) => set('contact_number', e.target.value)} /></div>
+                    <div><label className={LABEL} htmlFor="branch-remarks">Remarks</label><textarea id="branch-remarks" className={`${INPUT} min-h-[70px]`} maxLength={2000} value={form.remarks} onChange={(e) => set('remarks', e.target.value)} placeholder="Optional note for the warehouse" /></div>
                   </div>
                 </details>
 
-                <div className="mt-auto flex justify-end later-2:[&_.primary-button]:min-h-[44px] later:[&_.primary-button]:p-[0_22px] later:[&_.primary-button]:rounded-[12px] later:[&_.primary-button]:text-[14px] later:[&_.primary-button]:font-[800]">
-                  <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={preview || busy || lines.length === 0} onClick={() => void submit()}>
-                    {busy ? 'Submitting…' : 'Submit Request'}
-                  </button>
-                </div>
+                {!preview && (
+                  <div className="flex flex-wrap justify-end gap-[8px]">
+                    {(!editing || editing.status === 'draft') && <button type="button" className={BTN_GHOST} disabled={busy || lines.length === 0} onClick={() => save(false)}>Save as draft</button>}
+                    <button type="button" className={BTN_PRIMARY} disabled={busy || lines.length === 0} onClick={() => save(true)}>
+                      {busy ? 'Saving…' : editing?.status === 'returned' ? 'Resubmit request' : editing?.status === 'submitted' ? 'Save changes' : 'Submit request'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </section>
 
-        <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] flex flex-col p-0">
-          <header className="min-h-[72px] flex flex-wrap items-center justify-between gap-3 m-[0_20px] p-[14px_8px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent)_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[20px] [&_h2]:font-[800] [&_h2]:tracking-[.01em] [&_h2]:uppercase max-[761px]:later:m-[0_16px] max-[761px]:later:p-[12px_0] max-[761px]:later:min-h-0 max-[761px]:later:[&_h2]:text-[17px]"><h2>Request Status</h2></header>
-          <div className="flex-1 min-w-0 flex flex-col p-[16px_20px_20px] max-[761px]:later:p-[14px_16px_16px]">
-            <Notice type="error">{statusError}</Notice>
-            <div className="flex flex-wrap items-end justify-end gap-[10px] mb-[14px] later:[&_.branch-field]:flex-[0_1_190px] later-3:[&_.ghost-button]:min-h-[42px] max-[761px]:later-2:[&_.branch-field]:flex-[1_1_140px]">
-              <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                <span>Date requested</span>
-                <input
-                  type="date"
-                  value={filters.date}
-                  onChange={(event) => setFilters({ ...filters, date: event.target.value })}
-                />
-              </label>
-              <label className="branch-field [&_input]:w-full [&_input]:min-h-[42px] [&_input]:p-[8px_12px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:text-text [&_input]:[background-color:var(--input-bg)] [&_input]:text-[14px] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select]:w-full [&_select]:min-h-[42px] [&_select]:p-[8px_12px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[10px] [&_select]:text-text [&_select]:[background-color:var(--input-bg)] [&_select]:text-[14px] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_textarea]:w-full [&_textarea]:min-h-[42px] [&_textarea]:p-[8px_12px] [&_textarea]:border [&_textarea]:border-input-line [&_textarea]:rounded-[10px] [&_textarea]:text-text [&_textarea]:[background-color:var(--input-bg)] [&_textarea]:text-[14px] [&_textarea]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease] [&_select_option]:text-text [&_select_option]:[background:var(--panel)] [&_input:focus]:[outline:0] [&_input:focus]:border-[color:var(--branch-accent)] [&_input:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_select:focus]:[outline:0] [&_select:focus]:border-[color:var(--branch-accent)] [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] [&_textarea:focus]:[outline:0] [&_textarea:focus]:border-[color:var(--branch-accent)] [&_textarea:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)] grid gap-[6px] min-w-0 [&>span]:text-text-secondary [&>span]:text-[12px] [&>span]:font-[800] [&>span]:tracking-[.03em] [&>span]:uppercase">
-                <span>Status</span>
-                <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-                  <option value="">All statuses</option>
-                  {REQUEST_STATUSES.map((status) => <option key={status} value={status}>{supplyStatusLabel(status)}</option>)}
-                </select>
-              </label>
-              {filtered && <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => setFilters(NO_FILTERS)}>Clear</button>}
+        <section className={PANEL_CLASS}>
+          <header className={PANEL_HEAD}>
+            <div><h2>My requests</h2><p>Submitted → Approved → On the way → Received</p></div>
+            <select aria-label="Show" className={`${INPUT} !w-auto`} value={filter} onChange={(e) => setFilter(e.target.value)}>
+              {STATUS_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </header>
+          <Notice type="error">{remote.error}</Notice>
+          {remote.loading ? <LoadingState label="Loading requests…" /> : requests.length === 0 ? (
+            <EmptyState label={filter ? 'No requests in this view.' : 'No supply requests for this branch yet.'} detail={filter ? 'Choose another view.' : 'Add items to the list and submit your first request.'} />
+          ) : (
+            <div>
+              {requests.map((request) => (
+                <RequestCard key={request.id} request={request} preview={preview} onEdit={editRequest} onCancel={setCancelFor} onReceive={setReceiveFor} />
+              ))}
             </div>
-
-            {loadingRequests ? <LoadingState label="Loading requests…" /> : requests.length === 0 ? (
-              filtered
-                ? <EmptyState label="No requests match these filters." detail="Try another date or status." />
-                : <EmptyState label="No supply requests for this branch yet." detail="Add items to the list and submit your first request." />
-            ) : (
-              <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-                <table className="branch-readable-table [&_th]:text-[12px] [&_td_small]:text-[12px] [.branch-portal-page_&]:min-w-[560px] [&_td]:[vertical-align:top]">
-                  <thead><tr><th>Product/Item</th><th>Date Request</th><th>Delivery Date</th><th>Status</th></tr></thead>
-                  <tbody>
-                    {requests.map((request) => (
-                      <tr key={request.id}>
-                        <td>
-                          <ul className="grid gap-[6px] m-0 p-0 text-text [list-style:none] text-[14px]">
-                            {(request.items || []).map((item) => (
-                              <li key={item.id}>{item.product?.name || item.product_name_snapshot || 'Item'} × {formatNumber(item.quantity_requested, 2)}</li>
-                            ))}
-                          </ul>
-                          <small>{request.request_number}</small>
-                        </td>
-                        <td>{formatDate(request.created_at)}</td>
-                        <td>{formatDate(request.effective_delivery_date)}</td>
-                        <td><StatusBadge value={request.status} label={supplyStatusLabel(request.status)} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          )}
         </section>
       </div>
+
+      {receiveFor && (
+        <BranchReceiptModal
+          request={receiveFor}
+          onClose={() => setReceiveFor(null)}
+          onDone={(saved) => {
+            setReceiveFor(null);
+            setNotice(saved.status === 'discrepancy_review'
+              ? `${saved.request_number}: receipt saved. The good items were added to your stock; Admin will review the damaged or short items.`
+              : `${saved.request_number}: receipt saved. The items were added to your stock.`);
+            void loadRequests();
+          }}
+        />
+      )}
+      {cancelFor && (
+        <ReasonModal kind="cancel" request={cancelFor} onClose={() => setCancelFor(null)} onDone={() => { setCancelFor(null); setNotice(`${cancelFor.request_number} cancelled.`); if (editing?.id === cancelFor.id) resetForm(); void loadRequests(); }} />
+      )}
     </div>
   );
 }

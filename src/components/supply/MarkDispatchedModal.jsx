@@ -95,7 +95,7 @@ export default function MarkDispatchedModal({ requestId, onClose, onDispatched }
                 <input
                   id={`dispatch-${field.key}`} className={INPUT} type={field.type} value={form[field.key]} placeholder={field.placeholder}
                   maxLength={field.max || 120} max={field.key === 'departed_at' ? nowLocal() : undefined} aria-invalid={Boolean(fieldErrors[field.key])}
-                  onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
+                  onChange={(e) => { const value = field.key === 'plate_number' ? e.target.value.toUpperCase() : e.target.value; setForm((current) => ({ ...current, [field.key]: value })); }}
                 />
                 {fieldErrors[field.key] ? <small role="alert" className="block mt-[4px] text-danger-text text-[11.5px]">{fieldErrors[field.key]}</small> : field.hint && <small className="block mt-[4px] text-muted text-[11px]">{field.hint}</small>}
               </div>

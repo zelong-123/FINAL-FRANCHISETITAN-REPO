@@ -12,7 +12,7 @@ import { supplyStatusLabel } from '../../lib/supplyStatus';
 import useRemote from '../../lib/useRemote';
 import { Notice } from '../ApiUi';
 import { Callout, Chip, KV, Section, StatusChip, Stepper, UrgencyChip } from './supplyUi';
-import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, STAGES, qty, stageIndex } from './supplyStyles';
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, STAGES, qty, stageIndex, branchLabel } from './supplyStyles';
 
 const when = (value) => (value ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—');
 const ROLE_NAME = { admin: 'Admin', logistics: 'Logistics', franchisee: 'Branch', system: 'System' };
@@ -71,53 +71,81 @@ function Thumb({ requestId, doc, label }) {
   );
 }
 
+const TABLE = 'w-full min-w-[500px] [border-collapse:collapse] text-[12.5px] [&_th]:p-[8px_9px] [&_th]:text-left [&_th]:align-bottom [&_th]:text-muted [&_th]:text-[10px] [&_th]:font-[750] [&_th]:tracking-[.06em] [&_th]:uppercase [&_th]:leading-[1.25] [&_th]:[background:var(--surface-subtle)] [&_td]:p-[9px] [&_td]:border-t [&_td]:border-line [&_td]:text-text-secondary [&_td]:align-top';
+
+/**
+ * Two compact tables so every column fits the drawer at desktop width: what Admin reviews
+ * (branch stock, Critical and Bulk as chips under the name), then, once endorsed, the
+ * endorsed, prepared and received quantities. On a phone the tables scroll sideways.
+ */
 function ItemsTable({ request, staff }) {
   const review = new Map((request.review_lines || []).map((l) => [Number(l.item_id), l]));
   const afterEndorse = request.items.some((i) => i.quantity_endorsed !== null && i.quantity_endorsed !== undefined);
   const prepared = request.items.some((i) => i.quantity_prepared !== null && i.quantity_prepared !== undefined);
   const received = Boolean(request.branch_received_at);
+  const unitOf = (item) => item.product?.unit || item.unit_snapshot || '';
+  const nameOf = (item) => item.product?.name || item.product_name_snapshot;
   return (
-    <div className="overflow-x-auto border border-line rounded-[12px]">
-      <table className="w-full min-w-[560px] [border-collapse:collapse] text-[12.5px] [&_th]:p-[8px_10px] [&_th]:text-left [&_th]:text-muted [&_th]:text-[10px] [&_th]:font-[750] [&_th]:tracking-[.07em] [&_th]:uppercase [&_th]:[background:var(--surface-subtle)] [&_td]:p-[9px_10px] [&_td]:border-t [&_td]:border-line [&_td]:text-text-secondary [&_td:first-child]:min-w-[150px]">
-        <thead>
-          <tr>
-            <th>Item</th><th>Requested</th>
-            {staff && <><th>Available</th><th>Unavailable</th><th>Branch stock</th><th>Days covered</th><th>Suggested</th></>}
-            {afterEndorse && <th>Endorsed</th>}
-            {prepared && <th>Prepared</th>}
-            {received && <th>Received (good / damaged / short)</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {request.items.map((item) => {
-            const r = review.get(Number(item.id));
-            const unit = item.product?.unit || item.unit_snapshot || '';
-            return (
-              <tr key={item.id}>
-                <td className="!text-text font-[650]">
-                  {item.product?.name || item.product_name_snapshot}
-                  {r?.critical && <> <Chip tone="danger" title="Branch stock is Critical/Out, or it covers fewer days than the lead time">Critical</Chip></>}
-                  {item.over_bulk && <> <Chip tone="warning">Bulk</Chip></>}
-                </td>
-                <td>{qty(item.quantity_requested)} {unit}</td>
-                {staff && (
-                  <>
-                    <td>{r ? `${qty(r.available)} ${unit}` : '—'}</td>
-                    <td className={r?.unavailable > 0 ? '!text-danger-text font-[750]' : ''}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit} ⚠` : '0') : '—'}</td>
-                    <td>{r ? <Chip tone={STOCK_TONE[r.branch_stock_status]}>{r.branch_stock_label}</Chip> : '—'}</td>
-                    <td>{r?.days_covered ?? '—'}</td>
-                    <td>{r?.suggested ?? '—'}</td>
-                  </>
-                )}
-                {afterEndorse && <td>{item.quantity_endorsed === null ? '—' : `${qty(item.quantity_endorsed)} ${unit}`}</td>}
-                {prepared && <td>{item.quantity_prepared === null ? '—' : `${qty(item.quantity_prepared)} ${unit}`}</td>}
-                {received && <td>{qty(item.received_good)} / <span className={Number(item.received_damaged) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_damaged)}</span> / <span className={Number(item.received_short) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_short)}</span></td>}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="overflow-x-auto border border-line rounded-[12px]" data-table="review">
+        <table className={TABLE}>
+          <thead>
+            <tr>
+              <th>Item</th><th>Requested</th>
+              {staff && <><th>Available</th><th>Unavailable</th><th>Days covered</th><th>Suggested</th></>}
+            </tr>
+          </thead>
+          <tbody>
+            {request.items.map((item) => {
+              const r = review.get(Number(item.id));
+              const unit = unitOf(item);
+              return (
+                <tr key={item.id}>
+                  <td className="!text-text font-[650]">
+                    {nameOf(item)}
+                    {(r || item.over_bulk) && (
+                      <span className="mt-[4px] flex flex-wrap gap-[4px] font-[400]">
+                        {r && <Chip tone={STOCK_TONE[r.branch_stock_status]} title="Branch stock">Branch: {r.branch_stock_label}</Chip>}
+                        {r?.critical && <Chip tone="danger" title="Branch stock is Critical/Out, or it covers fewer days than the lead time">Critical</Chip>}
+                        {item.over_bulk && <Chip tone="warning">Bulk</Chip>}
+                      </span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap">{qty(item.quantity_requested)} {unit}</td>
+                  {staff && (
+                    <>
+                      <td className="whitespace-nowrap">{r ? `${qty(r.available)} ${unit}` : '—'}</td>
+                      <td className={`whitespace-nowrap ${r?.unavailable > 0 ? '!text-danger-text font-[750]' : ''}`}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit} ⚠` : '0') : '—'}</td>
+                      <td>{r?.days_covered ?? '—'}</td>
+                      <td>{r?.suggested ?? '—'}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {afterEndorse && (
+        <div className="mt-[10px] overflow-x-auto border border-line rounded-[12px]" data-table="quantities">
+          <table className={TABLE}>
+            <thead>
+              <tr><th>Item</th><th>Endorsed</th>{prepared && <th>Prepared</th>}{received && <th>Received good / damaged / short</th>}</tr>
+            </thead>
+            <tbody>
+              {request.items.map((item) => (
+                <tr key={item.id}>
+                  <td className="!text-text font-[650]">{nameOf(item)}</td>
+                  <td className="whitespace-nowrap">{item.quantity_endorsed === null ? '—' : `${qty(item.quantity_endorsed)} ${unitOf(item)}`}</td>
+                  {prepared && <td className="whitespace-nowrap">{item.quantity_prepared === null ? '—' : `${qty(item.quantity_prepared)} ${unitOf(item)}`}</td>}
+                  {received && <td>{qty(item.received_good)} / <span className={Number(item.received_damaged) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_damaged)}</span> / <span className={Number(item.received_short) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_short)}</span></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -156,7 +184,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
   return createPortal(
     <div className="fixed inset-0 z-140" role="presentation">
       <div className="absolute inset-0 [background:rgba(2,_5,_12,_.6)] [backdrop-filter:blur(4px)] [animation:overlayFade_.18s_ease_both]" onClick={onClose} />
-      <aside role="dialog" aria-label={r ? `Request ${r.request_number}` : 'Request'} className="absolute top-0 right-0 bottom-0 w-[min(640px,_100%)] overflow-y-auto [overscroll-behavior:contain] border-l border-line-strong [background:var(--panel)] [box-shadow:var(--shadow-xl)] p-[22px] pt-[calc(22px_+_env(safe-area-inset-top,0px))] max-[520px]:p-[16px] [animation:drawerIn_.24s_cubic-bezier(.2,.8,.2,1)_both]">
+      <aside role="dialog" aria-label={r ? `Request ${r.request_number}` : 'Request'} className="absolute top-0 right-0 bottom-0 w-[min(720px,_100%)] overflow-y-auto [overscroll-behavior:contain] border-l border-line-strong [background:var(--panel)] [box-shadow:var(--shadow-xl)] p-[22px] pt-[calc(22px_+_env(safe-area-inset-top,0px))] max-[520px]:p-[16px] [animation:drawerIn_.24s_cubic-bezier(.2,.8,.2,1)_both]">
         <style>{'@keyframes drawerIn{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}'}</style>
         <button type="button" className={`${BTN_GHOST} ${BTN_SMALL} float-right`} onClick={onClose}><FaXmark aria-hidden="true" /> Close</button>
         {remote.error && <Notice type="error">{remote.error}</Notice>}
@@ -164,7 +192,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
         {!r ? (!remote.error && <p className="text-muted text-[13px]">Loading request…</p>) : (
           <>
             <div className="text-accent-text text-[11px] font-[800] tracking-[.12em] [font-family:ui-monospace,monospace]">{r.request_number}</div>
-            <h2 className="m-[4px_0_6px] text-text text-[22px] leading-[1.15] tracking-[-.02em]">{r.location?.name || 'Branch'}{r.location?.city ? ` · ${r.location.city}` : ''}</h2>
+            <h2 className="m-[4px_0_6px] text-text text-[22px] leading-[1.15] tracking-[-.02em]">{branchLabel(r.location)}</h2>
             <div className="flex flex-wrap gap-[6px]">
               <StatusChip status={r.status} />
               <UrgencyChip urgency={r.urgency} />

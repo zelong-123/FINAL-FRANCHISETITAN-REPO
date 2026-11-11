@@ -355,8 +355,18 @@ supplyRoutes.post('/supply-requests', role('franchisee', 'admin'), async (c) => 
 supplyRoutes.post('/supply-requests/check', role('franchisee', 'admin'), async (c) => {
   const { db } = c.get('deps');
   const input = await readInput(c);
-  const checked = await W.checkRequest(db, c.get('user'), input);
-  return ok(c, { warnings: checked.warnings, earliest_date: checked.earliest_date, target_delivery_date: checked.fields.target_delivery_date, items: checked.items });
+  // Editing a draft or returned request: it is not its own duplicate nor its own "on order".
+  let existing: Row | null = null;
+  if (input.existing_id) {
+    existing = (await db.query(`select * from supply_requests where id = $1`, [Number(input.existing_id)]))[0] ?? null;
+    if (!existing) abort(404, 'Record not found.');
+    await assertAccess(c, db, existing);
+  }
+  const checked = await W.checkRequest(db, c.get('user'), input, existing, true);
+  return ok(c, {
+    warnings: checked.warnings, earliest_date: checked.earliest_date, target_delivery_date: checked.fields.target_delivery_date, items: checked.items,
+    bulk_required: checked.bulk_required, bulk_percent: checked.bulk_percent, issues: checked.issues,
+  });
 });
 
 supplyRoutes.get('/supply-requests/:supplyRequest', viewers, async (c) => {

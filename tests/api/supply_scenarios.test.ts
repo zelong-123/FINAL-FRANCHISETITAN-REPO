@@ -218,6 +218,13 @@ test('5. bulk: over 50% needs a reason; Admin returns it; the branch edits and r
   assert.ok(suggested > 0, `a suggestion exists (${JSON.stringify(check.json)})`);
   const bulk = Math.ceil(suggested * 1.5) + 5;
   const body = { location_id: A.id, delivery_address: 'x', items: [{ product_id: sugar.id, quantity_requested: bulk }] };
+  // The form's live check says what is needed instead of refusing.
+  const live = await post(A.token, '/supply-requests/check', { ...body, urgency: 'urgent' });
+  assert.equal(live.status, 200, JSON.stringify(live.json));
+  assert.equal(live.json.data.bulk_required, true);
+  assert.match(live.json.data.issues.bulk_reason, /suggested/);
+  assert.match(live.json.data.issues.urgency_reason, /reason/);
+  assert.ok(typeof live.json.data.items[0].days_covered === 'number', 'days covered per line');
   const refused = await post(A.token, '/supply-requests', body);
   assert.equal(refused.status, 422);
   assert.match(refused.json.errors.bulk_reason[0], /suggested/);

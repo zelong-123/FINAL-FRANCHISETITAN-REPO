@@ -19,7 +19,7 @@ import {
   FulfillmentModal, ReasonModal, RequestDateModal, ResolveDiscrepancyModal, RestockDateModal, ShortageModal, SupplySettingsModal,
 } from '../components/supply/SupplyModals';
 import { Chip, StatusChip, Stepper, UrgencyChip } from '../components/supply/supplyUi';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, TOOL, PANEL, waitingText } from '../components/supply/supplyStyles';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, TOOL, PANEL, branchLabel, waitingText } from '../components/supply/supplyStyles';
 import { useAuth } from '../context/AuthContext';
 
 const TABS = [
@@ -304,7 +304,7 @@ export default function SupplyRequests() {
                     return (
                       <tr key={r.id} onClick={() => setDrawerId(r.id)} className={`cursor-pointer hover:[background:var(--hover)] ${r.needs_my_action ? '[&>td:first-child]:[box-shadow:inset_3px_0_var(--accent-2)]' : ''}`}>
                         <td>
-                          <div className="text-text text-[14px] font-[720]">{r.location?.name || '—'}{r.location?.city ? ` · ${r.location.city}` : ''}</div>
+                          <div className="text-text text-[14px] font-[720]">{branchLabel(r.location)}</div>
                           <div className="text-muted text-[11.5px] [font-family:ui-monospace,monospace]">{r.request_number}</div>
                         </td>
                         <td><div className="text-text text-[13px]">{items.count} item{items.count === 1 ? '' : 's'}</div><div className="text-muted text-[11.5px] max-w-[220px] truncate">{items.first}</div></td>
@@ -328,7 +328,7 @@ export default function SupplyRequests() {
                   <li key={r.id} className={`p-[13px_14px] border-t border-line first:border-t-0 ${r.needs_my_action ? '[box-shadow:inset_3px_0_var(--accent-2)]' : ''}`}>
                     <button type="button" className="w-full text-left [background:none] border-0 p-0 cursor-pointer" onClick={() => setDrawerId(r.id)}>
                       <div className="flex justify-between gap-2">
-                        <div className="min-w-0"><div className="text-text text-[14px] font-[720]">{r.location?.name}{r.location?.city ? ` · ${r.location.city}` : ''}</div><div className="text-muted text-[11px] [font-family:ui-monospace,monospace]">{r.request_number}</div></div>
+                        <div className="min-w-0"><div className="text-text text-[14px] font-[720]">{branchLabel(r.location)}</div><div className="text-muted text-[11px] [font-family:ui-monospace,monospace]">{r.request_number}</div></div>
                         <UrgencyChip urgency={r.urgency} />
                       </div>
                       <div className="mt-[8px]"><ProgressCell request={r} /></div>

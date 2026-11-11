@@ -42,3 +42,13 @@ export const qty = (value) => {
   const n = Number(value ?? 0);
   return Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 };
+
+/** "Branch · City", without repeating a city the branch name already contains. */
+export function branchLabel(location) {
+  const name = String(location?.name || '').trim();
+  const city = String(location?.city || '').trim();
+  if (!name) return city || '—';
+  if (!city) return name;
+  const fold = (v) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  return fold(name).includes(fold(city)) ? name : `${name} · ${city}`;
+}

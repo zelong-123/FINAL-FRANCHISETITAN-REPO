@@ -130,7 +130,7 @@ async function generateRequestNumber(db: Db): Promise<string> {
 interface RequestInput { location_id?: unknown; items?: unknown; urgency?: unknown; urgency_reason?: unknown; bulk_reason?: unknown; target_delivery_date?: unknown; delivery_address?: unknown; contact_number?: unknown; remarks?: unknown }
 
 /** Validates a request as the branch would submit it. Returns the clean fields, items and non-blocking warnings. */
-export async function checkRequest(db: Db, actor: Row, input: RequestInput, existing: Row | null = null) {
+export async function checkRequest(db: Db, actor: Row, input: RequestInput, existing: Row | null = null, soft = false) {
   const locationId = Number(existing?.location_id ?? input.location_id);
   if (!Number.isInteger(locationId) || locationId <= 0) fail('location_id', 'Choose the branch.');
   const [location] = await db.query(`select * from franchise_locations where id = $1`, [locationId]);
@@ -165,7 +165,15 @@ export async function checkRequest(db: Db, actor: Row, input: RequestInput, exis
   const urgency = String(input.urgency ?? 'normal');
   if (!['normal', 'urgent', 'critical'].includes(urgency)) fail('urgency', 'Urgency must be Normal, Urgent or Critical.');
   const urgent = urgency !== 'normal';
-  const urgencyReason = urgent ? reasonOf(input.urgency_reason, 'urgency_reason', 'A reason for the urgency') : null;
+  // Soft mode (the form's live check) collects these problems instead of stopping at the first.
+  const issues: Record<string, string> = {};
+  const problem = (field: string, message: string) => (soft ? (issues[field] = message) : fail(field, message));
+  let urgencyReason: string | null = null;
+  if (urgent) {
+    const text = String(input.urgency_reason ?? '').trim();
+    if (text.length < 5) problem('urgency_reason', 'A reason for the urgency is required (at least 5 characters).');
+    urgencyReason = text || null;
+  }
   const settings = await supplySettings(db);
   const today = manilaDate();
   const earliestNormal = earliestTargetDate(today, settings.lead_days);
@@ -173,7 +181,7 @@ export async function checkRequest(db: Db, actor: Row, input: RequestInput, exis
   const target = input.target_delivery_date ? String(input.target_delivery_date).slice(0, 10) : earliestNormal;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) fail('target_delivery_date', 'Enter a valid target delivery date.');
   if (target < earliest) {
-    fail('target_delivery_date', urgent
+    problem('target_delivery_date', urgent
       ? `The earliest delivery date for an ${urgency} request is ${earliest}.`
       : `The earliest delivery date is ${earliestNormal} (${settings.lead_days} working days). Mark the request Urgent or Critical, with a reason, to ask for an earlier date.`);
   }
@@ -193,15 +201,18 @@ export async function checkRequest(db: Db, actor: Row, input: RequestInput, exis
     const forecastSuggested = forecast.get(item.product_id)?.suggested ?? null;
     const suggested = forecastSuggested === null ? null : round2(forecastSuggested + (ownOnOrder.get(item.product_id) ?? 0));
     item.suggested_quantity = suggested;
+    item.days_covered = forecast.get(item.product_id)?.days_covered ?? null;
     item.over_bulk = suggested !== null && item.quantity_requested > suggested * (1 + settings.bulk_percent / 100);
     if (item.over_bulk) over.push(`${item.name} (${item.quantity_requested} vs suggested ${suggested})`);
   }
-  const bulkReason = over.length
-    ? reasonOf(input.bulk_reason, 'bulk_reason', `A bulk reason (more than ${settings.bulk_percent}% above the suggested quantity: ${over.join(', ')})`)
-    : (String(input.bulk_reason ?? '').trim() || null);
+  const bulkText = String(input.bulk_reason ?? '').trim();
+  if (over.length && bulkText.length < 5) {
+    problem('bulk_reason', `A bulk reason is required (at least 5 characters): more than ${settings.bulk_percent}% above the suggested quantity: ${over.join(', ')}.`);
+  }
+  const bulkReason = bulkText || null;
 
   const address = String(input.delivery_address ?? existing?.delivery_address ?? location.address ?? '').trim();
-  if (!address) fail('delivery_address', 'Enter the delivery address.');
+  if (!address) problem('delivery_address', 'Enter the delivery address.');
   const contact = String(input.contact_number ?? existing?.contact_number ?? location.contact_number ?? '').trim() || null;
 
   // Warnings that never block: weekend target, another open request with the same product.
@@ -218,6 +229,7 @@ export async function checkRequest(db: Db, actor: Row, input: RequestInput, exis
     location,
     fields: { location_id: locationId, urgency, urgency_reason: urgencyReason, bulk_reason: bulkReason, target_delivery_date: target, delivery_address: address, contact_number: contact, remarks: String(input.remarks ?? '').trim() || null },
     items, warnings, earliest_date: earliest,
+    bulk_required: over.length > 0, bulk_percent: settings.bulk_percent, issues,
   };
 }
 

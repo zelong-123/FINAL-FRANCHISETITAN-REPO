@@ -196,8 +196,12 @@ export function FulfillmentModal({ request, onClose, onDone }) {
                     </td>
                     <td className={unavailable > 0 ? 'text-danger-text font-[700]' : ''}>{qty(unavailable)} {line.unit}{unavailable > 0 ? ' ⚠' : ''}</td>
                     <td>
-                      <input aria-label={`${line.name} expected restock date`} className={`${INPUT} !min-h-[34px] w-[150px]`} type="date" min={todayInput()} disabled={unavailable <= 0} value={unavailable > 0 ? line.restock_date : ''} onChange={(e) => setLine(index, { restock_date: e.target.value })} />
-                      {unavailable > 0 && <small className="block text-muted text-[11px] mt-[3px]">Required</small>}
+                      {unavailable > 0 ? (
+                        <>
+                          <input aria-label={`${line.name} expected restock date`} className={`${INPUT} !min-h-[34px] w-[150px]`} type="date" min={todayInput()} value={line.restock_date} onChange={(e) => setLine(index, { restock_date: e.target.value })} />
+                          <small className="block text-muted text-[11px] mt-[3px]">Required</small>
+                        </>
+                      ) : <span className="text-muted" title="Nothing is unavailable">—</span>}
                       <FieldError>{s.fields[`items.${index}.restock_date`]}</FieldError>
                     </td>
                   </tr>
