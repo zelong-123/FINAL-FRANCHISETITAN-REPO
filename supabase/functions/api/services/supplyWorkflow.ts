@@ -12,6 +12,7 @@ import { notifyRoles, notifyUser } from './notifications.ts';
 import { creditReceived } from './branchStock.ts';
 import { forecastFor } from './supplyForecast.ts';
 import { resolveWorkspace } from './branchAccess.ts';
+import { evaluate, STOCK_LABELS } from './materialStock.ts';
 import * as S from './supplyStatus.ts';
 import { addWorkingDays, earliestTargetDate, isWeekend, manilaDate, nextWorkingDayOrSame, pastOneWorkingDay } from './workingDays.ts';
 
@@ -179,9 +180,18 @@ export async function checkRequest(db: Db, actor: Row, input: RequestInput, exis
 
   // Bulk check against the existing estimate: more than the threshold above the suggestion needs a reason.
   const forecast = await forecastFor(db, location, items.map((i) => i.product_id));
+  // The forecast counts an open request as "on order", this one included: when editing or
+  // resubmitting, its own quantity is added back so it is not measured against itself.
+  const ownOnOrder = new Map<number, number>();
+  if (existing && S.SUBMITTED_OPEN.includes(existing.status) && !existing.branch_received_at) {
+    for (const row of await db.query(`select product_id, coalesce(quantity_endorsed, quantity_requested) as q, quantity_fulfilled from supply_request_items where supply_request_id = $1`, [existing.id])) {
+      ownOnOrder.set(Number(row.product_id), Math.max(0, num(row.q) - num(row.quantity_fulfilled)));
+    }
+  }
   const over: string[] = [];
   for (const item of items) {
-    const suggested = forecast.get(item.product_id)?.suggested ?? null;
+    const forecastSuggested = forecast.get(item.product_id)?.suggested ?? null;
+    const suggested = forecastSuggested === null ? null : round2(forecastSuggested + (ownOnOrder.get(item.product_id) ?? 0));
     item.suggested_quantity = suggested;
     item.over_bulk = suggested !== null && item.quantity_requested > suggested * (1 + settings.bulk_percent / 100);
     if (item.over_bulk) over.push(`${item.name} (${item.quantity_requested} vs suggested ${suggested})`);
@@ -405,27 +415,7 @@ export async function decideFulfillment(db: Db, actor: Row, id: number, input: R
     if (sr.stock_deducted_at) fail('status', 'This request was prepared under the previous workflow; its stock is already deducted.');
     // A new decision replaces this request's reservations.
     await releaseReservations(tx, id);
-    const reported = new Map<number, number>((pending.shortage?.items ?? []).map((r: Row) => [Number(r.item_id), num(r.actual_count)]));
-    const given = new Map<number, Row>((Array.isArray(input.items) ? input.items : []).map((r: Row) => [Number(r.item_id), r]));
-    const items = await itemsOf(tx, id);
-    const lines: Row[] = [];
-    for (const [index, item] of items.entries()) {
-      const requested = num(item.quantity_requested);
-      const free = Math.max(0, await netAvailable(tx, item.product_id, id, true));
-      const cap = Math.min(requested, free, reported.has(Number(item.id)) ? reported.get(Number(item.id))! : Infinity);
-      const row = given.get(Number(item.id));
-      const available = row && row.available !== undefined && row.available !== null && row.available !== '' ? round2(num(row.available)) : round2(cap);
-      if (!Number.isFinite(available) || available < 0) fail(`items.${index}.available`, 'Enter an available quantity of zero or more.');
-      if (available > cap + 1e-9) fail(`items.${index}.available`, `${item.product?.name ?? 'This item'}: at most ${round2(cap)} is available.`);
-      const unavailable = round2(requested - available);
-      const restock = row?.restock_date ? String(row.restock_date).slice(0, 10) : null;
-      if (unavailable > 0) {
-        if (!restock) fail(`items.${index}.restock_date`, `${item.product?.name ?? 'This item'}: enter the expected restock date.`);
-        if (restock! < today) fail(`items.${index}.restock_date`, 'The expected restock date cannot be in the past.');
-      }
-      lines.push({ item, requested, available, unavailable, restock: unavailable > 0 ? restock : null });
-    }
-    if (!lines.some((l) => l.unavailable > 0)) fail('type', 'Nothing is short. Use Endorse – Full.');
+    const lines = await fulfillmentLines(tx, sr, pending, input, today, true);
     if (type === 'partial_ship_now' && !lines.some((l) => l.available > 0)) fail('type', 'Nothing is available to ship now. Choose Hold for Restock.');
     const restockDate = lines.map((l) => l.restock).filter(Boolean).sort().pop() ?? null;
     const details = { fulfillment_type: type, items: lines.map((l) => ({ item_id: l.item.id, product_id: l.item.product_id, requested: l.requested, available: l.available, unavailable: l.unavailable, restock_date: l.restock })) };
@@ -451,11 +441,9 @@ export async function decideFulfillment(db: Db, actor: Row, id: number, input: R
       await reserve(tx, sr, l.item, l.available, actor);
       await updateRow(tx, 'supply_request_items', l.item.id, { quantity_available: l.available, quantity_unavailable: l.unavailable, expected_restock_date: l.restock, quantity_endorsed: l.available });
     }
-    const root = sr.parent_request_id ? (await tx.query(`select * from supply_requests where id = $1`, [sr.parent_request_id]))[0] : sr;
-    const [{ n }] = await tx.query(`select count(*)::int as n from supply_requests where parent_request_id = $1`, [root.id]);
-    const seq = n + 1;
+    const { root, seq, number } = await nextBackorder(tx, sr);
     child = await insertRow(tx, 'supply_requests', {
-      request_number: `${root.request_number}-B${seq > 1 ? seq : ''}`, location_id: sr.location_id, requested_by_user_id: sr.requested_by_user_id, status: 'on_hold', status_changed_at: new Date(),
+      request_number: number, location_id: sr.location_id, requested_by_user_id: sr.requested_by_user_id, status: 'on_hold', status_changed_at: new Date(),
       submitted_at: new Date(), target_delivery_date: sr.target_delivery_date, delivery_address: sr.delivery_address, contact_number: sr.contact_number, remarks: `Backorder of ${sr.request_number}.`,
       urgency: sr.urgency, urgency_reason: sr.urgency_reason, bulk_reason: sr.bulk_reason, parent_request_id: root.id, backorder_seq: seq,
       fulfillment_type: 'hold', fulfillment_reason: reason, fulfillment_decided_by_user_id: actor.id, fulfillment_decided_at: new Date(), expected_restock_date: restockDate, on_hold_at: new Date(),
@@ -479,6 +467,67 @@ export async function decideFulfillment(db: Db, actor: Row, id: number, input: R
     await notifyBranch(db, s, 'supply_request_on_hold', 'Supply request on hold', `${s.request_number} is on hold for restock (expected ${s.expected_restock_date}).`);
   }
   return result;
+}
+
+/**
+ * Per item: requested, available (capped by the warehouse net of other reservations and by a
+ * pending shortage count), unavailable and restock date. Strict mode (the real decision) also
+ * requires a valid restock date for anything unavailable.
+ */
+async function fulfillmentLines(db: Db, sr: Row, pending: { shortage: Row | null }, input: Row, today: string, strict: boolean): Promise<Row[]> {
+  const reported = new Map<number, number>((pending.shortage?.items ?? []).map((r: Row) => [Number(r.item_id), num(r.actual_count)]));
+  const given = new Map<number, Row>((Array.isArray(input.items) ? input.items : []).map((r: Row) => [Number(r.item_id), r]));
+  const lines: Row[] = [];
+  for (const [index, item] of (await itemsOf(db, sr.id)).entries()) {
+    const requested = num(item.quantity_requested);
+    const free = Math.max(0, await netAvailable(db, item.product_id, sr.id, strict));
+    const cap = Math.min(requested, free, reported.has(Number(item.id)) ? reported.get(Number(item.id))! : Infinity);
+    const row = given.get(Number(item.id));
+    const name = item.product?.name ?? item.product_name_snapshot ?? 'This item';
+    const available = row && row.available !== undefined && row.available !== null && row.available !== '' ? round2(num(row.available)) : round2(cap);
+    if (!Number.isFinite(available) || available < 0) fail(`items.${index}.available`, 'Enter an available quantity of zero or more.');
+    if (available > cap + 1e-9) fail(`items.${index}.available`, `${name}: at most ${round2(cap)} is available.`);
+    const unavailable = round2(requested - available);
+    const restock = row?.restock_date ? String(row.restock_date).slice(0, 10) : null;
+    if (strict && unavailable > 0) {
+      if (!restock) fail(`items.${index}.restock_date`, `${name}: enter the expected restock date.`);
+      if (restock! < today) fail(`items.${index}.restock_date`, 'The expected restock date cannot be in the past.');
+    }
+    lines.push({ item, name, unit: item.product?.unit ?? item.unit_snapshot, requested, max_available: round2(cap), available, unavailable, restock: unavailable > 0 ? restock : null });
+  }
+  if (!lines.some((l) => l.unavailable > 0)) fail('type', 'Nothing is short. Use Endorse – Full.');
+  return lines;
+}
+
+/** The next backorder number: the root request's number plus -B, -B2, -B3 … */
+async function nextBackorder(db: Db, sr: Row) {
+  const root = sr.parent_request_id ? (await db.query(`select * from supply_requests where id = $1`, [sr.parent_request_id]))[0] : sr;
+  const [{ n }] = await db.query(`select count(*)::int as n from supply_requests where parent_request_id = $1`, [root.id]);
+  const seq = n + 1;
+  return { root, seq, number: `${root.request_number}-B${seq > 1 ? seq : ''}` };
+}
+
+/** What a Fulfillment Decision would do, without saving anything (for the confirmation preview). */
+export async function previewFulfillment(db: Db, actor: Row, id: number, input: Row) {
+  requireRole(actor, ['admin']);
+  const [sr] = await db.query(`select * from supply_requests where id = $1`, [id]);
+  if (!sr) abort(404, 'Record not found.');
+  const pending = await pendingOf(db, id);
+  if (!(sr.status === 'under_review' || (pending.shortage && S.TO_SHIP.includes(sr.status)))) fail('status', 'A Fulfillment Decision is made during review, or to answer a shortage report.');
+  const type = String(input.type ?? 'partial_ship_now');
+  if (!['hold', 'partial_ship_now', 'partial_consolidated'].includes(type)) fail('type', 'Choose Hold for Restock, Partial – Ship Now or Partial – Consolidated.');
+  const lines = await fulfillmentLines(db, sr, pending, input, manilaDate(), false);
+  const qty = (l: Row, n: number) => `${l.name} ${round2(n)} ${l.unit ?? ''}`.trim();
+  const backorder = type === 'partial_ship_now' && lines.some((l) => l.available > 0)
+    ? { request_number: (await nextBackorder(db, sr)).number, items: lines.filter((l) => l.unavailable > 0).map((l) => ({ item_id: l.item.id, name: l.name, unit: l.unit, quantity: l.unavailable })) }
+    : null;
+  let message = 'Nothing ships yet; the request waits on hold for the restock.';
+  if (backorder) message = `${backorder.request_number} will be created for ${lines.filter((l) => l.unavailable > 0).map((l) => qty(l, l.unavailable)).join(', ')}`;
+  else if (type === 'partial_consolidated') message = `${lines.filter((l) => l.available > 0).map((l) => qty(l, l.available)).join(', ') || 'Nothing'} will be reserved; everything ships together after the restock.`;
+  return {
+    type, backorder, message,
+    items: lines.map((l) => ({ item_id: l.item.id, name: l.name, unit: l.unit, requested: l.requested, max_available: l.max_available, available: l.available, unavailable: l.unavailable, restock_date: l.restock })),
+  };
 }
 
 /** On hold → waiting for Logistics, once the warehouse can cover what is still held. */
@@ -823,5 +872,61 @@ export async function workflowState(db: Db, sr: Row): Promise<Row> {
     pending_date_change: pending.date, pending_shortage: pending.shortage,
     received: ctx.received, pod: ctx.pod,
     overdue_reason: overdueReason(sr, { pendingDateAt: pending.date?.created_at, pendingShortageAt: pending.shortage?.created_at, etaAt: delivery?.eta_at, pod: ctx.pod }),
+  };
+}
+
+// ---- what Admin sees while reviewing ----
+const SEVERITY: Record<string, number> = { none: 0, ok: 1, low: 2, critical: 3, out: 4 };
+
+/**
+ * Per item: requested, warehouse available (net of other reservations), unavailable, the
+ * branch's stock status, days covered and suggested quantity (existing forecast, read only),
+ * and the automatic Critical flag (branch stock Critical/Out, or fewer days covered than the
+ * supply lead time). Information only: Admin still decides.
+ */
+export async function reviewLines(db: Db, sr: Row): Promise<Row[]> {
+  const [location] = await db.query(`select * from franchise_locations where id = $1`, [sr.location_id]);
+  const availability = await availabilityOf(db, sr);
+  const forecast = location ? await forecastFor(db, location, availability.map((l) => l.product_id)) : new Map();
+  const { lead_days } = await supplySettings(db);
+  const materials = await db.query(
+    `select m.*, (select to_jsonb(b) from profittrack_material_balances b where b.material_id = m.id limit 1) as balance
+     from profittrack_materials m where m.location_id = $1 and m.is_active = true and m.warehouse_product_id = any($2::bigint[])`,
+    [sr.location_id, `{${availability.map((l) => l.product_id).join(',')}}`],
+  );
+  return availability.map((line) => {
+    // A product can feed more than one branch material: the worst one speaks for it.
+    let status = 'none';
+    let onHand: number | null = null;
+    for (const m of materials.filter((x) => Number(x.warehouse_product_id) === line.product_id)) {
+      const e = evaluate(m);
+      onHand = (onHand ?? 0) + e.on_hand;
+      if (SEVERITY[e.status] > SEVERITY[status]) status = e.status;
+    }
+    const f = forecast.get(line.product_id) ?? { suggested: null, days_covered: null };
+    const critical = ['critical', 'out'].includes(status) || (f.days_covered !== null && f.days_covered < lead_days);
+    return {
+      ...line, branch_stock_status: status, branch_stock_label: STOCK_LABELS[status], branch_on_hand: onHand,
+      days_covered: f.days_covered, suggested: f.suggested, critical,
+    };
+  });
+}
+
+/** The Delivery Receipt Logistics prints after dispatch. */
+export async function deliveryReceipt(db: Db, id: number): Promise<Row | null> {
+  const [sr] = await db.query(
+    `select sr.*, l.name as branch_name, l.city, l.contact_number as branch_contact, (select b.name from brands b where b.id = l.brand_id) as brand_name
+     from supply_requests sr join franchise_locations l on l.id = sr.location_id where sr.id = $1`, [id],
+  );
+  const [delivery] = await db.query(`select * from deliveries where supply_request_id = $1`, [id]);
+  if (!sr || !delivery?.departed_at) return null;
+  const items = await itemsOf(db, id);
+  return {
+    request_number: sr.request_number, branch: sr.branch_name, city: sr.city, brand: sr.brand_name,
+    address: sr.delivery_address, contact: sr.contact_number ?? sr.branch_contact ?? null,
+    items: items.filter((i) => num(i.quantity_prepared) > 0).map((i) => ({ name: i.product?.name ?? i.product_name_snapshot, unit: i.product?.unit ?? i.unit_snapshot, quantity: num(i.quantity_prepared) })),
+    driver_name: delivery.driver_name, driver_contact: delivery.driver_contact, plate_number: delivery.plate_number,
+    departed_at: delivery.departed_at, eta_at: delivery.eta_at, eta_weekend: delivery.eta_at ? isWeekend(manilaDate(new Date(delivery.eta_at))) : false,
+    signatures: ['Released by', 'Received by'],
   };
 }

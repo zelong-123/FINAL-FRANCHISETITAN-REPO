@@ -15,6 +15,18 @@ export const EDITABLE = ['draft', 'submitted', 'returned'];
 /** The delivery reached the branch (POD and/or receipt). */
 export const DELIVERED_ON = ['delivered', 'discrepancy_review', 'completed', 'completed_with_discrepancy'];
 
+/** The staff list tabs ("needs_action" is worked out per role from the owners). */
+export const TABS = {
+  all: null,
+  under_review: ['submitted', 'under_review', 'returned'],
+  on_hold: ['on_hold'],
+  scheduled_preparing: ['waiting_logistics', 'scheduled', 'preparing'],
+  dispatched: ['dispatched', 'delivered'],
+  discrepancy: ['discrepancy_review'],
+  completed: ['completed', 'completed_with_discrepancy'],
+  closed: ['rejected', 'cancelled'],
+};
+
 export const LABELS = {
   draft: 'Draft',
   submitted: 'Submitted',

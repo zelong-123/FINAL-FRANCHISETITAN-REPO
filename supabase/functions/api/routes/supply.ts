@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
-import { abort, Filter, fail, intParam, manilaToday, ok, paginate, perPage, routeId, updateRow } from '../lib/http.ts';
+import { abort, Filter, fail, intParam, manilaToday, ok, perPage, routeId, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { downloadDocument, MAX_UPLOAD_KB, storeDocument } from '../lib/files.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
@@ -199,39 +199,140 @@ supplyRoutes.put('/supply-settings', role('admin'), async (c) => {
 });
 
 // ---- lists and detail ----
-supplyRoutes.get('/supply-requests', viewers, async (c) => {
-  const { db } = c.get('deps');
-  const q = c.req.query();
+const ROLE_KEY: Record<string, string> = { admin: 'admin', logistics: 'logistics', franchisee: 'branch' };
+const URGENCY_RANK: Record<string, number> = { critical: 0, urgent: 1, normal: 2 };
+const SORTS = ['priority', 'newest', 'oldest', 'target', 'branch', 'brand'];
+
+/**
+ * Every request the viewer may see that matches the toolbar (search, brand, urgency, branch, date
+ * requested), light enough to count tabs and KPIs and to sort by priority, which depends on the
+ * owners and the working-day SLA.
+ */
+async function listCandidates(c: Context<AppEnv>, db: Db, q: Record<string, string>): Promise<Row[]> {
   const f = await scoped(c, db);
-  if (q.view !== undefined) {
-    if (q.view === 'active') f.add(`sr.status in (${S.sqlList(S.SUBMITTED_OPEN)})`);
-    else if (q.view === 'history') f.add(`sr.status in (${S.sqlList(S.TERMINAL)})`);
-    else abort(422, 'The view must be active or history.');
+  // Staff never see a branch's unsent drafts.
+  if (roleName(c) !== 'franchisee') f.add(`sr.status <> 'draft'`);
+  if (q.urgency) {
+    if (!['normal', 'urgent', 'critical'].includes(q.urgency)) fail('urgency', 'The urgency must be normal, urgent or critical.');
+    f.add('sr.urgency = ?', q.urgency);
   }
-  if (q.status) f.add('sr.status = ?', q.status);
-  if (q.urgency) f.add('sr.urgency = ?', q.urgency);
+  if (q.brand_id) f.add('l.brand_id = ?', intParam(q.brand_id));
   if (q.location_id) f.add('sr.location_id = ?', intParam(q.location_id));
   if (q.from) f.add(`${CREATED_ON} >= ?::date`, day(q.from));
   if (q.to) f.add(`${CREATED_ON} <= ?::date`, day(q.to));
-  if (q.search) f.add('sr.request_number ilike ?', `%${q.search}%`);
-  const page = await paginate(c, db, {
-    columns: `sr.*, ${LOCATION_BRAND('sr')} as location, ${NAME('sr.requested_by_user_id')} as requested_by, ${ITEMS('sr')} as items, ${DELIVERY_DOCS('sr')} as delivery, ${REVISIONS('sr')} as date_revisions, ${SLA('sr')}`,
-    from: 'supply_requests sr', where: f.clauses, params: f.params, orderBy: 'sr.created_at desc, sr.id desc', perPage: perPage(c, 20),
+  if (q.search?.trim()) {
+    const term = `%${q.search.trim()}%`;
+    f.add('(sr.request_number ilike ? or l.name ilike ? or l.city ilike ?)', term, term, term);
+  }
+  const rows = await db.query(
+    `select sr.id, sr.status, sr.urgency, sr.created_at, sr.updated_at, sr.status_changed_at, sr.target_delivery_date, sr.confirmed_delivery_date,
+       sr.expected_restock_date, sr.branch_received_at, sr.request_number, l.name as branch_name, l.city, b.name as brand_name, ${SLA('sr')}
+     from supply_requests sr join franchise_locations l on l.id = sr.location_id left join brands b on b.id = l.brand_id ${f.where}`, f.params,
+  );
+  const today = manilaToday();
+  const mine = ROLE_KEY[roleName(c)];
+  return rows.map((row) => {
+    const w = withWorkflow(row, today);
+    return { ...w, needs_my_action: w.owners.includes(mine) };
   });
-  const body = await page.json();
+}
+
+function tabCounts(rows: Row[]) {
+  const tabs: Row = { needs_action: rows.filter((r) => r.needs_my_action).length };
+  for (const [key, statuses] of Object.entries(S.TABS)) tabs[key] = statuses ? rows.filter((r) => statuses.includes(r.status)).length : rows.length;
+  const kpis = {
+    needs_action: tabs.needs_action,
+    overdue: rows.filter((r) => r.overdue).length,
+    on_hold: rows.filter((r) => r.status === 'on_hold').length,
+    in_transit: rows.filter((r) => S.IN_TRANSIT.includes(r.status)).length,
+    discrepancies: rows.filter((r) => r.status === 'discrepancy_review').length,
+  };
+  return { tabs, kpis };
+}
+
+function sortRows(rows: Row[], sort: string) {
+  const time = (v: unknown) => new Date(v as string).getTime();
+  const target = (r: Row) => String(r.confirmed_delivery_date ?? r.target_delivery_date ?? '9999-12-31');
+  const by: Record<string, (a: Row, b: Row) => number> = {
+    // Overdue first, then Critical, Urgent, Normal; the longest waiting first within each.
+    priority: (a, b) => Number(b.overdue) - Number(a.overdue) || (URGENCY_RANK[a.urgency] ?? 2) - (URGENCY_RANK[b.urgency] ?? 2) || time(a.created_at) - time(b.created_at) || a.id - b.id,
+    newest: (a, b) => time(b.created_at) - time(a.created_at) || b.id - a.id,
+    oldest: (a, b) => time(a.created_at) - time(b.created_at) || a.id - b.id,
+    target: (a, b) => target(a).localeCompare(target(b)) || a.id - b.id,
+    branch: (a, b) => String(a.branch_name).localeCompare(String(b.branch_name)) || a.id - b.id,
+    brand: (a, b) => String(a.brand_name ?? '').localeCompare(String(b.brand_name ?? '')) || String(a.branch_name).localeCompare(String(b.branch_name)) || a.id - b.id,
+  };
+  return [...rows].sort(by[sort]);
+}
+
+/** Tab and KPI counts for the toolbar's current filters (the list returns the same in meta). */
+supplyRoutes.get('/supply-requests/counts', viewers, async (c) => {
+  const { db } = c.get('deps');
+  return ok(c, tabCounts(await listCandidates(c, db, c.req.query())));
+});
+
+/**
+ * The list. tab: needs_action | all | under_review | on_hold | scheduled_preparing | dispatched |
+ * discrepancy | completed | closed; overdue=1; status; view=active|history (older clients);
+ * search, brand_id, urgency, location_id, from, to; sort: priority (default) | newest | oldest |
+ * target | branch | brand. meta carries the tab and KPI counts.
+ */
+supplyRoutes.get('/supply-requests', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const q = c.req.query();
+  const sort = q.sort || 'priority';
+  if (!SORTS.includes(sort)) fail('sort', `The sort must be one of: ${SORTS.join(', ')}.`);
+  if (q.tab && q.tab !== 'needs_action' && !(q.tab in S.TABS)) fail('tab', 'Unknown tab.');
+  if (q.view !== undefined && !['active', 'history'].includes(q.view)) abort(422, 'The view must be active or history.');
+  if (q.status && !S.STATUSES.includes(q.status)) fail('status', 'Unknown status.');
+
+  const candidates = await listCandidates(c, db, q);
+  const counts = tabCounts(candidates);
+  let rows = candidates;
+  if (q.tab === 'needs_action') rows = rows.filter((r) => r.needs_my_action);
+  else if (q.tab && S.TABS[q.tab]) rows = rows.filter((r) => S.TABS[q.tab]!.includes(r.status));
+  if (q.view === 'active') rows = rows.filter((r) => S.SUBMITTED_OPEN.includes(r.status));
+  if (q.view === 'history') rows = rows.filter((r) => S.TERMINAL.includes(r.status));
+  if (q.status) rows = rows.filter((r) => r.status === q.status);
+  if (q.overdue === '1' || q.overdue === 'true') rows = rows.filter((r) => r.overdue);
+  rows = sortRows(rows, sort);
+
+  const size = perPage(c, 20);
+  const total = rows.length;
+  const lastPage = Math.max(1, Math.ceil(total / size));
+  const page = Math.max(1, intParam(q.page, 1));
+  const ids = rows.slice((page - 1) * size, page * size).map((r) => r.id);
+  const full = ids.length ? await db.query(
+    `select sr.*, ${LOCATION_BRAND('sr')} as location, ${NAME('sr.requested_by_user_id')} as requested_by, ${ITEMS('sr')} as items, ${DELIVERY_DOCS('sr')} as delivery, ${REVISIONS('sr')} as date_revisions, ${SLA('sr')}
+     from supply_requests sr where sr.id = any($1::bigint[])`, [`{${ids.join(',')}}`],
+  ) : [];
+  const byId = new Map(full.map((r) => [Number(r.id), r]));
+  const mine = ROLE_KEY[roleName(c)];
   const today = manilaToday();
   const data = [];
-  for (const raw of body.data as Row[]) {
-    const sr = withWorkflow(raw, today);
+  for (const id of ids) {
+    const sr = withWorkflow(byId.get(Number(id))!, today);
     let reason: string | null = null;
     if (sr.status === 'under_review') {
       const lines = await W.availabilityOf(db, sr).catch(() => null);
       if (!lines) reason = 'No active warehouse location is configured.';
       else if (lines.some((l) => l.unavailable > 0)) reason = 'Stock is short; choose a Fulfillment Decision.';
     } else reason = 'Only a request under review can be endorsed.';
-    data.push({ ...sr, effective_delivery_date: effectiveDate(sr, sr.date_revisions), pending_date_revision: sr.pending_date_change, can_endorse: reason === null, endorse_block_reason: reason });
+    data.push({
+      ...sr, needs_my_action: sr.owners.includes(mine), effective_delivery_date: effectiveDate(sr, sr.date_revisions), pending_date_revision: sr.pending_date_change,
+      can_endorse: reason === null, endorse_block_reason: reason,
+    });
   }
-  return c.json({ ...body, data });
+  const url = (n: number) => {
+    const u = new URL(c.req.url);
+    u.searchParams.set('page', String(n));
+    return u.toString();
+  };
+  return c.json({
+    data,
+    meta: { current_page: page, last_page: lastPage, per_page: size, total, from: total ? (page - 1) * size + 1 : null, to: total ? Math.min(page * size, total) : null, sort, ...counts },
+    links: { first: url(1), last: url(lastPage), prev: page > 1 ? url(page - 1) : null, next: page < lastPage ? url(page + 1) : null },
+  });
 });
 
 supplyRoutes.post('/supply-requests', role('franchisee', 'admin'), async (c) => {
@@ -297,6 +398,10 @@ supplyRoutes.get('/supply-requests/:supplyRequest', viewers, async (c) => {
   }
   const sla = withWorkflow(row);
   const d = row.delivery;
+  const others = await db.query(
+    `select id, request_number, status, target_delivery_date from supply_requests where location_id = $1 and id <> $2 and status in (${S.sqlList(S.SUBMITTED_OPEN)}) order by id desc limit 20`, [sr.location_id, sr.id],
+  );
+  const [parent] = sr.parent_request_id ? await db.query(`select id, request_number, status from supply_requests where id = $1`, [sr.parent_request_id]) : [];
   const short = availability.some((l) => l.unavailable > 0);
   const payload: Row = {
     ...sla,
@@ -308,6 +413,9 @@ supplyRoutes.get('/supply-requests/:supplyRequest', viewers, async (c) => {
     can_endorse: sr.status === 'under_review' && !short,
     endorse_block_reason: sr.status !== 'under_review' ? 'Only a request under review can be endorsed.' : short ? 'Stock is short; choose a Fulfillment Decision.' : null,
     stock_snapshot: stockSnapshot,
+    other_open_requests: others,
+    parent: parent ?? null,
+    delivery_receipt: await W.deliveryReceipt(db, sr.id),
     delivery_confirmation: d?.pod_encoded_at || d?.delivered_at ? {
       confirmed_by_type: d.confirmed_by_party, confirmed_by_user_id: d.pod_encoded_by_user_id ?? d.delivered_by_user_id, confirmed_at: iso(d.actual_delivered_at) ?? iso(d.acknowledged_at) ?? iso(d.delivered_at), recipient_name: d.recipient_name, note: d.notes,
     } : null,
@@ -318,6 +426,7 @@ supplyRoutes.get('/supply-requests/:supplyRequest', viewers, async (c) => {
   };
   if (!staff) delete payload.reservations;
   if (staff) {
+    payload.review_lines = await W.reviewLines(db, sr);
     payload.stock_check = ['under_review', 'on_hold'].includes(sr.status) ? {
       sufficient: !short,
       lines: availability.map((i) => ({ item_id: i.item_id, product_name: i.name, required: i.requested, available: i.warehouse_free, shortage: i.unavailable })),
@@ -367,6 +476,23 @@ const ACTIONS: Record<string, { roles: string[]; run: Action; message: string }>
   dispatch: { roles: ['logistics'], run: (db, a, id, i) => W.dispatchRequest(db, a, id, i), message: 'Dispatched.' },
   'discrepancy/resolve': { roles: ['admin'], run: (db, a, id, i) => W.resolveDiscrepancy(db, a, id, i), message: 'Discrepancy resolved.' },
 };
+
+/** What a Fulfillment Decision would do (the backorder preview); nothing is saved. */
+supplyRoutes.post('/supply-requests/:supplyRequest/fulfillment/preview', role('admin'), async (c) => {
+  const { db } = c.get('deps');
+  const sr = await load(c);
+  return ok(c, await W.previewFulfillment(db, c.get('user'), sr.id, await readInput(c)));
+});
+
+/** The Delivery Receipt (print) once the request is dispatched. */
+supplyRoutes.get('/supply-requests/:supplyRequest/delivery-receipt', viewers, async (c) => {
+  const { db } = c.get('deps');
+  const sr = await load(c);
+  await assertAccess(c, db, sr);
+  const receipt = await W.deliveryReceipt(db, sr.id);
+  if (!receipt) fail('status', 'The Delivery Receipt is available after dispatch.');
+  return ok(c, receipt);
+});
 
 for (const [path, action] of Object.entries(ACTIONS)) {
   supplyRoutes.post(`/supply-requests/:supplyRequest/${path}`, role(...action.roles), async (c) => {
@@ -419,7 +545,7 @@ supplyRoutes.post('/supply-requests/:supplyRequest/pod', role('logistics'), asyn
  * Confirm Receipt by the branch. Multipart: `lines` (JSON: item_id, good, damaged, short, damage_reason,
  * short_reason) and one photo per damaged item as `photo_<item_id>`. Only the good quantity is credited.
  */
-supplyRoutes.post('/supply-requests/:supplyRequest/receipt', role('franchisee'), async (c) => {
+const confirmReceiptRoute = async (c: Context<AppEnv>) => {
   const { db } = c.get('deps');
   const sr = await load(c);
   await assertAccess(c, db, sr);
@@ -440,13 +566,11 @@ supplyRoutes.post('/supply-requests/:supplyRequest/receipt', role('franchisee'),
   await W.confirmReceipt(db, c.get('user'), sr.id, { lines });
   await audit(c, db, 'supply_request.receipt_confirmed', { type: MODEL, id: sr.id }, { status: sr.status }, { lines });
   return ok(c, await fullRow(db, sr.id), 'Receipt confirmed.');
-});
+};
+supplyRoutes.post('/supply-requests/:supplyRequest/receipt', role('franchisee'), confirmReceiptRoute);
+/** The existing acknowledge endpoint, extended: it is the same per-item Confirm Receipt. */
+supplyRoutes.post('/supply-requests/:supplyRequest/acknowledge', role('franchisee'), confirmReceiptRoute);
 
-/** The old one-click acknowledge credited everything; receipts are now per item. */
-supplyRoutes.post('/supply-requests/:supplyRequest/acknowledge', role('franchisee'), (c) => {
-  const message = 'Use Confirm Receipt: enter the good, damaged and short quantity per item.';
-  return c.json({ message, errors: { status: [message] } }, 422);
-});
 
 supplyRoutes.get('/supply-requests/:supplyRequest/documents/:document/download', viewers, async (c) => {
   const { db } = c.get('deps');

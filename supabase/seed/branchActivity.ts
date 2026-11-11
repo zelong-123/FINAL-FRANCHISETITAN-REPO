@@ -60,10 +60,11 @@ function at(days: number, hours: number, now: Date): Date {
 }
 const isoDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d);
 
-const APPEND_ONLY: Record<string, string> = { supply_request_status_histories: 'supply_request_status_histories_append_only' };
 // Tables whose new rows are dated back to the step that made them (updated_at is left to its trigger).
+// The supply history is append-only and never updated: its rows get their time when they are
+// inserted, from franchisetitan.history_at (see asOf below), or keep the real time.
 const DATED = [
-  'supply_request_status_histories', 'deliveries', 'supply_reservations', 'documents', 'inventory_transactions', 'inventory_audit_logs', 'inventories', 'system_notifications',
+  'deliveries', 'supply_reservations', 'documents', 'inventory_transactions', 'inventory_audit_logs', 'inventories', 'system_notifications',
   'profittrack_operations', 'profittrack_material_movements', 'profittrack_production_batches', 'profittrack_production_consumptions',
   'profittrack_audit_events', 'profittrack_materials', 'profittrack_recipes', 'profittrack_recipe_versions', 'profittrack_recipe_ingredients',
   'profittrack_finished_balances', 'profittrack_material_balances',
@@ -254,12 +255,7 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
       if (t === 'system_notifications' && readNotifications) sets.push(`read_at = $2::timestamptz`);
       // Both date parameters are referenced in every statement so Postgres always knows their types.
       if (!sets.length) continue;
-      // The supply history is append-only for the app; only this local seed dates its own new rows back,
-      // with the guard lifted inside the same transaction and restored at once.
-      const guarded = APPEND_ONLY[t];
-      if (guarded) await db.query(`alter table public."${t}" disable trigger "${guarded}"`);
       await db.query(`update public."${t}" set ${sets.join(', ')} where id > $3 and $1::date is not null and $2::timestamptz is not null`, [isoDate(when), when.toISOString(), marks[t]]);
-      if (guarded) await db.query(`alter table public."${t}" enable trigger "${guarded}"`);
     }
   }
   async function request(app: ReturnType<typeof createApp>, who: string, method: string, path: string, body: unknown, label: string) {
@@ -281,19 +277,25 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
     const call = (who: string, method: string, path: string, body?: unknown) => request(app, who, method, path, body, branch.name);
     let marks = await maxIds(db);
     const step = async (when: Date, read = true) => { await stamp(db, marks, when, read); marks = await maxIds(db); };
+    // Supply history rows written from here on in this transaction carry this time (never later than now).
+    const asOf = (when: Date) => db.query(`select set_config('franchisetitan.history_at', $1, true)`, [(when > now ? new Date(now.getTime() - 60_000) : when).toISOString()]);
     const address = branch.address || branch.name;
     const report: BranchReport = { branch: branch.name, brand: branch.brand, status: 'done', delivered: 0, open: [], production_days: 0, pieces: 0, materials: 0 };
 
     if (plan.kind === 'awaiting') {
       if (plan.open.length) {
+        await asOf(at(4, 10, now));
         const sr = await call(ADMIN, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open, bulk_reason: BULK_REASON });
         await step(at(4, 10, now));
+        await asOf(at(4, 14, now));
         await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
         await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
         await step(at(4, 14, now));
+        await asOf(at(3, 9, now));
         await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
         await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
         await step(at(3, 9, now));
+        await asOf(at(3, 13, now));
         await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(3, 13, now).toISOString(), eta_at: at(3, 17, now).toISOString() });
         await step(at(3, 13, now));
         await db.query(
@@ -309,22 +311,28 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
     // A delivered request: submitted, reviewed, endorsed (reserved), scheduled, prepared, dispatched
     // (deducted), POD encoded, receipt confirmed with every item good: completed.
     const deliver = async (items: Row[], day: number) => {
+      await asOf(at(day + 1, 9, now));
       const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items, bulk_reason: BULK_REASON });
       await step(at(day + 1, 9, now));
+      await asOf(at(day + 1, 14, now));
       await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
       await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
       await step(at(day + 1, 14, now));
+      await asOf(at(day, 7, now));
       await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
       await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
       await step(at(day, 7, now));
+      await asOf(at(day, 8, now));
       const sent = await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(day, 8, now).toISOString(), eta_at: at(day, 11, now).toISOString() });
       await step(at(day, 8, now));
+      await asOf(at(day, 10, now));
       const pod = new FormData();
       pod.append('file', new File([POD_PNG], 'pod.png', { type: 'image/png' }));
       pod.append('received_by', 'Branch staff');
       pod.append('actual_delivered_at', at(day, 10, now).toISOString());
       await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/pod`, pod);
       await step(at(day, 10, now));
+      await asOf(at(day, 15, now));
       const lines = sent.items.map((i: Row) => ({ item_id: i.id, good: Number(i.quantity_prepared), damaged: 0, short: 0 }));
       await call(OWNER, 'POST', `/supply-requests/${sr.id}/receipt`, { lines });
       await step(at(day, 15, now));
@@ -353,8 +361,10 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
     }
 
     // One open request, at a different stage per branch; it covers the Low item, not the Critical one.
+    await asOf(at(0, 9, now));
     const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open, bulk_reason: BULK_REASON });
     await step(at(0, 9, now), false);
+    await asOf(at(0, 11, now));
     const reached = (stage: string) => OPEN_STATUSES.indexOf(plan.stage) >= OPEN_STATUSES.indexOf(stage);
     if (reached('under_review')) await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
     if (reached('waiting_logistics')) await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);

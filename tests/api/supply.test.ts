@@ -170,7 +170,7 @@ test('supply: role scoping, reservation at endorsement, deduction at dispatch an
   assert.equal(material.warehouse_product_id, productId);
   assert.equal((await q(`select current_stock from inventories where location_id = $1 and product_id = $2`, [branch.locationId, productId]))[0].current_stock, '28.00', 'branch inventory mirrors the ledger');
   assert.equal((await receipt([{ item_id: itemId, good: 30, damaged: 0, short: 0 }])).status, 422, 'confirmed once');
-  assert.equal((await call('POST', `${path}/acknowledge`, { token: branch.token, body: { recipient_name: 'x' } })).status, 422, 'the one-click acknowledge is retired');
+  assert.equal((await call('POST', `${path}/acknowledge`, { token: branch.token, body: { recipient_name: 'x' } })).status, 422, 'acknowledge is the same Confirm Receipt: once only');
 
   const pod = new FormData();
   pod.set('file', new File(['pod'], 'pod.pdf', { type: 'application/pdf' }));

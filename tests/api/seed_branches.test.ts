@@ -42,6 +42,16 @@ test('active branches get two deliveries, 14 days of production and one open req
     assert.ok(used[0].n > 0, 'production deducted branch stock');
   }
   assert.equal((await q(`select count(*)::int as n from supply_requests where created_at > now() or (completed_at is not null and completed_at > now())`))[0].n, 0, 'nothing dated in the future');
+
+  // The supply history is dated back when inserted (never updated), step by step.
+  const [first] = await q(`select id from supply_requests where location_id = $1 order by id limit 1`, [kkopi]);
+  const steps = await q(`select action, created_at from supply_request_status_histories where supply_request_id = $1 order by id`, [first.id]);
+  assert.deepEqual(steps.map((h) => h.action), ['submitted', 'review_started', 'endorsed_full', 'schedule_accepted', 'preparing_started', 'dispatched', 'pod_encoded', 'receipt_confirmed', 'completed']);
+  assert.ok(steps.every((h) => Date.now() - new Date(h.created_at).getTime() > 13 * 86_400_000), 'all two weeks back');
+  for (let i = 1; i < steps.length; i++) assert.ok(new Date(steps[i].created_at) >= new Date(steps[i - 1].created_at), 'in order');
+  assert.ok(new Date(steps[0].created_at) < new Date(steps[steps.length - 1].created_at));
+  const [{ n }] = await q(`select count(*)::int as n from pg_trigger where tgname = 'supply_request_status_histories_append_only' and tgenabled = 'O'`);
+  assert.equal(n, 1, 'the append-only guard stays on');
 });
 
 test('an inactive branch account gets a dispatched delivery waiting for receipt, nothing else', async () => {

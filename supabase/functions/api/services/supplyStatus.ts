@@ -27,6 +27,18 @@ export const CANCELLABLE_BY_ADMIN = ['draft', 'submitted', 'under_review', 'retu
 /** Logistics never sees requests that have not reached it. */
 export const HIDDEN_FROM_LOGISTICS = ['draft', 'submitted', 'under_review', 'returned'];
 
+/** The staff list tabs ("needs_action" is worked out per role from the owners). */
+export const TABS = {
+  all: null,
+  under_review: ['submitted', 'under_review', 'returned'],
+  on_hold: ['on_hold'],
+  scheduled_preparing: ['waiting_logistics', 'scheduled', 'preparing'],
+  dispatched: ['dispatched', 'delivered'],
+  discrepancy: ['discrepancy_review'],
+  completed: ['completed', 'completed_with_discrepancy'],
+  closed: ['rejected', 'cancelled'],
+} as Record<string, string[] | null>;
+
 export const LABELS: Record<string, string> = {
   draft: 'Draft', submitted: 'Submitted', under_review: 'Under review', returned: 'Returned', waiting_logistics: 'Waiting for Logistics',
   scheduled: 'Scheduled', on_hold: 'On hold', preparing: 'Preparing', dispatched: 'Dispatched', delivered: 'Delivered',

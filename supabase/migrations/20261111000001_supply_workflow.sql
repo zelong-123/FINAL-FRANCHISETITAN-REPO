@@ -158,6 +158,12 @@ alter table public."supply_request_status_histories" add column if not exists "d
 drop trigger if exists "supply_request_status_histories_append_only" on public."supply_request_status_histories";
 create trigger "supply_request_status_histories_append_only" before update on public."supply_request_status_histories"
   for each row execute function public.refuse_history_update();
+-- A row's time is fixed when it is inserted: now(), unless the inserting transaction set
+-- franchisetitan.history_at (only the local demo seed does, to date its rows back at insert time).
+alter table public."supply_request_status_histories" alter column "created_at"
+  set default coalesce(nullif(current_setting('franchisetitan.history_at', true), '')::timestamptz, now());
+alter table public."supply_request_status_histories" alter column "updated_at"
+  set default coalesce(nullif(current_setting('franchisetitan.history_at', true), '')::timestamptz, now());
 
 -- 9. Existing requests: map the old statuses (only rows still in an old status are touched).
 update public."supply_requests" set "status_changed_at" = coalesce("updated_at", "created_at", now()) where "status_changed_at" is null;

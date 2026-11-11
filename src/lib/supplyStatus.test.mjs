@@ -7,6 +7,7 @@ test('the browser status lists match the API ones', () => {
   for (const name of ['MAIN_PATH', 'SIDE', 'STATUSES', 'TERMINAL', 'OPEN', 'SUBMITTED_OPEN', 'IN_TRANSIT', 'TO_SHIP', 'EDITABLE', 'DELIVERED_ON']) {
     assert.deepEqual([...front[name]], [...back[name]], name);
   }
+  assert.deepEqual(front.TABS, back.TABS);
   assert.deepEqual(front.LABELS, back.LABELS);
 });
 
