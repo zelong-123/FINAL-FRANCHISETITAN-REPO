@@ -15,7 +15,9 @@ const env = (name: string) => {
 const publicKey = Deno.env.get('APP_PUBLISHABLE_KEY') || env('SUPABASE_ANON_KEY');
 const secretKey = Deno.env.get('APP_SECRET_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
 
-const db = postgresDb(postgres, env('SUPABASE_DB_URL'));
+// Same lookup as the live function (v24). Leave the DATABASE_URL secret UNSET: setting it to the
+// pooler string caused an outage; the injected SUPABASE_DB_URL is what works.
+const db = postgresDb(postgres, Deno.env.get('DATABASE_URL') || env('SUPABASE_DB_URL'));
 const auth = supabaseAuth(env('SUPABASE_URL'), publicKey, secretKey, db);
 const origins = (Deno.env.get('ALLOWED_ORIGINS') ?? '*').split(',').map((o) => o.trim()).filter(Boolean);
 

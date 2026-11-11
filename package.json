@@ -43,7 +43,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "hono": "^4.13.16",
-    "postgres": "^4.1.0",
+    "postgres": "3.4.4",
     "tailwindcss": "^4.1.13",
     "vite": "^7.3.1"
   }
