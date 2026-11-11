@@ -13,6 +13,7 @@ import { audit } from '../services/users.ts';
 import { resolveWorkspace } from '../services/branchAccess.ts';
 import * as S from '../services/supplyStatus.ts';
 import * as W from '../services/supplyWorkflow.ts';
+import { earliestTargetDate } from '../services/workingDays.ts';
 
 export const supplyRoutes = new Hono<AppEnv>();
 const MODEL = 'App\\Models\\SupplyRequest';
@@ -182,7 +183,13 @@ supplyRoutes.get('/supply-requests/active-counts', viewers, async (c) => {
 });
 
 // ---- settings (Admin) ----
-supplyRoutes.get('/supply-settings', viewers, async (c) => ok(c, await W.supplySettings(c.get('deps').db)));
+/** The settings plus today's earliest target dates (normal, and urgent/critical) for the request forms. */
+const settingsView = async (db: Db) => {
+  const settings = await W.supplySettings(db);
+  const today = manilaToday();
+  return { ...settings, earliest_normal: earliestTargetDate(today, settings.lead_days), earliest_urgent: earliestTargetDate(today, settings.lead_days, true) };
+};
+supplyRoutes.get('/supply-settings', viewers, async (c) => ok(c, await settingsView(c.get('deps').db)));
 
 supplyRoutes.put('/supply-settings', role('admin'), async (c) => {
   const { db } = c.get('deps');
@@ -195,7 +202,7 @@ supplyRoutes.put('/supply-settings', role('admin'), async (c) => {
   if (row) await updateRow(db, 'supply_settings', row.id, fields);
   else await db.query(`insert into supply_settings (supply_lead_time_working_days, bulk_threshold_percent, updated_by_user_id) values ($1, $2, $3)`, Object.values(fields));
   await audit(c, db, 'supply_settings.updated', { type: 'App\\Models\\SupplySetting', id: row?.id ?? 1 }, before, fields);
-  return ok(c, await W.supplySettings(db), 'Supply settings saved.');
+  return ok(c, await settingsView(db), 'Supply settings saved.');
 });
 
 // ---- lists and detail ----

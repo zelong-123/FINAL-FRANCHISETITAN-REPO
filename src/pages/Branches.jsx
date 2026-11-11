@@ -3,7 +3,6 @@ import {
   FaAngleLeft,
   FaAngleRight,
   FaBoxesStacked,
-  FaCheck,
   FaCircleExclamation,
   FaClipboardList,
   FaExpand,
@@ -13,10 +12,10 @@ import {
   FaXmark,
 } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import useRemote from '../lib/useRemote';
 import useCosting from '../lib/useCosting';
-import SupplyRequestDetailModal from '../components/supply/SupplyRequestDetailModal';
 import { EmptyState, Field, LoadingState, Modal, Notice, StatusBadge } from '../components/ApiUi';
 import { defaultLevelsFor, formatQuantity, STOCK_STATUS_LABELS } from '../lib/quantity';
 import { formatDate, formatNumber } from '../lib/format';
@@ -208,7 +207,7 @@ function Section({ title, meta, className = '', children }) {
   );
 }
 
-function BranchSections({ ops, loading, error, role, endorsingId, onOpenRequest, onEndorse, onEditLevels, onBranchAction }) {
+function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevels, onBranchAction }) {
   const costing = useCosting();
   if (loading && !ops) {
     return <Section title="Branch Inventory"><LoadingState label="Loading branch data…" /></Section>;
@@ -279,53 +278,32 @@ function BranchSections({ ops, loading, error, role, endorsingId, onOpenRequest,
       </Section>
 
       <Section
-        title="Active Supply Request"
+        title="Supply requests"
         className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests]"
         meta={activeRequests.length ? `${activeRequests.length} open` : 'No open requests'}
       >
         {activeRequests.length > 0 && (
-          <div className="flex flex-col">
+          <ul className="m-0 p-0 [list-style:none] flex flex-col">
             {activeRequests.map((request) => (
-              <article className="p-[13px_15px] border-b border-b-line last:border-b-0" key={request.id}>
-                <header className="flex items-start justify-between gap-[10px] [&_strong]:block [&_strong]:text-text [&_strong]:font-[760] [&_small]:block [&_small]:mt-[3px] [&_small]:text-muted [&_small]:leading-[1.5] later-2:[&_strong]:text-[13.5px] later-6:[&_small]:text-[12px]">
-                  <div>
-                    <strong>{request.request_number}</strong>
-                    <small>
-                      Requested {formatDate(request.created_at)}
-                      {' · '}
-                      Target delivery {formatDate(request.target_delivery_date)}
-                    </small>
-                  </div>
-                  <StatusBadge value={request.status} label={supplyStatusLabel(request.status)} />
-                </header>
-                <ul className="m-[10px_0_0] p-0 [list-style:none] flex flex-col gap-1 [&_li]:flex [&_li]:items-baseline [&_li]:justify-between [&_li]:gap-3 [&_li]:text-text-secondary [&_li]:text-[10px] [&_li_span:last-child]:text-text [&_li_span:last-child]:font-[720] [&_li_span:last-child]:whitespace-nowrap">
-                  {(request.items || []).map((item, index) => (
-                    <li key={`${request.id}-${index}`}>
-                      <span>{item.name}</span>
-                      <span>{formatQuantity(item.quantity, item.unit)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <footer className="flex justify-end gap-2 mt-[11px] later:[&_.primary-button]:min-h-[30px] later:[&_.primary-button]:text-[10px] later:[&_.ghost-button]:min-h-[30px] later:[&_.ghost-button]:text-[10px]">
-                  <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onOpenRequest(request.id)}>
-                    View
-                  </button>
-                  {role === 'admin' && (request.status === 'under_review' || request.status === 'submitted') && (
-                    <button
-                      type="button"
-                      className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]"
-                      onClick={() => onEndorse(request)}
-                      disabled={endorsingId === request.id}
-                    >
-                      <FaCheck aria-hidden="true" />
-                      {endorsingId === request.id ? 'Endorsing…' : 'Endorse'}
-                    </button>
-                  )}
-                </footer>
-              </article>
+              <li className="flex items-start justify-between gap-[10px] p-[11px_15px] border-b border-b-line last:border-b-0" key={request.id}>
+                <div className="min-w-0">
+                  <strong className="block text-text text-[12.5px] font-[760] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
+                  <small className="block mt-[2px] text-muted text-[10px] leading-[1.5]">
+                    Target {formatDate(request.target_delivery_date) || '—'}
+                    {' · '}
+                    {(request.items || []).slice(0, 2).map((item) => item.name).join(', ')}{(request.items || []).length > 2 ? '…' : ''}
+                  </small>
+                </div>
+                <StatusBadge value={request.status} label={request.status === 'returned' ? 'Returned – waiting for branch' : supplyStatusLabel(request.status)} />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
+        <div className="flex justify-end p-[10px_15px] border-t border-t-line">
+          <button type="button" className="ghost-button min-h-[34px] inline-flex items-center justify-center gap-[7px] p-[0_12px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[11px] font-[650] cursor-pointer hover:text-text hover:border-accent" onClick={onOpenRequests}>
+            Open in Supply Requests
+          </button>
+        </div>
       </Section>
 
       <Section
@@ -619,12 +597,11 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
 
 export default function Branches() {
   const { role } = useAuth();
+  const navigate = useNavigate();
   // 'default' (list) | 'half' (list + panel) | 'full' (five sections only)
   const [view, setView] = useState('default');
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState('');
-  const [openRequestId, setOpenRequestId] = useState(null);
-  const [endorsingId, setEndorsingId] = useState(null);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
   const [panelClosing, setPanelClosing] = useState(false);
@@ -712,28 +689,6 @@ export default function Branches() {
     return () => window.removeEventListener('herald:branch-account-created', refresh);
   }, [reloadOverview]);
 
-  /**
-   * Opening a branch is the Seen step: Admin opening a card marks that branch's
-   * new requests as under review, which clears the red indicator here and moves
-   * the request into the Supply Request table.
-   */
-  const markSeen = async (branch) => {
-    if (role !== 'admin' || !branch) return;
-    const pending = (branch.open_supply_requests || []).filter((request) => request.status === 'submitted');
-    if (!pending.length) return;
-    try {
-      for (const request of pending) {
-        await api.post(`/supply-requests/${request.id}/review`);
-      }
-      setNotice(pending.length === 1
-        ? `${pending[0].request_number} is now under review.`
-        : `${pending.length} requests from ${branch.name} are now under review.`);
-      await reloadOverview({ silent: true });
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    }
-  };
-
   const openBranch = (branch) => {
     if (!branch) return;
     if (closeTimer.current) {
@@ -745,7 +700,6 @@ export default function Branches() {
     setView('half');
     setNotice('');
     setActionError('');
-    void markSeen(branch);
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -785,30 +739,6 @@ export default function Branches() {
     setActionError('');
   };
 
-  const endorse = async (request) => {
-    if (!request || endorsingId) return;
-    setEndorsingId(request.id);
-    setActionError('');
-    setNotice('');
-    try {
-      // A new request waits as Submitted until the branch is opened (Seen); endorsing
-      // straight from the panel performs that step first, then endorses it.
-      if (request.status === 'submitted') {
-        await api.post(`/supply-requests/${request.id}/start-review`);
-      }
-      await api.post(`/supply-requests/${request.id}/endorse`);
-      setNotice(`${request.request_number} endorsed — stock reserved and sent to Logistics.`);
-      await Promise.all([
-        reloadOverview({ silent: true }),
-        reloadOperations({ silent: true }),
-      ]);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setEndorsingId(null);
-    }
-  };
-
   const [levelsTarget, setLevelsTarget] = useState(null);
   const [branchAction, setBranchAction] = useState(null);
 
@@ -818,9 +748,7 @@ export default function Branches() {
       loading={operations.loading}
       error={operations.error}
       role={role}
-      endorsingId={endorsingId}
-      onOpenRequest={setOpenRequestId}
-      onEndorse={endorse}
+      onOpenRequests={() => navigate(`/supply-requests?tab=all&location_id=${selectedId}`)}
       onEditLevels={setLevelsTarget}
       onBranchAction={(kind, branch) => setBranchAction({ kind, branch })}
     />
@@ -1030,12 +958,6 @@ export default function Branches() {
         />
       )}
 
-      {openRequestId && (
-        <SupplyRequestDetailModal
-          requestId={openRequestId}
-          onClose={() => setOpenRequestId(null)}
-        />
-      )}
     </div>
   );
 }

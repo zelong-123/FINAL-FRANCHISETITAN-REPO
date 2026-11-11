@@ -1,49 +1,81 @@
-import { can } from './roleAccess';
-import { supplyStatusLabel } from './supplyStatus';
+import { can } from './roleAccess.js';
+import { supplyStatusLabel } from './supplyStatus.js';
 
 export { supplyStatusLabel };
 
+const ADMIN_CANCELLABLE = ['submitted', 'under_review', 'returned', 'waiting_logistics', 'scheduled', 'on_hold', 'preparing'];
+const ROLE_KEY = { admin: 'admin', logistics: 'logistics', franchisee: 'branch' };
+const pendingDate = (r) => Boolean(r.pending_date_change === true || (r.pending_date_revision && r.pending_date_revision.proposed_by_role === 'logistics') || (r.pending_date_revision === true));
+const pendingShortage = (r) => Boolean(r.pending_shortage === true || r.pending_shortage_report);
+
 /**
- * The supply-request actions a role may see for a request, and their state. Only actions the role
- * holds the permission for are returned; the API enforces every rule again.
- *
- * - review: admin, submitted (called automatically on open, not a visible button)
- * - endorse: admin, under_review; disabled with the backend reason when stock is short
- * - resume: admin, on_hold (the warehouse must cover what is held)
- * - confirm_date: admin, a new date requested by Logistics is waiting
- * - accept_schedule: logistics, waiting_logistics
- * - start_preparing: logistics, scheduled
- * - dispatch: logistics, preparing
- * - deliver: logistics, dispatched without a POD (encode the proof of delivery)
- * - reject: admin, submitted, under_review or on_hold (danger, needs a reason)
- * - cancel: admin, endorsed but not dispatched yet (danger, needs a reason; the reservation is released)
- * Logistics steps wait while a date change or a shortage report is with Admin.
+ * The buttons a role gets in the drawer for a request, in order; the API checks every rule again.
+ * Each action: { key, label, kind: 'primary' | 'ghost' | 'danger', disabled, reason }.
+ * Keys: start_review, endorse, fulfillment, return, reject, cancel, resume, restock_date,
+ * decide_date, accept_schedule, request_date, shortage, start_preparing, dispatch, pod,
+ * resolve_discrepancy.
  */
 export function getSupplyActions(role, request) {
-  const actions = [];
-  if (!request) return actions;
+  const out = [];
+  if (!request) return out;
   const status = request.status;
-  const pendingDate = Boolean(request.pending_date_change ?? request.pending_date_revision);
-  const pendingShortage = Boolean(request.pending_shortage ?? request.pending_shortage_report);
-  const withAdmin = pendingDate || pendingShortage;
-  const add = (key, extra = {}) => actions.push({ key, auto: false, disabled: false, reason: null, ...extra });
+  const add = (key, label, kind = 'ghost', extra = {}) => out.push({ key, label, kind, disabled: false, reason: null, ...extra });
+  const date = pendingDate(request);
+  const shortage = pendingShortage(request);
 
-  if (can(role, 'supply.review') && status === 'submitted') add('review', { auto: true });
-
-  if (can(role, 'supply.endorse') && status === 'under_review') {
-    const disabled = request.can_endorse === false;
-    add('endorse', { disabled, reason: disabled ? request.endorse_block_reason || null : null });
+  if (role === 'admin') {
+    if (status === 'submitted' && can(role, 'supply.review')) add('start_review', 'Start review', 'primary');
+    if (status === 'under_review' && can(role, 'supply.endorse')) {
+      const short = request.can_endorse === false;
+      add('endorse', 'Endorse – Full', 'primary', short ? { disabled: true, reason: request.endorse_block_reason || 'Stock is short; choose a Fulfillment Decision.' } : {});
+      add('fulfillment', 'Fulfillment decision', short ? 'primary' : 'ghost', short ? {} : { disabled: true, reason: 'Every item is available: use Endorse – Full.' });
+    }
+    if (shortage && can(role, 'supply.fulfillment')) add('fulfillment', 'New fulfillment decision', 'primary');
+    if (date && can(role, 'supply.decide_date')) add('decide_date', 'Review new date', 'primary');
+    if (status === 'on_hold' && can(role, 'supply.resume')) {
+      add('resume', 'Resume request', 'primary');
+      add('restock_date', 'Update restock date');
+    }
+    if (status === 'discrepancy_review' && can(role, 'supply.resolve_discrepancy')) add('resolve_discrepancy', 'Resolve discrepancy', 'primary');
+    if (['submitted', 'under_review'].includes(status) && can(role, 'supply.return')) add('return', 'Return for correction');
+    if (['submitted', 'under_review', 'on_hold'].includes(status) && can(role, 'supply.cancel_reject')) add('reject', 'Reject', 'danger');
+    if (ADMIN_CANCELLABLE.includes(status) && can(role, 'supply.cancel_reject')) add('cancel', 'Cancel request', 'danger');
   }
-  if (can(role, 'supply.resume') && status === 'on_hold') add('resume');
-  if (can(role, 'supply.decide_date') && pendingDate) add('confirm_date');
 
-  if (can(role, 'supply.accept_schedule') && status === 'waiting_logistics') add('accept_schedule', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
-  if (can(role, 'supply.start_preparing') && status === 'scheduled') add('start_preparing', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
-  if (can(role, 'supply.dispatch') && status === 'preparing') add('dispatch', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
-  if (can(role, 'supply.deliver') && status === 'dispatched' && !request.pod_encoded) add('deliver');
+  if (role === 'logistics') {
+    const waiting = date || shortage;
+    const blocked = waiting ? { disabled: true, reason: date ? 'A new date is waiting for Admin.' : 'A shortage report is waiting for Admin.' } : {};
+    if (status === 'waiting_logistics' && can(role, 'supply.accept_schedule')) add('accept_schedule', 'Accept schedule', 'primary', blocked);
+    if (status === 'scheduled' && can(role, 'supply.start_preparing')) add('start_preparing', 'Start preparing', 'primary', blocked);
+    if (status === 'preparing' && can(role, 'supply.dispatch')) add('dispatch', 'Dispatch', 'primary', blocked);
+    if (['waiting_logistics', 'scheduled'].includes(status) && can(role, 'supply.request_date')) add('request_date', 'Request new date', 'ghost', blocked);
+    if (['waiting_logistics', 'scheduled', 'preparing'].includes(status) && can(role, 'supply.report_shortage') && !request.stock_deducted_at) add('shortage', 'Report shortage', 'ghost', blocked);
+    if (status === 'dispatched' && !request.pod_encoded && can(role, 'supply.deliver')) add('pod', 'Encode POD', 'primary');
+  }
+  return out;
+}
 
-  if (can(role, 'supply.cancel_reject') && ['submitted', 'under_review', 'on_hold'].includes(status)) add('reject', { danger: true });
-  if (can(role, 'supply.cancel_reject') && ['waiting_logistics', 'scheduled', 'preparing', 'returned'].includes(status)) add('cancel', { danger: true });
+/** The one table button: what the signed-in role does next, or null when it is someone else's turn. */
+export function rowActionLabel(role, request) {
+  if (!request?.owners?.includes(ROLE_KEY[role])) return null;
+  const status = request.status;
+  if (role === 'admin') {
+    if (pendingDate(request)) return 'Review date';
+    if (pendingShortage(request)) return 'Review shortage';
+    if (status === 'on_hold') return 'Resume';
+    if (status === 'discrepancy_review') return 'Resolve';
+    return 'Review';
+  }
+  if (role === 'logistics') {
+    return { waiting_logistics: 'Confirm schedule', scheduled: 'Start preparing', preparing: 'Dispatch', dispatched: 'Encode POD' }[status] || 'Open';
+  }
+  return 'Open';
+}
 
-  return actions;
+/** The read-only line other roles see in the drawer. */
+export function waitingLine(request) {
+  const owners = request?.owners || [];
+  if (!owners.length) return 'Closed. No further action.';
+  const names = owners.map((o) => ({ admin: 'Admin', logistics: 'Logistics', branch: 'the branch' }[o] || o));
+  return `Waiting for ${names.join(' and ')}.`;
 }

@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, LOGISTICS, PASSWORD, SALES, setup } from '../support/harness.ts';
+import { earliestTargetDate, manilaDate } from '../../supabase/functions/api/services/workingDays.ts';
 
 const { pg, call, login, db, auth, files } = await setup();
 const admin = await login(ADMIN);
@@ -202,12 +203,17 @@ test('supply: role scoping, reservation at endorsement, deduction at dispatch an
   assert.equal((await call('GET', '/supply-requests', { token: branch.token })).json.data.length, 1);
 });
 
+const settingsOf = (data: any) => ({ lead_days: data.lead_days, bulk_percent: data.bulk_percent });
 test('supply settings: defaults until Admin saves them, Admin only, within limits', async () => {
-  assert.deepEqual((await call('GET', '/supply-settings', { token: branch.token })).json.data, { lead_days: 2, bulk_percent: 50 });
+  const current = (await call('GET', '/supply-settings', { token: branch.token })).json.data;
+  assert.deepEqual(settingsOf(current), { lead_days: 2, bulk_percent: 50 });
+  const today = manilaDate();
+  assert.equal(current.earliest_normal, earliestTargetDate(today, 2), 'the form shows the earliest date');
+  assert.equal(current.earliest_urgent, earliestTargetDate(today, 2, true));
   assert.equal((await call('PUT', '/supply-settings', { token: logistics, body: { supply_lead_time_working_days: 3, bulk_threshold_percent: 40 } })).status, 403);
   assert.equal((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 11, bulk_threshold_percent: 40 } })).status, 422);
-  assert.deepEqual((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 3, bulk_threshold_percent: 40 } })).json.data, { lead_days: 3, bulk_percent: 40 });
-  assert.deepEqual((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 2, bulk_threshold_percent: 50 } })).json.data, { lead_days: 2, bulk_percent: 50 });
+  assert.equal((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 3, bulk_threshold_percent: 40 } })).json.data.lead_days, 3);
+  assert.equal((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 2, bulk_threshold_percent: 50 } })).json.data.bulk_percent, 50);
   assert.equal((await q(`select count(*)::int as n from supply_settings`))[0].n, 1);
 });
 
