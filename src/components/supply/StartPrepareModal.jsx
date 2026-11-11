@@ -5,12 +5,9 @@ import useRemote from '../../lib/useRemote';
 import { EmptyState, Modal, Notice } from '../ApiUi';
 
 /**
- * Start Prepare: the confirmation step before warehouse stock is deducted.
- *
- * Opening the modal changes nothing. The warehouse quantities are only deducted
- * when the Logistics user confirms here (the backend deducts in the same
- * transaction that moves the request to Preparing), and Confirm stays disabled
- * while any line is short, so stock can never go negative.
+ * Start Prepare: picking and packing a scheduled request. The stock is already reserved for it
+ * and leaves the warehouse only at dispatch. Confirm stays disabled while any line is short;
+ * Logistics then reports a shortage instead.
  */
 export default function StartPrepareModal({ requestId, onClose, onPrepared }) {
   const [saving, setSaving] = useState(false);
@@ -34,7 +31,7 @@ export default function StartPrepareModal({ requestId, onClose, onPrepared }) {
     setSaving(true);
     setError('');
     try {
-      await api.patch(`/supply-requests/${requestId}/status`, { status: 'preparing' });
+      await api.post(`/supply-requests/${requestId}/prepare`, {});
       onPrepared();
     } catch (saveError) {
       setError(firstValidationMessage(saveError));
@@ -81,8 +78,8 @@ export default function StartPrepareModal({ requestId, onClose, onPrepared }) {
 
           <section className="sr-detail-section">
             <p className="muted-note text-muted text-[8px] leading-[1.6]">
-              Confirming deducts the quantities below from the warehouse and moves the request to
-              Preparing. Opening this window on its own never changes stock.
+              Confirming moves the request to Preparing. The quantities below are reserved for it and
+              leave the warehouse when it is dispatched.
             </p>
             <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
               <table className="data-table">

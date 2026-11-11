@@ -76,7 +76,7 @@ test('estimate: only complete, included weeks count, and each status says why', 
   flour = created.json.data.id;
   await q(`update profittrack_materials set warehouse_product_id = $1 where id = $2`, [product.id, flour]);
   await q(`update profittrack_material_balances set quantity_milli = 60000 where material_id = $1`, [flour]);
-  const [request] = await q(`insert into supply_requests (location_id, request_number, status, requested_by_user_id, delivery_address) values ($1, 'FC-1', 'endorsed', $2, 'Addr') returning id`, [branch.id, branch.userId]);
+  const [request] = await q(`insert into supply_requests (location_id, request_number, status, requested_by_user_id, delivery_address) values ($1, 'FC-1', 'scheduled', $2, 'Addr') returning id`, [branch.id, branch.userId]);
   await q(`insert into supply_request_items (supply_request_id, product_id, quantity_requested, quantity_fulfilled) values ($1, $2, 30, 5)`, [request.id, product.id]);
 
   // Ten complete weeks of use, starting ten weeks back. Six weeks ago nobody recorded anything.
@@ -265,7 +265,7 @@ test('analytics: conversion from the same rows, the funnel and date limits', asy
   assert.equal(data.inquiry_trend.length, 12);
   assert.equal(data.inquiry_trend[11].count, data.inquiry_trend[11].count);
   assert.ok('critical' in data.inventory_status);
-  assert.equal(data.supply_statuses.endorsed >= 1, true);
+  assert.equal(data.supply_statuses.scheduled >= 1, true);
 
   const seen = await call('GET', '/analytics/overview', { token: marketing });
   assert.equal(seen.status, 200);

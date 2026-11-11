@@ -1,3 +1,4 @@
+import { STATUSES } from './supplyStatus.js';
 /** Pages of the branch workspace; `?view=` selects one and unknown values open the dashboard. */
 export const BRANCH_VIEWS = {
   dashboard: { label: 'Branch Dashboard' },
@@ -34,9 +35,7 @@ export function branchPlace(location, ownerName) {
 }
 
 // Backend statuses a branch can see (drafts never appear in this list).
-export const REQUEST_STATUSES = [
-  'submitted', 'under_review', 'endorsed', 'rejected', 'preparing', 'dispatched', 'delivered', 'completed', 'cancelled',
-];
+export const REQUEST_STATUSES = STATUSES.filter((status) => status !== 'draft');
 
 // quantity_requested is stored with two decimals.
 const roundQuantity = (value) => Math.round(Number(value) * 100) / 100;

@@ -9,6 +9,7 @@ import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { attentionText, branchStatus, defaultLevels, evaluate, formatQuantity, STOCK_LABELS } from '../services/materialStock.ts';
 import { stockStatus } from '../services/inventory.ts';
 import { audit } from '../services/users.ts';
+import { DELIVERED_ON, IN_TRANSIT, OPEN as OPEN_SUPPLY, sqlList, SUBMITTED_OPEN } from '../services/supplyStatus.ts';
 
 export const branchRoutes = new Hono<AppEnv>();
 const adminOrLogistics = role('admin', 'logistics');
@@ -19,8 +20,8 @@ const USER = 'App\\Models\\User';
 const MATERIAL = 'App\\Models\\ProfitTrackMaterial';
 const USAGE_WINDOW_DAYS = 7;
 const LIVE_SYNC_SECONDS = 30;
-const OPEN = ['draft', 'submitted', 'under_review', 'endorsed', 'preparing', 'dispatched'];
-const SHIPPED = ['dispatched', 'delivered'];
+const OPEN = OPEN_SUPPLY;
+const SHIPPED = IN_TRANSIT;
 const round = (n: number, places: number) => Math.round(n * 10 ** places) / 10 ** places;
 const inList = (ids: number[]) => `{${ids.join(',')}}`;
 
@@ -29,7 +30,7 @@ const LOCATION_COLUMNS = `l.*, (select jsonb_build_object('id', b.id, 'name', b.
   (select to_jsonb(f) || jsonb_build_object('user', (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'phone', u.phone, 'account_status', u.account_status) from users u where u.id = f.user_id))
      from franchisees f where f.id = l.franchisee_id) as franchisee,
   (select max(d.delivered_at) from deliveries d join supply_requests sr on sr.id = d.supply_request_id where sr.location_id = l.id) as last_delivered_at,
-  (select min(sr.target_delivery_date) from supply_requests sr where sr.location_id = l.id and sr.status in ('dispatched', 'delivered')) as next_delivery_target`;
+  (select min(sr.target_delivery_date) from supply_requests sr where sr.location_id = l.id and sr.status in (${sqlList(IN_TRANSIT)})) as next_delivery_target`;
 
 /** The card title's place; null reads "Location not set". A place equal to the operator's own name is not a location. */
 function locationLabel(l: Row): string | null {
@@ -176,9 +177,9 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
     material_id: r.id, label: r.name + (r.variant ? ` · ${r.variant}` : ''), alert: labels[r.status], status: r.status, on_hand: r.on_hand, unit: r.unit, low_level: r.low_level, critical_level: r.critical_level, reason: r.reason, detail: r.reason,
   }));
   const ITEMS = `coalesce((select jsonb_agg(to_jsonb(si) || jsonb_build_object('product', (select jsonb_build_object('id', p.id, 'name', p.name, 'unit', p.unit) from products p where p.id = si.product_id)) order by si.id) from supply_request_items si where si.supply_request_id = sr.id), '[]'::jsonb) as items`;
-  const active = await db.query(`select sr.*, ${ITEMS} from supply_requests sr where sr.location_id = $1 and sr.status in ('submitted', 'under_review', 'endorsed', 'preparing', 'dispatched') order by sr.id desc`, [l.id]);
+  const active = await db.query(`select sr.*, ${ITEMS} from supply_requests sr where sr.location_id = $1 and sr.status in (${sqlList(SUBMITTED_OPEN)}) order by sr.id desc`, [l.id]);
   const delivered = await db.query(
-    `select sr.*, ${ITEMS}, (select d.delivered_at from deliveries d where d.supply_request_id = sr.id limit 1) as delivered_on from supply_requests sr where sr.location_id = $1 and sr.status in ('delivered', 'completed') order by sr.id desc limit 50`, [l.id],
+    `select sr.*, ${ITEMS}, (select d.delivered_at from deliveries d where d.supply_request_id = sr.id limit 1) as delivered_on from supply_requests sr where sr.location_id = $1 and sr.status in (${sqlList(DELIVERED_ON)}) order by sr.id desc limit 50`, [l.id],
   );
   const activeRequests = active.map((r) => ({
     id: r.id, request_number: r.request_number, status: r.status, target_delivery_date: r.target_delivery_date, created_at: r.created_at,

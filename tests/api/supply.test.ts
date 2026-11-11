@@ -85,97 +85,201 @@ test('warehouse CSV: preview finds problems, apply updates exactly what it previ
   assert.equal((await call('POST', `/inventories/${inventoryId}/forecast`, { token: admin, body: {} })).json.data.method, 'simple_moving_average');
 });
 
-let requestId: number;
+const stockOf = async () => Number((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock);
+const reservedOf = async (id: number) => Number((await q(`select coalesce(sum(quantity), 0) as q from supply_reservations where supply_request_id = $1 and status = 'active'`, [id]))[0].q);
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+const later = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+const driver = { driver_name: "Ma. Santos-Dela Cruz", driver_contact: '09171234567', plate_number: 'abc 1234' };
 
-test('supply: role scoping, stock gate and the full workflow', async () => {
+test('supply: role scoping, reservation at endorsement, deduction at dispatch and per-item receipt', async () => {
   const body = { location_id: branch.locationId, delivery_address: 'Branch street', items: [{ product_id: productId, quantity_requested: 30 }] };
   assert.equal((await call('POST', '/supply-requests', { token: sales, body })).status, 403);
-  assert.match((await call('POST', '/supply-requests', { token: branch.token, body: { ...body, items: [{ product_id: productId, quantity_requested: 1 }, { product_id: productId, quantity_requested: 2 }] } })).json.errors['items.1.product_id'][0], /duplicate/);
+  assert.match((await call('POST', '/supply-requests', { token: branch.token, body: { ...body, items: [{ product_id: productId, quantity_requested: 1 }, { product_id: productId, quantity_requested: 2 }] } })).json.errors['items.1.product_id'][0], /already on the request/);
+  assert.match((await call('POST', '/supply-requests', { token: branch.token, body: { ...body, urgency: 'urgent' } })).json.errors.urgency_reason[0], /reason for the urgency/);
+  assert.match((await call('POST', '/supply-requests', { token: branch.token, body: { ...body, target_delivery_date: new Date().toISOString().slice(0, 10) } })).json.errors.target_delivery_date[0], /earliest delivery date/);
   const created = await call('POST', '/supply-requests', { token: branch.token, body });
   assert.equal(created.status, 201, JSON.stringify(created.json));
-  requestId = created.json.data.id;
+  const requestId = created.json.data.id;
   const path = `/supply-requests/${requestId}`;
   assert.match(created.json.data.request_number, /^FT-\d{8}-[A-Z0-9]{6}$/);
   assert.equal(created.json.data.status, 'submitted');
+  assert.ok(created.json.data.target_delivery_date, 'defaults to the earliest date');
+  assert.deepEqual(created.json.data.owners, ['admin']);
 
-  assert.equal((await call('GET', path, { token: logistics })).status, 404, 'Logistics sees it only after review');
-  assert.equal((await call('POST', `${path}/review`, { token: admin })).json.data.status, 'under_review');
+  assert.equal((await call('GET', path, { token: logistics })).status, 404, 'Logistics sees it only after endorsement');
+  assert.equal((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'under_review' } })).status, 422, 'the old transition endpoint is retired');
+  assert.equal((await call('POST', `${path}/start-review`, { token: branch.token })).status, 403);
+  assert.equal((await call('POST', `${path}/start-review`, { token: admin })).json.data.status, 'under_review');
+  assert.equal((await call('GET', path, { token: logistics })).status, 404, 'still in review');
   const detail = await call('GET', path, { token: admin });
   assert.equal(detail.json.data.can_endorse, true);
   assert.equal(detail.json.data.line_groups[0].lines[0].warehouse_stock, 120);
 
-  // Date revision blocks endorsing until Logistics confirms, and shows in the effective date.
-  const revised = await call('POST', `${path}/date-revision`, { token: admin, body: { revised_delivery_date: '2999-01-15' } });
-  assert.equal(revised.status, 201, JSON.stringify(revised.json));
-  assert.match((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'endorsed' } })).json.errors.status[0], /Waiting for Logistics/);
-  const list = await call('GET', '/supply-requests?view=active', { token: admin });
-  assert.equal(list.json.data.find((r: any) => r.id === requestId).endorse_block_reason, 'Waiting for Logistics to confirm the new delivery date');
-  const confirmed = await call('POST', `${path}/date-revision/confirm`, { token: logistics, body: {} });
-  assert.equal(confirmed.json.data.status, 'endorsed');
-  assert.equal(confirmed.json.data.effective_delivery_date, '2999-01-15');
+  const endorsed = await call('POST', `${path}/endorse`, { token: admin });
+  assert.equal(endorsed.json.data.status, 'waiting_logistics', JSON.stringify(endorsed.json));
+  assert.equal(await stockOf(), 120, 'endorsing reserves, it does not deduct');
+  assert.equal(await reservedOf(requestId), 30);
+  assert.deepEqual(endorsed.json.data.owners, ['logistics']);
 
-  assert.equal((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'preparing' } })).status, 403);
-  const preparing = await call('PATCH', `${path}/status`, { token: logistics, body: { status: 'preparing' } });
-  assert.equal(preparing.json.data.status, 'preparing');
-  assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '90.00', 'deducted on Preparing');
+  // Logistics asks for another date: scheduling waits for Admin; approving schedules it.
+  assert.match((await call('POST', `${path}/date-change`, { token: logistics, body: { proposed_date: '2999-01-15' } })).json.errors.reason[0], /reason/);
+  assert.equal((await call('POST', `${path}/date-change`, { token: logistics, body: { proposed_date: '2999-01-15', reason: 'Truck under repair' } })).status, 200);
+  assert.match((await call('POST', `${path}/accept-schedule`, { token: logistics })).json.errors.status[0], /waiting for Admin/);
+  assert.deepEqual((await call('GET', path, { token: admin })).json.data.owners, ['admin']);
+  assert.match((await call('POST', `${path}/date-change/decide`, { token: admin, body: { approve: false } })).json.errors.reason[0], /reason/);
+  const approved = await call('POST', `${path}/date-change/decide`, { token: admin, body: { approve: true } });
+  assert.equal(approved.json.data.status, 'scheduled');
+  assert.equal(approved.json.data.effective_delivery_date, '2999-01-15');
+
+  assert.equal((await call('POST', `${path}/prepare`, { token: admin })).status, 403);
+  assert.equal((await call('POST', `${path}/prepare`, { token: logistics })).json.data.status, 'preparing');
+  const dispatch = (extra: object) => call('POST', `${path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(30), eta_at: ago(-60), ...extra } });
+  assert.match((await dispatch({ driver_contact: '0917123' })).json.errors.driver_contact[0], /11 digits/);
+  assert.match((await dispatch({ driver_name: 'R2-D2' })).json.errors.driver_name[0], /driver name/);
+  assert.match((await dispatch({ plate_number: '???' })).json.errors.plate_number[0], /plate/);
+  assert.match((await dispatch({ departed_at: ago(-120) })).json.errors.departed_at[0], /future/);
+  assert.match((await dispatch({ eta_at: ago(60) })).json.errors.eta_at[0], /on or after/);
+  const itemId = detail.json.data.items[0].id;
+  assert.match((await dispatch({ items: [{ item_id: itemId, prepared: 25 }] })).json.errors['items.0.prepared'][0], /must equal the endorsed/, 'never short a delivery silently');
+  assert.equal(await stockOf(), 120);
+  const sent = await dispatch({});
+  assert.equal(sent.json.data.status, 'dispatched', JSON.stringify(sent.json));
+  assert.equal(sent.json.data.delivery.plate_number, 'ABC 1234');
+  assert.equal(await stockOf(), 90, 'deducted at dispatch');
+  assert.equal(await reservedOf(requestId), 0, 'the reservation is consumed');
   const snapshot = (await call('GET', path, { token: admin })).json.data.stock_snapshot;
   assert.deepEqual([snapshot[0].stock_before, snapshot[0].deducted, snapshot[0].stock_after], [120, 30, 90]);
+  assert.match((await call('POST', `${path}/cancel`, { token: admin, body: { reason: 'Changed plans' } })).json.errors.status[0], /before it is dispatched/);
 
-  assert.equal((await call('PATCH', `${path}/status`, { token: logistics, body: { status: 'dispatched' } })).status, 200);
-  assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '90.00', 'never deducted twice');
-  assert.match((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'cancelled', remarks: 'x' } })).json.errors.status[0], /already dispatched/);
+  // The branch confirms before the POD: good + damaged + short must match, damage needs a photo.
+  const receipt = (lines: object[], photo = false) => {
+    const form = new FormData();
+    form.set('lines', JSON.stringify(lines));
+    if (photo) form.set(`photo_${itemId}`, new File([new Uint8Array([1, 2])], 'dent.png', { type: 'image/png' }));
+    return call('POST', `${path}/receipt`, { token: branch.token, form });
+  };
+  assert.match((await receipt([{ item_id: itemId, good: 20, damaged: 0, short: 0 }])).json.errors['lines.0'][0], /must equal the 30/);
+  assert.match((await receipt([{ item_id: itemId, good: 28, damaged: 2, short: 0, damage_reason: 'Dented bottles' }])).json.errors['lines.0.photo'][0], /photo/);
+  assert.match((await receipt([{ item_id: itemId, good: 28, damaged: 2, short: 0 }], true)).json.errors['lines.0.damage_reason'][0], /damage reason/);
+  const received = await receipt([{ item_id: itemId, good: 28, damaged: 2, short: 0, damage_reason: 'Dented bottles' }], true);
+  assert.equal(received.status, 200, JSON.stringify(received.json));
+  assert.equal(received.json.data.status, 'dispatched', 'waits for the POD');
+  assert.ok((await call('GET', path, { token: admin })).json.data.documents.some((d: any) => d.type === 'receipt_damage_photo'));
+  const [material] = await q(`select m.*, b.quantity_milli from profittrack_materials m join profittrack_material_balances b on b.material_id = m.id where m.location_id = $1`, [branch.locationId]);
+  assert.equal(material.quantity_milli, 28000, 'only the good quantity is credited');
+  assert.equal(material.warehouse_product_id, productId);
+  assert.equal((await q(`select current_stock from inventories where location_id = $1 and product_id = $2`, [branch.locationId, productId]))[0].current_stock, '28.00', 'branch inventory mirrors the ledger');
+  assert.equal((await receipt([{ item_id: itemId, good: 30, damaged: 0, short: 0 }])).status, 422, 'confirmed once');
+  assert.equal((await call('POST', `${path}/acknowledge`, { token: branch.token, body: { recipient_name: 'x' } })).status, 422, 'the one-click acknowledge is retired');
 
-  // Proof of delivery, then the branch confirms receipt and its stock arrives once.
   const pod = new FormData();
   pod.set('file', new File(['pod'], 'pod.pdf', { type: 'application/pdf' }));
+  pod.set('received_by', 'Branch Owner');
+  pod.set('actual_delivered_at', ago(-120));
+  assert.match((await call('POST', `${path}/pod`, { token: logistics, form: pod })).json.errors.actual_delivered_at[0], /future/);
+  pod.set('actual_delivered_at', ago(5));
   const uploaded = await call('POST', `${path}/pod`, { token: logistics, form: pod });
   assert.equal(uploaded.status, 201, JSON.stringify(uploaded.json));
-  assert.equal(uploaded.json.data.type, 'proof_of_delivery');
-  assert.ok(files.store.size >= 1);
-  assert.equal((await call('GET', `${path}/documents/${uploaded.json.data.id}/download`, { token: branch.token })).status, 200);
+  assert.equal(uploaded.json.data.document.type, 'proof_of_delivery');
+  assert.equal(uploaded.json.data.status, 'discrepancy_review', 'damaged items need Admin');
+  assert.ok(files.store.size >= 2);
+  assert.equal((await call('GET', `${path}/documents/${uploaded.json.data.document.id}/download`, { token: branch.token })).status, 200);
 
-  const ack = await call('POST', `${path}/acknowledge`, { token: branch.token, body: { recipient_name: 'Branch Owner' } });
-  assert.equal(ack.status, 200, JSON.stringify(ack.json));
-  assert.equal(ack.json.data.recipient_name, 'Branch Owner');
-  const [material] = await q(`select m.*, b.quantity_milli, b.value_cents from profittrack_materials m join profittrack_material_balances b on b.material_id = m.id where m.location_id = $1`, [branch.locationId]);
-  assert.equal(material.quantity_milli, 30000, 'thirty units in milli-units');
-  assert.equal(material.warehouse_product_id, productId);
-  assert.equal(material.unit, 'bottle');
-  const again = await call('POST', `${path}/acknowledge`, { token: branch.token, body: { recipient_name: 'Branch Owner' } });
-  assert.match(again.json.message, /already confirmed/);
-  assert.equal((await q(`select quantity_milli from profittrack_material_balances where material_id = $1`, [material.id]))[0].quantity_milli, 30000, 'idempotent');
-  assert.equal((await q(`select current_stock from inventories where location_id = $1 and product_id = $2`, [branch.locationId, productId]))[0].current_stock, '30.00', 'branch inventory mirrors the ledger');
-  assert.equal((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'completed' } })).json.data.status, 'completed');
+  assert.match((await call('POST', `${path}/discrepancy/resolve`, { token: admin, body: { action: 'accept_loss' } })).json.errors.remarks[0], /Remarks/);
+  const resolved = await call('POST', `${path}/discrepancy/resolve`, { token: admin, body: { action: 'accept_loss', remarks: 'Two bottles written off' } });
+  assert.equal(resolved.json.data.status, 'completed_with_discrepancy');
+  const history = (await call('GET', path, { token: admin })).json.data.status_history;
+  assert.deepEqual(history.map((h: any) => h.action), ['submitted', 'review_started', 'endorsed_full', 'date_change_requested', 'date_change_approved', 'preparing_started', 'dispatched', 'receipt_confirmed', 'pod_encoded', 'discrepancy_opened', 'discrepancy_resolved']);
+  assert.ok(history.every((h: any) => h.actor_role));
+  await assert.rejects(q(`update supply_request_status_histories set remarks = 'x' where supply_request_id = $1`, [requestId]), /append-only/);
 
   const stats = await call('GET', '/supply-requests/stats', { token: admin });
-  assert.equal(stats.json.data.by_status.completed, 1);
+  assert.equal(stats.json.data.by_status.completed_with_discrepancy, 1);
+  assert.equal(stats.json.data.completed_this_month, 1);
   const pipeline = await call('GET', '/supply-requests/pipeline', { token: logistics });
-  assert.equal(pipeline.json.data.stages.length, 6);
+  assert.ok(pipeline.json.data.stages.some((s: any) => s.key === 'waiting_logistics'));
   assert.equal(pipeline.json.data.rows[0].id, created.json.data.request_number);
   assert.equal((await call('GET', '/supply-requests', { token: branch.token })).json.data.length, 1);
 });
 
-test('supply: short stock blocks endorsing, and cancelling after Preparing restores stock', async () => {
-  const big = await call('POST', '/supply-requests', { token: branch.token, body: { location_id: branch.locationId, delivery_address: 'x', items: [{ product_id: productId, quantity_requested: 5000 }] } });
-  const path = `/supply-requests/${big.json.data.id}`;
-  await call('POST', `${path}/review`, { token: admin });
-  assert.equal((await call('GET', path, { token: admin })).json.data.endorse_block_reason, 'insufficient stock');
-  assert.match((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'endorsed' } })).json.errors.inventory[0], /insufficient/);
-  assert.match((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'rejected' } })).json.errors.remarks[0], /reason is required/);
-  assert.equal((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'rejected', remarks: 'Too much' } })).json.data.status, 'rejected');
+test('supply settings: defaults until Admin saves them, Admin only, within limits', async () => {
+  assert.deepEqual((await call('GET', '/supply-settings', { token: branch.token })).json.data, { lead_days: 2, bulk_percent: 50 });
+  assert.equal((await call('PUT', '/supply-settings', { token: logistics, body: { supply_lead_time_working_days: 3, bulk_threshold_percent: 40 } })).status, 403);
+  assert.equal((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 11, bulk_threshold_percent: 40 } })).status, 422);
+  assert.deepEqual((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 3, bulk_threshold_percent: 40 } })).json.data, { lead_days: 3, bulk_percent: 40 });
+  assert.deepEqual((await call('PUT', '/supply-settings', { token: admin, body: { supply_lead_time_working_days: 2, bulk_threshold_percent: 50 } })).json.data, { lead_days: 2, bulk_percent: 50 });
+  assert.equal((await q(`select count(*)::int as n from supply_settings`))[0].n, 1);
+});
 
-  const small = await call('POST', '/supply-requests', { token: branch.token, body: { location_id: branch.locationId, delivery_address: 'x', items: [{ product_id: productId, quantity_requested: 10 }] } });
-  const p2 = `/supply-requests/${small.json.data.id}`;
-  await call('POST', `${p2}/review`, { token: admin });
-  await call('PATCH', `${p2}/status`, { token: admin, body: { status: 'endorsed' } });
-  await call('PATCH', `${p2}/status`, { token: logistics, body: { status: 'preparing' } });
-  assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '80.00');
+test('supply: short stock needs a Fulfillment Decision; backorders, hold, resume, shortage and cancel', async () => {
+  const create = async (quantity: number) => {
+    const res = await call('POST', '/supply-requests', { token: branch.token, body: { location_id: branch.locationId, delivery_address: 'x', items: [{ product_id: productId, quantity_requested: quantity }] } });
+    assert.equal(res.status, 201, JSON.stringify(res.json));
+    await call('POST', `/supply-requests/${res.json.data.id}/start-review`, { token: admin });
+    return { id: res.json.data.id as number, number: res.json.data.request_number as string, path: `/supply-requests/${res.json.data.id}`, warnings: res.json.data.warnings, item: res.json.data.items[0].id as number };
+  };
+  assert.equal(await stockOf(), 90);
+  const big = await create(200);
+  assert.match((await call('GET', big.path, { token: admin })).json.data.endorse_block_reason, /Fulfillment Decision/);
+  assert.match((await call('POST', `${big.path}/endorse`, { token: admin })).json.errors.items[0], /Fulfillment Decision/);
+  assert.match((await call('POST', `${big.path}/reject`, { token: admin, body: {} })).json.errors.reason[0], /rejection reason/);
+  const decide = (path: string, body: object) => call('POST', `${path}/fulfillment`, { token: admin, body: { reason: 'Supplier delivery next week', ...body } });
+  assert.match((await decide(big.path, { type: 'partial_ship_now' })).json.errors['items.0.restock_date'][0], /restock date/);
+  assert.match((await decide(big.path, { type: 'partial_ship_now', items: [{ item_id: big.item, available: 95, restock_date: later(7) }] })).json.errors['items.0.available'][0], /at most 90/);
+  const split = await decide(big.path, { type: 'partial_ship_now', items: [{ item_id: big.item, restock_date: later(7) }] });
+  assert.equal(split.json.data.status, 'waiting_logistics', JSON.stringify(split.json));
+  assert.equal(Number(split.json.data.items[0].quantity_endorsed), 90);
+  const child = split.json.data.result.child;
+  assert.equal(child.request_number, `${big.number}-B`);
+  assert.equal(child.status, 'on_hold');
+  assert.equal(Number((await q(`select quantity_requested from supply_request_items where supply_request_id = $1`, [child.id]))[0].quantity_requested), 110);
+  assert.equal(await reservedOf(big.id), 90);
+
+  // Everything is reserved now: a new request must wait.
+  const small = await create(10);
+  assert.ok(small.warnings.some((w: string) => w.includes(big.number)), 'duplicate open request warning');
+  assert.match((await call('POST', `${small.path}/endorse`, { token: admin })).json.errors.items[0], /short/);
+  const held = await decide(small.path, { type: 'hold', items: [{ item_id: small.item, restock_date: later(5) }] });
+  assert.equal(held.json.data.status, 'on_hold');
+  assert.match((await call('POST', `${small.path}/resume`, { token: admin })).json.errors.items[0], /cannot cover/);
+  assert.match((await call('POST', `${small.path}/restock-date`, { token: admin, body: { restock_date: later(9) } })).json.errors.reason[0], /reason/);
+  const moved = await call('POST', `${small.path}/restock-date`, { token: admin, body: { restock_date: later(9), reason: 'Supplier delayed' } });
+  assert.equal(moved.json.data.restock_revision_count, 1);
+  assert.equal(moved.json.data.expected_restock_date, later(9));
+
+  // Cancelling the big request releases its reservation; the held one can resume.
+  assert.match((await call('POST', `${big.path}/cancel`, { token: branch.token, body: { reason: 'No longer needed' } })).json.errors.status[0], /branch can cancel only/);
+  assert.equal((await call('POST', `${big.path}/cancel`, { token: admin, body: { reason: 'Branch changed plans' } })).json.data.status, 'cancelled');
+  assert.equal(await reservedOf(big.id), 0);
+  assert.equal((await call('POST', `${small.path}/resume`, { token: admin })).json.data.status, 'waiting_logistics');
+  assert.equal(await reservedOf(small.id), 10);
+
+  // Logistics counts only 4: a shortage report blocks preparing until Admin decides again.
+  assert.equal((await call('POST', `${small.path}/accept-schedule`, { token: logistics })).json.data.status, 'scheduled');
+  assert.match((await call('POST', `${small.path}/shortage`, { token: logistics, body: { reason: 'Broken seals', items: [{ item_id: small.item, actual_count: 10 }] } })).json.errors.items[0], /No item is short/);
+  const reported = await call('POST', `${small.path}/shortage`, { token: logistics, body: { reason: 'Broken seals', items: [{ item_id: small.item, actual_count: 4 }] } });
+  assert.equal(reported.status, 200, JSON.stringify(reported.json));
+  assert.equal(await stockOf(), 90, 'a shortage report changes no inventory');
+  assert.match((await call('POST', `${small.path}/prepare`, { token: logistics })).json.errors.status[0], /shortage report/);
+  assert.match((await decide(small.path, { type: 'partial_ship_now', items: [{ item_id: small.item, available: 5, restock_date: later(5) }] })).json.errors['items.0.available'][0], /at most 4/, 'capped by the reported count');
+  const after = await decide(small.path, { type: 'partial_ship_now', items: [{ item_id: small.item, restock_date: later(5) }] });
+  assert.equal(after.json.data.status, 'waiting_logistics');
+  assert.equal(after.json.data.result.child.request_number, `${small.number}-B`);
+  assert.equal(await reservedOf(small.id), 4);
+  await call('POST', `${small.path}/accept-schedule`, { token: logistics });
+  await call('POST', `${small.path}/prepare`, { token: logistics });
   const whileOpen = await call('DELETE', '/inventories/items', { token: logistics, body: { inventory_ids: [inventoryId] } });
   assert.match(whileOpen.json.errors.inventory_ids[0], /still on an open supply request/, 'blocked while the request is open');
-  assert.equal((await call('PATCH', `${p2}/status`, { token: admin, body: { status: 'cancelled', remarks: 'Changed mind' } })).status, 200);
-  assert.equal((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock, '90.00');
+  const shipped = await call('POST', `${small.path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(10), eta_at: ago(-30) } });
+  assert.equal(shipped.json.data.status, 'dispatched', JSON.stringify(shipped.json));
+  assert.equal(await stockOf(), 86, 'only the endorsed 4 leave the warehouse');
 
-  // A product on an open request cannot be archived; a closed one can.
+  // Close everything still open, then the product can be archived.
+  await q(`update supply_requests set status = 'completed' where id = $1`, [small.id]);
+  for (const id of [child.id, after.json.data.result.child.id]) {
+    assert.equal((await call('POST', `/supply-requests/${id}/cancel`, { token: admin, body: { reason: 'Not needed anymore' } })).json.data.status, 'cancelled');
+  }
+  assert.equal((await call('POST', `/supply-requests/${child.id}/cancel`, { token: admin, body: { reason: 'Again please' } })).status, 422, 'already closed');
   assert.equal((await call('DELETE', '/inventories/items', { token: logistics, body: { inventory_ids: [inventoryId] } })).status, 200);
   assert.equal((await q(`select is_active from products where id = $1`, [productId]))[0].is_active, false);
 });

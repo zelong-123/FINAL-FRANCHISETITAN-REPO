@@ -2,8 +2,8 @@
 // supply requests from the Central Warehouse, deliveries received by the branch, daily
 // production of the brand's products, and a few open requests. Every step goes through the
 // system's own API routes (createApp in-process), so stock moves exactly as it does in use:
-// warehouse stock drops when Logistics prepares a request, branch stock arrives when the
-// branch confirms receipt, and production deducts branch stock per recipe.
+// warehouse stock is reserved at endorsement and drops when Logistics dispatches, branch stock
+// arrives (good quantity) when the branch confirms receipt, and production deducts branch stock per recipe.
 //
 // Order: (1) every branch is planned without writing anything; (2) the warehouse records one
 // supplier delivery (Logistics "Adjust", increase) 15 days ago for exactly what the branches
@@ -18,7 +18,13 @@ import { createApp } from '../functions/api/app.ts';
 const DAYS = 14;
 const HOUR = 3_600_000;
 const BASE_PIECES: Record<string, number> = { kkopi: 14, 'daily dash': 12, godo: 10, 'la pasta': 6 };
-const OPEN_STATUSES = ['submitted', 'under_review', 'endorsed', 'preparing'];
+const OPEN_STATUSES = ['submitted', 'under_review', 'waiting_logistics', 'scheduled', 'preparing'];
+/** Open stages that hold a warehouse reservation (stock must be there, it is not deducted yet). */
+const RESERVED_STAGES = ['waiting_logistics', 'scheduled', 'preparing'];
+const BULK_REASON = 'Planned restock for the coming week.';
+const DRIVER = { driver_name: 'Juan Dela Cruz', driver_contact: '09171234567', plate_number: 'NBC 1234' };
+/** A 1x1 PNG standing in for the POD photo of a seeded delivery. */
+const POD_PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='), (ch) => ch.charCodeAt(0));
 const SUPPLIER_NOTE = 'Supplier delivery received at the Central Warehouse.';
 
 const key = (s: unknown) => String(s ?? '').trim().replace(/\s+/gu, ' ').toLowerCase();
@@ -42,9 +48,9 @@ function trustedAuth(): AuthProvider {
     revoke: async () => {}, revokeOthers: async () => {}, revokeAll: async () => {},
   };
 }
+/** Seeded POD files are not kept: the document row is written, the placeholder bytes are dropped. */
 const noFiles: FileStore = {
-  put: async () => { throw new Error('No file uploads while seeding.'); },
-  get: async () => null, remove: async () => {}, publicUrl: () => '',
+  put: async () => {}, get: async () => null, remove: async () => {}, publicUrl: () => '',
 };
 
 /** Manila midnight `days` ago, plus `hours`. */
@@ -54,9 +60,10 @@ function at(days: number, hours: number, now: Date): Date {
 }
 const isoDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d);
 
+const APPEND_ONLY: Record<string, string> = { supply_request_status_histories: 'supply_request_status_histories_append_only' };
 // Tables whose new rows are dated back to the step that made them (updated_at is left to its trigger).
 const DATED = [
-  'supply_request_status_histories', 'deliveries', 'inventory_transactions', 'inventory_audit_logs', 'inventories', 'system_notifications',
+  'supply_request_status_histories', 'deliveries', 'supply_reservations', 'documents', 'inventory_transactions', 'inventory_audit_logs', 'inventories', 'system_notifications',
   'profittrack_operations', 'profittrack_material_movements', 'profittrack_production_batches', 'profittrack_production_consumptions',
   'profittrack_audit_events', 'profittrack_materials', 'profittrack_recipes', 'profittrack_recipe_versions', 'profittrack_recipe_ingredients',
   'profittrack_finished_balances', 'profittrack_material_balances',
@@ -195,7 +202,8 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
   for (const p of plans) {
     add(p.first);
     add(p.second);
-    if (p.kind === 'awaiting' || ['preparing'].includes(p.stage)) add(p.open);
+    // Dispatched requests leave the warehouse; open ones past endorsement only reserve, but the stock must be there.
+    if (p.kind === 'awaiting' || RESERVED_STAGES.includes(p.stage)) add(p.open);
   }
   // A run stopped part-way may already have recorded the supplier delivery while no branch was
   // filled yet: only what is still missing is added, so the warehouse is never restocked twice.
@@ -245,11 +253,20 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
       const sets = tsCols[t].map((c) => `"${c.name}" = case when "${c.name}" is null then null else ${c.type === 'date' ? '$1::date' : '$2::timestamptz'} end`);
       if (t === 'system_notifications' && readNotifications) sets.push(`read_at = $2::timestamptz`);
       // Both date parameters are referenced in every statement so Postgres always knows their types.
-      if (sets.length) await db.query(`update public."${t}" set ${sets.join(', ')} where id > $3 and $1::date is not null and $2::timestamptz is not null`, [isoDate(when), when.toISOString(), marks[t]]);
+      if (!sets.length) continue;
+      // The supply history is append-only for the app; only this local seed dates its own new rows back,
+      // with the guard lifted inside the same transaction and restored at once.
+      const guarded = APPEND_ONLY[t];
+      if (guarded) await db.query(`alter table public."${t}" disable trigger "${guarded}"`);
+      await db.query(`update public."${t}" set ${sets.join(', ')} where id > $3 and $1::date is not null and $2::timestamptz is not null`, [isoDate(when), when.toISOString(), marks[t]]);
+      if (guarded) await db.query(`alter table public."${t}" enable trigger "${guarded}"`);
     }
   }
   async function request(app: ReturnType<typeof createApp>, who: string, method: string, path: string, body: unknown, label: string) {
-    const res = await app.request(`/api/v1${path}`, { method, headers: { authorization: `Bearer ${who}`, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const form = body instanceof FormData;
+    const res = await app.request(`/api/v1${path}`, {
+      method, headers: { authorization: `Bearer ${who}`, ...(body && !form ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: form ? body : JSON.stringify(body) } : {}),
+    });
     const json: any = await res.json().catch(() => null);
     if (res.status >= 400) throw new Error(`${label}: ${method} ${path} -> ${res.status} ${JSON.stringify(json?.errors ?? json?.message ?? json).slice(0, 300)}`);
     return json?.data;
@@ -269,42 +286,54 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
 
     if (plan.kind === 'awaiting') {
       if (plan.open.length) {
-        const sr = await call(ADMIN, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open });
+        const sr = await call(ADMIN, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open, bulk_reason: BULK_REASON });
         await step(at(4, 10, now));
-        await call(ADMIN, 'POST', `/supply-requests/${sr.id}/review`);
-        await call(ADMIN, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'endorsed' });
+        await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
+        await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
         await step(at(4, 14, now));
-        await call(LOGISTICS, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'preparing' });
+        await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
+        await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
         await step(at(3, 9, now));
-        await call(LOGISTICS, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'dispatched' });
+        await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(3, 13, now).toISOString(), eta_at: at(3, 17, now).toISOString() });
         await step(at(3, 13, now));
-        await db.query(`update supply_requests set created_at = $2, reviewed_at = $3, endorsed_at = $3, preparing_at = $4, stock_deducted_at = $4, target_delivery_date = $5 where id = $1`,
-          [sr.id, at(4, 10, now), at(4, 14, now), at(3, 9, now), isoDate(at(1, 0, now))]);
+        await db.query(
+          `update supply_requests set created_at = $2, submitted_at = $2, reviewed_at = $3, endorsed_at = $3, scheduled_at = $3, preparing_at = $4, stock_deducted_at = $5, status_changed_at = $5,
+             target_delivery_date = $6, confirmed_delivery_date = $6 where id = $1`,
+          [sr.id, at(4, 10, now), at(4, 14, now), at(3, 9, now), at(3, 13, now), isoDate(at(1, 0, now))]);
         report.open.push('dispatched (awaiting branch receipt, past target date)');
       }
       report.status = 'done (branch account inactive: delivery awaits receipt)';
       return report;
     }
 
-    // A delivered request: submitted, reviewed, endorsed, prepared, dispatched, received, completed.
+    // A delivered request: submitted, reviewed, endorsed (reserved), scheduled, prepared, dispatched
+    // (deducted), POD encoded, receipt confirmed with every item good: completed.
     const deliver = async (items: Row[], day: number) => {
-      const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items });
+      const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items, bulk_reason: BULK_REASON });
       await step(at(day + 1, 9, now));
-      await call(ADMIN, 'POST', `/supply-requests/${sr.id}/review`);
-      await call(ADMIN, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'endorsed' });
+      await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
+      await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
       await step(at(day + 1, 14, now));
-      await call(LOGISTICS, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'preparing' });
+      await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
+      await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
+      await step(at(day, 7, now));
+      const sent = await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(day, 8, now).toISOString(), eta_at: at(day, 11, now).toISOString() });
       await step(at(day, 8, now));
-      await call(LOGISTICS, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'dispatched' });
+      const pod = new FormData();
+      pod.append('file', new File([POD_PNG], 'pod.png', { type: 'image/png' }));
+      pod.append('received_by', 'Branch staff');
+      pod.append('actual_delivered_at', at(day, 10, now).toISOString());
+      await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/pod`, pod);
       await step(at(day, 10, now));
-      await call(OWNER, 'POST', `/supply-requests/${sr.id}/acknowledge`, { recipient_name: 'Branch staff' });
+      const lines = sent.items.map((i: Row) => ({ item_id: i.id, good: Number(i.quantity_prepared), damaged: 0, short: 0 }));
+      await call(OWNER, 'POST', `/supply-requests/${sr.id}/receipt`, { lines });
       await step(at(day, 15, now));
-      await call(ADMIN, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'completed' });
-      await step(at(day, 17, now));
       await db.query(
-        `update supply_requests set created_at = $2, reviewed_at = $3, endorsed_at = $3, preparing_at = $4, stock_deducted_at = $4, branch_received_at = $5, completed_at = $6, target_delivery_date = $7 where id = $1`,
-        [sr.id, at(day + 1, 9, now), at(day + 1, 14, now), at(day, 8, now), at(day, 15, now), at(day, 17, now), isoDate(at(day, 0, now))],
+        `update supply_requests set created_at = $2, submitted_at = $2, reviewed_at = $3, endorsed_at = $3, scheduled_at = $3, preparing_at = $4, stock_deducted_at = $5,
+           branch_received_at = $6, completed_at = $6, status_changed_at = $6, target_delivery_date = $7, confirmed_delivery_date = $7 where id = $1`,
+        [sr.id, at(day + 1, 9, now), at(day + 1, 14, now), at(day, 7, now), at(day, 8, now), at(day, 15, now), isoDate(at(day, 0, now))],
       );
+      await db.query(`update deliveries set pod_encoded_at = $2 where supply_request_id = $1`, [sr.id, at(day, 10, now)]);
       report.delivered++;
     };
 
@@ -324,11 +353,13 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
     }
 
     // One open request, at a different stage per branch; it covers the Low item, not the Critical one.
-    const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open, target_delivery_date: isoDate(at(-3, 0, now)) });
+    const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items: plan.open, bulk_reason: BULK_REASON });
     await step(at(0, 9, now), false);
-    if (plan.stage !== 'submitted') await call(ADMIN, 'POST', `/supply-requests/${sr.id}/review`);
-    if (['endorsed', 'preparing'].includes(plan.stage)) await call(ADMIN, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'endorsed' });
-    if (plan.stage === 'preparing') await call(LOGISTICS, 'PATCH', `/supply-requests/${sr.id}/status`, { status: 'preparing' });
+    const reached = (stage: string) => OPEN_STATUSES.indexOf(plan.stage) >= OPEN_STATUSES.indexOf(stage);
+    if (reached('under_review')) await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
+    if (reached('waiting_logistics')) await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
+    if (reached('scheduled')) await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
+    if (reached('preparing')) await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
     await step(at(0, 11, now), false);
     report.open.push(plan.stage);
     report.materials = (await db.query(`select count(*)::int as n from profittrack_materials where location_id = $1`, [branch.id]))[0].n;

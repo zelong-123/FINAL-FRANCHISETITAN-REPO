@@ -18,7 +18,8 @@ const [user] = await q(`insert into users (role_id, full_name, email, account_st
 const [applicant] = await q(`insert into applicants (full_name, status, user_id, preferred_brand_id, application_date) values ('Resume Owner', 'active_franchisee', $1, $2, '2026-01-01') returning id`, [user.id, brand.id]);
 const [franchisee] = await q(`insert into franchisees (applicant_id, user_id, business_name, franchise_status, approval_date) values ($1, $2, 'Kkopi Resume', 'active', '2026-01-01') returning id`, [applicant.id, user.id]);
 const [location] = await q(`insert into franchise_locations (franchisee_id, brand_id, name, type, address, is_active) values ($1, $2, 'Kkopi Resume', 'franchise', 'Main Road', true) returning id`, [franchisee.id, brand.id]);
-const stock = async () => Object.fromEntries((await q(`select product_id, current_stock::float as s from inventories where location_id = (select id from franchise_locations where type = 'warehouse' limit 1)`)).map((r) => [r.product_id, r.s]));
+// Free stock: on hand minus the reservations of endorsed requests not dispatched yet.
+const stock = async () => Object.fromEntries((await q(`select i.product_id, (i.current_stock - coalesce((select sum(r.quantity) from supply_reservations r where r.product_id = i.product_id and r.status = 'active'), 0))::float as s from inventories i where i.location_id = (select id from franchise_locations where type = 'warehouse' limit 1)`)).map((r) => [r.product_id, r.s]));
 
 test('a run that stopped after the supplier delivery is finished without restocking twice', async () => {
   const before = await stock();

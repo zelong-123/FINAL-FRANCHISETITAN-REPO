@@ -9,9 +9,9 @@ import { role, roleName } from '../lib/middleware.ts';
 import { PERMISSIONS } from '../config/roles.ts';
 import { STAGE_ORDER } from '../services/pipeline.ts';
 import { progress } from '../services/applicantModel.ts';
+import { BEFORE_DELIVERY, sqlList, STATUSES as SUPPLY_STATUSES } from '../services/supplyStatus.ts';
 
 export const analyticsRoutes = new Hono<AppEnv>();
-const SUPPLY_STATUSES = ['draft', 'submitted', 'under_review', 'endorsed', 'rejected', 'preparing', 'dispatched', 'delivered', 'completed', 'cancelled'];
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const startOf = (param: string) => `${param}::date::timestamp at time zone 'Asia/Manila'`;
@@ -116,7 +116,7 @@ analyticsRoutes.get('/analytics/overview', role('admin', 'marketing', 'sales', '
   const inventories = await db.query(`select current_stock, reorder_level, critical_level from inventories`);
   const converted = await convertedIds(db, inquiries);
   const conversion = conversionOf(inquiries, converted);
-  const completed = requests.filter((r) => r.status === 'completed').length;
+  const completed = requests.filter((r) => ['completed', 'completed_with_discrepancy'].includes(r.status)).length;
 
   const bySource = new Map<string, Row[]>();
   for (const row of inquiries) {
@@ -168,7 +168,7 @@ analyticsRoutes.get('/analytics/top-locations', staffAnalytics, async (c) => {
     `select l.*, (select jsonb_build_object('id', b.id, 'name', b.name) from brands b where b.id = l.brand_id) as brand,
        (select jsonb_build_object('id', f.id, 'business_name', f.business_name) from franchisees f where f.id = l.franchisee_id) as franchisee,
        (select count(*)::int from supply_requests sr where sr.location_id = l.id) as supply_requests_count,
-       (select count(*)::int from supply_requests sr where sr.location_id = l.id and sr.status = 'completed') as completed_supply_requests_count
+       (select count(*)::int from supply_requests sr where sr.location_id = l.id and sr.status in ('completed', 'completed_with_discrepancy')) as completed_supply_requests_count
      from franchise_locations l where l.type = 'franchise' order by completed_supply_requests_count desc, l.id limit ${limit}`,
   ));
 });
@@ -272,7 +272,7 @@ analyticsRoutes.get('/analytics/franchising-dashboard', role('admin', 'sales'), 
   if (stalled > 0) alerts.push({ severity: 'warning', message: `${stalled} scheduled applicant(s) have no activity in the last 14 days.` });
   const pending = await count(`select count(*)::int as n from payments where status = 'pending' and created_at <= now() - interval '3 days'`);
   if (pending > 0) alerts.push({ severity: 'warning', message: `${pending} payment(s) are awaiting verification.` });
-  const late = await count(`select count(*)::int as n from supply_requests where status in ('submitted', 'under_review', 'endorsed', 'preparing', 'dispatched') and target_delivery_date < $1::date`, [today]);
+  const late = await count(`select count(*)::int as n from supply_requests where status in (${sqlList(BEFORE_DELIVERY)}) and coalesce(confirmed_delivery_date, target_delivery_date) < $1::date`, [today]);
   if (late > 0) alerts.push({ severity: 'danger', message: `${late} supply request(s) are past their target delivery date.` });
 
   const recent = await db.query(

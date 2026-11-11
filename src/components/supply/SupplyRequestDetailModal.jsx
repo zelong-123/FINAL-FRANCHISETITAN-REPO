@@ -4,21 +4,23 @@ import { useAuth } from '../../context/AuthContext';
 import { downloadCsv } from '../../lib/export';
 import { formatDate, formatNumber, titleCase } from '../../lib/format';
 import { getSupplyActions } from '../../lib/supplyActions';
+import { DELIVERED_ON, supplyStatusLabel } from '../../lib/supplyStatus';
 import useRemote from '../../lib/useRemote';
 import { EmptyState, Modal, Notice, StatusBadge } from '../ApiUi';
 
 // Footer action key -> the status it moves the request into, and its button label.
 const FOOTER_ACTIONS = {
+  accept_schedule: { next: 'scheduled', label: 'Accept schedule' },
+  resume: { next: 'resume', label: 'Resume' },
   start_preparing: { next: 'preparing', label: 'Start Prepare' },
   dispatch: { next: 'dispatched', label: 'Mark Dispatched' },
-  deliver: { next: 'delivered', label: 'Mark Delivered' },
-  complete: { next: 'completed', label: 'Mark as Complete' },
+  deliver: { next: 'delivered', label: 'Encode POD' },
   reject: { next: 'rejected', label: 'Reject' },
   cancel: { next: 'cancelled', label: 'Cancel Request' },
 };
 
 /**
- * Detail for a request from Endorsed onward. Forward buttons (Dispatch / Deliver / Complete)
+ * Detail for a request from endorsement onward. Forward buttons (Schedule / Prepare / Dispatch / POD)
  * render only when getSupplyActions allows them for the signed-in role and request status.
  */
 export default function SupplyRequestDetailModal({ requestId, onClose, onAction }) {
@@ -66,7 +68,7 @@ export default function SupplyRequestDetailModal({ requestId, onClose, onAction 
     : [];
 
   const confirmation = request?.delivery_confirmation || null;
-  const showConfirmation = Boolean(confirmation) && ['delivered', 'completed'].includes(request?.status);
+  const showConfirmation = Boolean(confirmation) && DELIVERED_ON.includes(request?.status);
 
   // Reject/cancel reason: the last transition into that status that carried remarks.
   const reasonEntry = ['rejected', 'cancelled'].includes(request?.status)
@@ -131,7 +133,7 @@ export default function SupplyRequestDetailModal({ requestId, onClose, onAction 
             <div className="grid [justify-items:end] gap-[7px] text-right [&>div]:flex [&>div]:items-baseline [&>div]:gap-2 [&_span]:text-muted [&_span]:text-[8px] [&_span]:font-[700] [&_span]:tracking-[.08em] [&_span]:uppercase later:[&_strong]:text-text later:[&_strong]:text-[11px] [&_strong]:font-[750] [&_strong]:[font-variant-numeric:tabular-nums] [&_strong]:whitespace-nowrap max-[621px]:later:[justify-items:start] max-[621px]:later:text-left">
               <div><span>Request no.</span><strong>{request.request_number}</strong></div>
               <div><span>Date</span><strong>{formatDate(request.created_at)}</strong></div>
-              <StatusBadge value={request.status} />
+              <StatusBadge value={request.status} label={supplyStatusLabel(request.status)} />
             </div>
           </header>
 

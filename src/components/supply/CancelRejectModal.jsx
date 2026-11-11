@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { api, firstValidationMessage } from '../../lib/api';
 import { Notice, Modal } from '../ApiUi';
 
-// The status endpoint validates remarks as a plain string with no max, so the
-// form keeps the same 255-character ceiling used for delivery notes.
+// The server requires a reason of at least 5 characters; the form keeps a 255-character ceiling.
 const REASON_LIMIT = 255;
+const REASON_MIN = 5;
 
 const COPY = {
   rejected: {
@@ -16,12 +16,12 @@ const COPY = {
   cancelled: {
     title: 'Cancel request',
     confirm: 'CONFIRM CANCEL',
-    warning: 'Stock deducted for this request will be returned to the warehouse.',
+    warning: 'Any warehouse stock reserved for this request is released.',
     success: 'Request cancelled.',
   },
 };
 
-/** Asks for the reason the backend requires, then sends the status change itself. */
+/** Asks for the reason the backend requires, then calls the cancel or reject action. */
 export default function CancelRejectModal({ request, nextStatus, onClose, onDone }) {
   const copy = COPY[nextStatus] || COPY.cancelled;
   const [reason, setReason] = useState('');
@@ -29,17 +29,14 @@ export default function CancelRejectModal({ request, nextStatus, onClose, onDone
   const [error, setError] = useState('');
 
   const trimmedReason = reason.trim();
-  const canConfirm = trimmedReason.length > 0 && !saving;
+  const canConfirm = trimmedReason.length >= REASON_MIN && !saving;
 
   const confirm = async () => {
     if (!canConfirm) return;
     setSaving(true);
     setError('');
     try {
-      await api.patch(`/supply-requests/${request.id}/status`, {
-        status: nextStatus,
-        remarks: trimmedReason,
-      });
+      await api.post(`/supply-requests/${request.id}/${nextStatus === 'rejected' ? 'reject' : 'cancel'}`, { reason: trimmedReason });
       onDone();
     } catch (saveError) {
       setError(firstValidationMessage(saveError));
@@ -66,7 +63,7 @@ export default function CancelRejectModal({ request, nextStatus, onClose, onDone
       <div className="[&_p]:m-[0_0_8px] [&_label]:block [&_label]:mb-[6px] [&_label]:text-text-secondary [&_label]:text-[0.8rem] [&_label]:font-[700] [&_textarea]:w-full [&_textarea]:min-h-[84px] [&_textarea]:[resize:vertical]">
         <p><strong>{request.request_number}</strong></p>
         <p className="text-[color:var(--sr-danger,_var(--danger-text))] text-[0.85rem] leading-[1.5] mb-3">{copy.warning}</p>
-        <label htmlFor="cancel-reason">Reason (required)</label>
+        <label htmlFor="cancel-reason">Reason (required, at least {REASON_MIN} characters)</label>
         <textarea
           id="cancel-reason"
           maxLength={REASON_LIMIT}

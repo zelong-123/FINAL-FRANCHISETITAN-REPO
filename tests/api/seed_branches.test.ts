@@ -52,9 +52,11 @@ test('an inactive branch account gets a dispatched delivery waiting for receipt,
 
 test('the warehouse receives one supplier delivery and ends where it started; every stock change is in its ledger', async () => {
   assert.ok(report.warehouse_restock.items > 0);
-  const after = await q(`select i.product_id, i.current_stock::float as stock from inventories i where i.location_id = (select id from franchise_locations where type = 'warehouse' limit 1) order by i.product_id`);
-  // The supplier delivery covered every draw, including requests already at Preparing or Dispatched,
-  // so each item ends where it started (rounding aside).
+  // Free stock = on hand minus active reservations (requests endorsed but not dispatched yet).
+  const after = await q(`select i.product_id, (i.current_stock - coalesce((select sum(r.quantity) from supply_reservations r where r.product_id = i.product_id and r.status = 'active'), 0))::float as stock
+     from inventories i where i.location_id = (select id from franchise_locations where type = 'warehouse' limit 1) order by i.product_id`);
+  // The supplier delivery covered every draw: dispatched requests and the reservations of open ones,
+  // so each item's free stock ends where it started (rounding aside).
   for (const row of after) {
     const before = warehouseBefore.find((b) => b.product_id === row.product_id)!.stock;
     assert.ok(Math.abs(row.stock - before) < 0.02, `warehouse item ${row.product_id}: ${before} -> ${row.stock}`);

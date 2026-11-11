@@ -6,6 +6,7 @@ import useRemote from '../lib/useRemote';
 import { formatDate, formatNumber, localDateInputValue, titleCase } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
 import { getSupplyActions, supplyStatusLabel } from '../lib/supplyActions';
+import { IN_TRANSIT, SUBMITTED_OPEN, TERMINAL, TO_SHIP } from '../lib/supplyStatus';
 import SupplyRequestDetailModal from '../components/supply/SupplyRequestDetailModal';
 import MarkDispatchedModal from '../components/supply/MarkDispatchedModal';
 import MarkDeliveredModal from '../components/supply/MarkDeliveredModal';
@@ -20,48 +21,54 @@ import { useAuth } from '../context/AuthContext';
 /* Workflow configuration                                              */
 /* ------------------------------------------------------------------ */
 
-// Ordered main flow. "completed" is the final state (all dots filled).
+// Ordered main flow. "completed" is the final state (all dots filled). Stock is reserved when
+// the request is endorsed (Waiting for Logistics) and leaves the warehouse at Dispatched.
 const workflowStage = [
   { key: 'submitted', label: 'Submitted' },
   { key: 'under_review', label: 'Under review' },
-  { key: 'endorsed', label: 'Endorsed' },
-  // "preparing" is the Start Prepare step: the warehouse stock is deducted here.
+  { key: 'waiting_logistics', label: 'Waiting for Logistics' },
+  { key: 'scheduled', label: 'Scheduled' },
   { key: 'preparing', label: 'Preparing' },
   { key: 'dispatched', label: 'Dispatched' },
   { key: 'delivered', label: 'Delivered' },
   { key: 'completed', label: 'Completed' },
 ];
 
-// The tracker shows 6 dots; "completed" fills all of them.
-const TRACK = workflowStage.slice(0, 6);
+// The tracker shows 7 dots; "completed" fills all of them.
+const TRACK = workflowStage.slice(0, 7);
 
 // The button label describes the ACTION that moves the request INTO that status.
 const actionLabel = {
   submitted: 'Submit',
   under_review: 'Start review',
-  endorsed: 'Endorse',
+  waiting_logistics: 'Endorse',
+  resume: 'Resume',
+  scheduled: 'Accept schedule',
   preparing: 'Start Prepare',
   dispatched: 'Mark Dispatched',
-  delivered: 'Mark Delivered',
-  completed: 'Mark as Complete',
+  delivered: 'Encode POD',
   rejected: 'Reject',
   cancelled: 'Cancel',
 };
 
 const DANGER_STATUSES = ['rejected', 'cancelled'];
 // Action key -> the status it moves the request into (table buttons only).
+// "resume" is its own key: it also moves the request to Waiting for Logistics, but from On hold.
 const FORWARD_STATUS = {
-  endorse: 'endorsed',
+  endorse: 'waiting_logistics',
+  resume: 'resume',
+  accept_schedule: 'scheduled',
   start_preparing: 'preparing',
   dispatch: 'dispatched',
   deliver: 'delivered',
-  complete: 'completed',
   reject: 'rejected',
   cancel: 'cancelled',
 };
-// Rows from Endorsed onward open the detail modal (Under review keeps its own Branches-panel review flow).
-const DETAIL_STATUSES = ['endorsed', 'preparing', 'dispatched', 'delivered'];
-const TERMINAL_STATUSES = ['completed', 'rejected', 'cancelled'];
+// Rows from endorsement onward open the detail modal (Under review keeps its own Branches-panel review flow).
+const DETAIL_STATUSES = [...TO_SHIP, ...IN_TRANSIT, 'on_hold', 'discrepancy_review'];
+const TERMINAL_STATUSES = TERMINAL;
+// The action endpoint behind each one-click step (the others open their own form).
+const ENDPOINT = { waiting_logistics: 'endorse', resume: 'resume', scheduled: 'accept-schedule' };
 
 const newItem = () => ({ product_id: '', quantity_requested: 1 });
 
@@ -82,8 +89,9 @@ function startOfDay(value) {
 }
 
 function overdueDays(request) {
-  if (!request.target_delivery_date || TERMINAL_STATUSES.includes(request.status)) return 0;
-  const diff = Math.floor((startOfDay(new Date()) - startOfDay(request.target_delivery_date)) / DAY_MS);
+  const target = request.effective_delivery_date || request.target_delivery_date;
+  if (!target || TERMINAL_STATUSES.includes(request.status) || ['delivered', 'discrepancy_review'].includes(request.status)) return 0;
+  const diff = Math.floor((startOfDay(new Date()) - startOfDay(target)) / DAY_MS);
   return diff > 0 ? diff : 0;
 }
 
@@ -103,15 +111,15 @@ function totalQuantity(request) {
 /* ------------------------------------------------------------------ */
 
 function SupplyKpis({ stats }) {
-  const done = Number(stats?.by_status?.completed || 0);
+  const done = Number(stats?.by_status?.completed || 0) + Number(stats?.by_status?.completed_with_discrepancy || 0);
   const active = Number(stats?.active || 0);
   const total = Number(stats?.total || 0) || 1;
   const percent = Math.min(100, Math.round((done / total) * 100));
 
   const cards = [
     ['Active orders', stats?.active, 'Submitted through dispatched'],
-    ['Overdue', stats?.overdue, 'Past the target delivery date'],
-    ['Dispatch queue', (stats?.by_status?.endorsed || 0) + (stats?.by_status?.preparing || 0), 'Endorsed or preparing'],
+    ['Overdue', stats?.overdue, 'Past a working-day deadline'],
+    ['Dispatch queue', TO_SHIP.reduce((sum, key) => sum + Number(stats?.by_status?.[key] || 0), 0), 'Waiting for Logistics, scheduled or preparing'],
     ['Completed this month', stats?.completed_this_month, `Avg ${stats?.avg_fulfillment_days ?? 0} days to fulfill`],
   ];
 
@@ -287,7 +295,7 @@ export default function SupplyRequests() {
   const byStatus = remote.data?.activeCounts || {};
   const totalCount = Number(remote.data?.activeCounts?.active_total ?? 0);
   // The table covers the active view only: Under review onward (Submitted lives in the Branches panel).
-  const chipKeys = ['under_review', 'endorsed', 'preparing', 'dispatched', 'delivered'].filter(
+  const chipKeys = SUBMITTED_OPEN.filter((key) => key !== 'submitted').filter(
     (key) => Number(byStatus[key] || 0) > 0 || key === status,
   );
 
@@ -307,8 +315,8 @@ export default function SupplyRequests() {
     setActionError('');
     setSuccess('');
     try {
-      await api.patch(`/supply-requests/${request.id}/status`, { status: nextStatus });
-      setSuccess(`${request.request_number} moved to ${supplyStatusLabel(nextStatus)}.`);
+      const saved = await api.post(`/supply-requests/${request.id}/${ENDPOINT[nextStatus]}`, {});
+      setSuccess(`${request.request_number} moved to ${supplyStatusLabel(saved.data?.status || nextStatus)}.`);
       setConfirmTransition(null);
       await remote.reload({ silent: true });
     } catch (error) {
@@ -346,12 +354,7 @@ export default function SupplyRequests() {
       setPrepareId(request.id);
       return;
     }
-    // Complete closes the request, so it asks for confirmation first.
-    if (nextStatus === 'completed') {
-      setActionError('');
-      setConfirmTransition({ request, nextStatus });
-      return;
-    }
+    if (!ENDPOINT[nextStatus]) return;
     void runTransition(request, nextStatus);
   };
 
@@ -516,8 +519,8 @@ export default function SupplyRequests() {
                           {needsDateReview && (
                             <span
                               className="inline-block w-[8px] h-[8px] ml-[7px] rounded-[999px] [background:#8b6dff] [box-shadow:0_0_0_3px_color-mix(in_srgb,_#8b6dff_22%,_transparent)] [vertical-align:middle]"
-                              title="Date change awaiting your confirmation"
-                              aria-label="Date change awaiting your confirmation"
+                              title="Date change awaiting your decision"
+                              aria-label="Date change awaiting your decision"
                             />
                           )}
                         </strong>
@@ -529,7 +532,7 @@ export default function SupplyRequests() {
                       <td><ProgressTracker status={request.status} role={role} /></td>
 
                       <td>
-                        <strong className="block text-[1rem] font-[600] text-[color:var(--sr-text)]">{formatDate(request.target_delivery_date)}</strong>
+                        <strong className="block text-[1rem] font-[600] text-[color:var(--sr-text)]">{formatDate(request.effective_delivery_date || request.target_delivery_date)}</strong>
                         {late > 0 ? (
                           <span className="block mt-[2px] text-[0.85rem] text-[color:var(--sr-muted)] [&.is-late]:text-[color:var(--sr-danger)] is-late">Overdue {late}d</span>
                         ) : request.status === 'completed' ? (
@@ -692,7 +695,7 @@ export default function SupplyRequests() {
           onClose={() => setDateRevisionId(null)}
           onConfirmed={async () => {
             setDateRevisionId(null);
-            setSuccess('New delivery date confirmed. Request is now endorsed.');
+            setSuccess('Date change decided.');
             await remote.reload({ silent: true });
           }}
         />
@@ -718,7 +721,7 @@ export default function SupplyRequests() {
           onClose={() => setPrepareId(null)}
           onPrepared={async () => {
             setPrepareId(null);
-            setSuccess('Preparing started — warehouse stock was deducted.');
+            setSuccess('Preparing started.');
             await remote.reload({ silent: true });
           }}
         />
@@ -730,7 +733,7 @@ export default function SupplyRequests() {
           onClose={() => setDeliverId(null)}
           onDelivered={async () => {
             setDeliverId(null);
-            setSuccess('Request marked as delivered.');
+            setSuccess('Proof of delivery saved.');
             await remote.reload({ silent: true });
           }}
         />
@@ -765,8 +768,8 @@ export default function SupplyRequests() {
               <strong>{confirmTransition.request.request_number}</strong>
               <p>
                 {confirmTransition.nextStatus === 'preparing'
-                  ? 'Starting preparation deducts the requested quantities from warehouse stock now. If stock is short the request stays Endorsed — nothing is deducted — and Admin can propose a new delivery date instead.'
-                  : 'Mark this request as Complete? It will leave the main table and move to history. This cannot be undone.'}
+                  ? 'Starting preparation moves the request to Preparing. The stock is reserved for it and leaves the warehouse at dispatch.'
+                  : 'Continue?'}
               </p>
             </div>
           </div>

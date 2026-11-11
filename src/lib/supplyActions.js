@@ -1,83 +1,49 @@
 import { can } from './roleAccess';
+import { supplyStatusLabel } from './supplyStatus';
+
+export { supplyStatusLabel };
 
 /**
- * Display label for a supply-request status: Submitted, Under Review, Endorsed,
- * Preparing, Dispatched, Delivered, Completed (plus Rejected / Cancelled).
- * The action that moves a request into "preparing" is labelled "Start Prepare".
- */
-export function supplyStatusLabel(status) {
-  const key = String(status || '').toLowerCase();
-  return key
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-/**
- * Which supply-request actions a role may see for a request, and their state.
- * Returns only the actions the role holds the permission for.
+ * The supply-request actions a role may see for a request, and their state. Only actions the role
+ * holds the permission for are returned; the API enforces every rule again.
  *
- * - review: admin, status submitted (called automatically on open, not a visible button)
- * - endorse: admin, status under_review; disabled with the backend reason when can_endorse is false
- * - propose_date: admin, status under_review or endorsed (reschedule after a short-stock hold)
- * - start_preparing: logistics, status endorsed
- * - dispatch: logistics, status preparing
- * - deliver: logistics, status dispatched
- * - complete: admin, status delivered
- * - reject: admin, status under_review or endorsed (danger, needs a reason)
- * - cancel: admin, status preparing (danger, needs a reason; stock is restored)
- * - confirm_date: logistics, status under_review or endorsed with a pending date revision
+ * - review: admin, submitted (called automatically on open, not a visible button)
+ * - endorse: admin, under_review; disabled with the backend reason when stock is short
+ * - resume: admin, on_hold (the warehouse must cover what is held)
+ * - confirm_date: admin, a new date requested by Logistics is waiting
+ * - accept_schedule: logistics, waiting_logistics
+ * - start_preparing: logistics, scheduled
+ * - dispatch: logistics, preparing
+ * - deliver: logistics, dispatched without a POD (encode the proof of delivery)
+ * - reject: admin, submitted, under_review or on_hold (danger, needs a reason)
+ * - cancel: admin, endorsed but not dispatched yet (danger, needs a reason; the reservation is released)
+ * Logistics steps wait while a date change or a shortage report is with Admin.
  */
 export function getSupplyActions(role, request) {
   const actions = [];
   if (!request) return actions;
   const status = request.status;
+  const pendingDate = Boolean(request.pending_date_change ?? request.pending_date_revision);
+  const pendingShortage = Boolean(request.pending_shortage ?? request.pending_shortage_report);
+  const withAdmin = pendingDate || pendingShortage;
+  const add = (key, extra = {}) => actions.push({ key, auto: false, disabled: false, reason: null, ...extra });
 
-  if (can(role, 'supply.review') && status === 'submitted') {
-    actions.push({ key: 'review', auto: true, disabled: false, reason: null });
-  }
+  if (can(role, 'supply.review') && status === 'submitted') add('review', { auto: true });
 
   if (can(role, 'supply.endorse') && status === 'under_review') {
     const disabled = request.can_endorse === false;
-    actions.push({
-      key: 'endorse',
-      auto: false,
-      disabled,
-      reason: disabled ? request.endorse_block_reason || null : null,
-    });
+    add('endorse', { disabled, reason: disabled ? request.endorse_block_reason || null : null });
   }
+  if (can(role, 'supply.resume') && status === 'on_hold') add('resume');
+  if (can(role, 'supply.decide_date') && pendingDate) add('confirm_date');
 
-  if (can(role, 'supply.propose_date') && (status === 'under_review' || status === 'endorsed')) {
-    actions.push({ key: 'propose_date', auto: false, disabled: false, reason: null });
-  }
+  if (can(role, 'supply.accept_schedule') && status === 'waiting_logistics') add('accept_schedule', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
+  if (can(role, 'supply.start_preparing') && status === 'scheduled') add('start_preparing', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
+  if (can(role, 'supply.dispatch') && status === 'preparing') add('dispatch', withAdmin ? { disabled: true, reason: 'Waiting for Admin.' } : {});
+  if (can(role, 'supply.deliver') && status === 'dispatched' && !request.pod_encoded) add('deliver');
 
-  if (can(role, 'supply.start_preparing') && status === 'endorsed') {
-    actions.push({ key: 'start_preparing', auto: false, disabled: false, reason: null });
-  }
-
-  if (can(role, 'supply.dispatch') && status === 'preparing') {
-    actions.push({ key: 'dispatch', auto: false, disabled: false, reason: null });
-  }
-
-  if (can(role, 'supply.deliver') && status === 'dispatched') {
-    actions.push({ key: 'deliver', auto: false, disabled: false, reason: null });
-  }
-
-  if (can(role, 'supply.complete') && status === 'delivered') {
-    actions.push({ key: 'complete', auto: false, disabled: false, reason: null });
-  }
-
-  // Works with the index row flag and with the show object: both are truthy only when pending.
-  if (can(role, 'supply.confirm_date') && (status === 'under_review' || status === 'endorsed') && request.pending_date_revision) {
-    actions.push({ key: 'confirm_date', auto: false, disabled: false, reason: null });
-  }
-
-  if (can(role, 'supply.cancel_reject') && (status === 'under_review' || status === 'endorsed')) {
-    actions.push({ key: 'reject', auto: false, disabled: false, reason: null, danger: true });
-  }
-
-  if (can(role, 'supply.cancel_reject') && status === 'preparing') {
-    actions.push({ key: 'cancel', auto: false, disabled: false, reason: null, danger: true });
-  }
+  if (can(role, 'supply.cancel_reject') && ['submitted', 'under_review', 'on_hold'].includes(status)) add('reject', { danger: true });
+  if (can(role, 'supply.cancel_reject') && ['waiting_logistics', 'scheduled', 'preparing', 'returned'].includes(status)) add('cancel', { danger: true });
 
   return actions;
 }

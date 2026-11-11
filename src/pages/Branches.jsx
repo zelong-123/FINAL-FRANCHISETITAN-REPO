@@ -794,10 +794,10 @@ export default function Branches() {
       // A new request waits as Submitted until the branch is opened (Seen); endorsing
       // straight from the panel performs that step first, then endorses it.
       if (request.status === 'submitted') {
-        await api.post(`/supply-requests/${request.id}/review`);
+        await api.post(`/supply-requests/${request.id}/start-review`);
       }
-      await api.patch(`/supply-requests/${request.id}/status`, { status: 'endorsed' });
-      setNotice(`${request.request_number} endorsed — Logistics can start preparing it.`);
+      await api.post(`/supply-requests/${request.id}/endorse`);
+      setNotice(`${request.request_number} endorsed — stock reserved and sent to Logistics.`);
       await Promise.all([
         reloadOverview({ silent: true }),
         reloadOperations({ silent: true }),
