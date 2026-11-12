@@ -1016,23 +1016,18 @@ function FranchiseeDashboard() {
 
 const DASH_META = {
   admin: {
-    eyebrow: 'Operational command center',
     subtitle: 'Executive overview of inquiries, applicants, inventory and fulfillment.',
   },
   sales: {
-    eyebrow: 'Sales command center',
     subtitle: 'Leads, endorsements and applicant conversion — the sales pipeline only.',
   },
   marketing: {
-    eyebrow: 'Growth command center',
     subtitle: 'Acquisition channels, lead sources and conversion performance.',
   },
   logistics: {
-    eyebrow: 'Logistics command center',
     subtitle: 'Live supply records, warehouse stock status, and fulfillment analytics.',
   },
   franchisee: {
-    eyebrow: 'Operational command center',
     subtitle: 'Your application, inventory and supply activity in one view.',
   },
 };
@@ -1049,7 +1044,6 @@ export default function Dashboard() {
         <PageHeader
           title={`Good to see you, ${firstName}.`}
           subtitle="Your application, inventory and supply activity in one view."
-          eyebrow="Franchise portal"
         />
         <FranchiseeDashboard />
       </div>
@@ -1061,7 +1055,6 @@ export default function Dashboard() {
       <PageHeader
         title={`Good to see you, ${firstName}.`}
         subtitle={meta.subtitle}
-        eyebrow={meta.eyebrow}
       />
       <DashboardBody role={role} panels={panels} />
     </div>

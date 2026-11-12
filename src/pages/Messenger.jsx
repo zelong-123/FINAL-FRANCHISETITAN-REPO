@@ -101,15 +101,7 @@ export default function Messenger() {
     <div className="operations-page-wrap">
       {/* Page Header */}
       <div className="page-header-row" style={{ marginBottom: '16px' }}>
-        <div>
-          <h1 className="page-main-heading">
-            Department Messenger
-          </h1>
-          <p className="page-sub-heading">
-            Real-time live messaging between Administration, Marketing, Sales, Logistics, and Branch Franchisees.
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
           <div className="inline-flex items-center gap-[5px] text-[11px] font-[500] text-[#22c55e]" style={{ background: 'var(--surface-strong)', padding: '6px 14px', borderRadius: '20px' }}>
             <span className="w-[7px] h-[7px] [background:#22c55e] rounded-[50%] [box-shadow:0_0_8px_rgba(34,_197,_94,_0.7)] [animation:pulse-ring_1.8s_infinite]" />
             <span>Real-time Live • {onlineCount} active now</span>

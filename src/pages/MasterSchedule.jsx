@@ -227,17 +227,6 @@ export default function MasterSchedule({ embedded = false }) {
 
   return (
     <div className={embedded ? "master-schedule block is-embedded" : "page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] master-schedule block"}>
-      <header className="flex flex-wrap items-end justify-between gap-[12px_20px] mb-4 [&_h1]:m-0 [&_h1]:text-text [&_h1]:text-[clamp(24px,_2.4vw,_30px)] [&_h1]:leading-[1.1] [&_h1]:tracking-[-.035em] [&_p]:max-w-[720px] [&_p]:m-[6px_0_0] [&_p]:text-muted [&_p]:text-[12px] [&_p]:leading-[1.55] max-[641px]:later:items-start">
-        <div className="min-w-0 [.master-schedule.is-embedded_&_h2]:m-0 [.master-schedule.is-embedded_&_h2]:text-[20px]">
-          {embedded ? <h2>Master Schedule</h2> : <h1>Master schedule</h1>}
-          <p>Orientation, Product Tasting and Training sessions. The system checks every rule; you decide.</p>
-        </div>
-        {permissions.schedule && (
-          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] flex-[0_0_auto] max-[641px]:w-full" onClick={() => openForm({ mode: 'create' })}>
-            <FaPlus aria-hidden="true" /> Schedule session
-          </button>
-        )}
-      </header>
       <Notice type="error">{error || feed.error}</Notice>
       <Notice type="success">{notice}</Notice>
 
@@ -266,6 +255,11 @@ export default function MasterSchedule({ embedded = false }) {
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-[10px_14px] max-[901px]:justify-between">
+          {permissions.schedule && (
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] flex-[0_0_auto] max-[641px]:w-full" onClick={() => openForm({ mode: 'create' })}>
+              <FaPlus aria-hidden="true" /> Schedule session
+            </button>
+          )}
           {isAdmin && (
             <label className="inline-flex items-center gap-2 text-text-secondary text-[11px] font-[600] cursor-pointer [&_input]:[appearance:none] [&_input]:relative [&_input]:w-[30px] [&_input]:h-[18px] [&_input]:flex-[0_0_auto] [&_input]:m-0 [&_input]:border [&_input]:border-line-strong [&_input]:rounded-[999px] [&_input]:[background:var(--surface-strong)] [&_input]:[transition:background_.18s_ease,_border-color_.18s_ease] [&_input::after]:[content:''] [&_input::after]:absolute [&_input::after]:top-[2px] [&_input::after]:left-[2px] [&_input::after]:w-[12px] [&_input::after]:h-[12px] [&_input::after]:rounded-[50%] [&_input::after]:[background:var(--muted)] [&_input::after]:[transition:transform_.18s_ease,_background_.18s_ease] [&_input:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] [&_input:checked]:[background:color-mix(in_srgb,_var(--accent)_30%,_transparent)] [&_input:checked::after]:[transform:translateX(12px)] [&_input:checked::after]:[background:var(--accent-text)]">
               <input type="checkbox" checked={filters.merge_suggested} onChange={(event) => setFilters({ ...filters, merge_suggested: event.target.checked })} />

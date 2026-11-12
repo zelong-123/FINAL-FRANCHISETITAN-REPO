@@ -6,7 +6,6 @@ import {
   FaCircleExclamation,
   FaClipboardList,
   FaExpand,
-  FaRotate,
   FaStore,
   FaTriangleExclamation,
   FaXmark,
@@ -756,23 +755,6 @@ export default function Branches() {
 
   return (
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] branches-page [--bp-surface:color-mix(in_srgb,_var(--panel)_92%,_transparent)] [--bp-surface-soft:color-mix(in_srgb,_var(--panel-2)_70%,_transparent)] [--bp-border:color-mix(in_srgb,_var(--border)_78%,_transparent)] [--bp-brand:var(--accent)] [--bp-radius:18px] [--bp-ease:cubic-bezier(.22,_.8,_.24,_1)] min-w-0 [overflow-x:clip]">
-      {/* Same compact header as the Inquiries page: title only, no eyebrow gap. */}
-      <div className="[.branches-page_&]:flex [.branches-page_&]:items-center [.branches-page_&]:justify-between [.branches-page_&]:gap-4 [.branches-page_&]:m-[0_0_16px] [.branches-page_&_h1]:m-0 [.branches-page_&_h1]:text-text [.branches-page_&_h1]:text-[2rem] [.branches-page_&_h1]:font-[800] [.branches-page_&_h1]:leading-[1.15] [.branches-page_&_h1]:tracking-[-.045em] max-[761px]:later:[.branches-page_&]:items-start max-[761px]:[.branches-page_&]:flex-col max-[761px]:later:[.branches-page_&]:gap-2 max-[761px]:later:[.branches-page_&_h1]:text-[1.7rem]">
-        <h1>Branches</h1>
-        <div className="flex items-center gap-[10px]">
-          <span className="inline-flex items-center gap-[.45rem] rounded-[999px] p-[.55rem_.8rem] [background:rgba(23,_137,_83,_.1)] text-[#147a4a] text-[.8rem] font-[800] whitespace-nowrap [&::before]:[content:''] [&::before]:w-[.48rem] [&::before]:h-[.48rem] [&::before]:rounded-[50%] [&::before]:[background:currentColor] [&::before]:[box-shadow:0_0_0_.22rem_rgba(23,_137,_83,_.12)]">Live sync · {syncSeconds} seconds</span>
-          <button
-            type="button"
-            className="w-[34px] h-[34px] inline-grid place-items-center p-0 border border-transparent rounded-[10px] text-muted [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:[transform:translateY(-1px)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
-            onClick={() => { void syncNow(); }}
-            aria-label="Refresh branch data"
-            title="Refresh"
-          >
-            <FaRotate aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-
       <Notice type="error">{overview.error || actionError}</Notice>
       <Notice type="success">{notice}</Notice>
 

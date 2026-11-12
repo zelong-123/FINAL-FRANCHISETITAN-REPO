@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FaCheck, FaClipboardCheck, FaClock, FaEye, FaFileCsv, FaFilePdf, FaImage, FaList, FaLock, FaPen, FaPrint, FaStore,
-  FaTableCellsLarge, FaTrashCan, FaUserCheck, FaXmark,
+  FaRotateLeft, FaTableCellsLarge, FaTrashCan, FaUserCheck, FaXmark,
 } from 'react-icons/fa6';
 import {
   API_BASE_URL, api, authToken, firstValidationMessage,
@@ -36,6 +36,9 @@ const statuses = [
 
 // Order matters: it drives the stage stepper.
 const pipelineStages = statuses.filter((item) => item !== 'rejected');
+
+const filterBtn =
+  'h-[40px] px-[14px] inline-flex items-center justify-center gap-2 border border-input-line rounded-[10px] [background:var(--input-bg)] text-text text-[13px] font-[600] cursor-pointer transition-[border-color,background] duration-150 hover:border-line-strong hover:[background:color-mix(in_srgb,_var(--input-bg)_80%,_var(--accent)_20%)] disabled:opacity-50 disabled:cursor-not-allowed';
 
 const TABS = [
   { key: 'pipeline', label: 'Pipeline' },
@@ -1067,16 +1070,20 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                 )}
                 {canReview && returningKey !== def.key && (
                   <span className="flex flex-wrap gap-2">
-                    <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onAccept(def.key)}>Accept</button>
-                    <button type="button" disabled={busy} onClick={() => { setReturningKey(def.key); setReason(''); }}>Return to Sales</button>
+                    <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50" disabled={busy} onClick={() => onAccept(def.key)}>Accept</button>
+                    <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[30px] p-[0_12px] border border-[rgba(251,_191,_36,_.45)] rounded-[8px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[12px] font-[700] [transition:background_.15s_ease] hover:[background:rgba(251,_191,_36,_.16)] disabled:opacity-50" disabled={busy} onClick={() => { setReturningKey(def.key); setReason(''); }}>
+                      <FaRotateLeft aria-hidden="true" /> Return to Sales
+                    </button>
                   </span>
                 )}
                 {canReview && returningKey === def.key && (
                   <span className="grid gap-2">
                     <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
-                    <span className="flex gap-2">
-                      <button type="button" disabled={busy} onClick={() => setReturningKey(null)}>Cancel</button>
-                      <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(def.key, reason.trim()); setReturningKey(null); }}>Return with reason</button>
+                    <span className="flex flex-wrap justify-end gap-2">
+                      <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-[#2b344c] rounded-[8px] [background:transparent] text-[#c9d0e0] text-[12px] font-[600] hover:[background:#1a2133] disabled:opacity-50" disabled={busy} onClick={() => setReturningKey(null)}>Cancel</button>
+                      <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[30px] p-[0_12px] border border-[rgba(251,_191,_36,_.55)] rounded-[8px] [background:#fbbf24] text-[#1a1305] text-[12px] font-[700] hover:[filter:brightness(1.08)] disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(def.key, reason.trim()); setReturningKey(null); }}>
+                        <FaRotateLeft aria-hidden="true" /> Return with reason
+                      </button>
                     </span>
                   </span>
                 )}
@@ -1972,7 +1979,11 @@ export default function Applicants() {
   const { role, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [tab, setTab] = useState('pipeline');
+  // The active tab lives in the URL (?tab=franchisees) so the header breadcrumb can show it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab = TABS.some((item) => item.key === requestedTab) ? requestedTab : 'pipeline';
+  const setTab = (next) => setSearchParams(next === 'pipeline' ? {} : { tab: next });
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -3525,8 +3536,8 @@ export default function Applicants() {
     const focusTab = location.state?.focusTab;
     const focusId = location.state?.focusApplicantId;
     if (!focusTab && !focusId) return undefined;
-    navigate(location.pathname, { replace: true, state: null });
-    if (focusTab && focusTab !== tab) setTab(focusTab);
+    const tabQuery = focusTab && focusTab !== 'pipeline' ? `?tab=${focusTab}` : '';
+    navigate(`${location.pathname}${tabQuery}`, { replace: true, state: null });
     if (focusId && !editing) void loadApplicant(focusId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
@@ -3552,6 +3563,42 @@ export default function Applicants() {
       <PageHeader title="Applicant pipeline" />
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError || remote.error}</Notice>
+
+      {tab !== 'franchisees' && (
+        <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
+          <label>From<input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} /></label>
+          <label>To<input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} /></label>
+          <label>Date basis
+            <select value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
+              <option value="applied">Date Applied</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="updated">Last Updated</option>
+            </select>
+          </label>
+          <label>Brand
+            <select value={filters.brand_id} onChange={(e) => { setPage(1); setFilters({ ...filters, brand_id: e.target.value }); }}>
+              <option value="">All brands</option>
+              {(remote.data?.brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <label>Assigned Sales
+            <select value={filters.assigned_sales_user_id} onChange={(e) => { setPage(1); setFilters({ ...filters, assigned_sales_user_id: e.target.value }); }}>
+              <option value="">Anyone</option>
+              {role === 'sales' && user?.id && <option value={user.id}>Assigned to me</option>}
+              {salesChoices.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              <option value="unassigned">Unassigned</option>
+            </select>
+          </label>
+          {(filters.from || filters.to || filters.brand_id || filters.assigned_sales_user_id) && (
+            <button type="button" onClick={() => { setPage(1); setFilters({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' }); }}>Clear filters</button>
+          )}
+          <span className="flex gap-2 ml-auto">
+            <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportFiltered('csv')}>Export CSV</button>
+            <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportFiltered('pdf')}>Export PDF</button>
+          </span>
+        </div>
+      )}
 
       {/* Unified toolbar: view tabs, search and the status filter share one box. */}
       <div className="unified-toolbar-container flex items-center flex-nowrap gap-[10px] w-full [box-sizing:border-box] m-0 p-[10px_14px] border border-[#252b3b] rounded-[14px] [background:#101421] max-[721px]:later:flex-wrap max-[721px]:later:gap-2 max-[721px]:later:p-[8px_10px] max-[721px]:later:rounded-[12px] [.activities-page_&]:m-0">
@@ -3594,42 +3641,6 @@ export default function Applicants() {
           </div>
         )}
       </div>
-
-      {tab !== 'franchisees' && (
-        <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
-          <label>From<input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} /></label>
-          <label>To<input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} /></label>
-          <label>Date basis
-            <select value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
-              <option value="applied">Date Applied</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="updated">Last Updated</option>
-            </select>
-          </label>
-          <label>Brand
-            <select value={filters.brand_id} onChange={(e) => { setPage(1); setFilters({ ...filters, brand_id: e.target.value }); }}>
-              <option value="">All brands</option>
-              {(remote.data?.brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-          </label>
-          <label>Assigned Sales
-            <select value={filters.assigned_sales_user_id} onChange={(e) => { setPage(1); setFilters({ ...filters, assigned_sales_user_id: e.target.value }); }}>
-              <option value="">Anyone</option>
-              {role === 'sales' && user?.id && <option value={user.id}>Assigned to me</option>}
-              {salesChoices.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              <option value="unassigned">Unassigned</option>
-            </select>
-          </label>
-          {(filters.from || filters.to || filters.brand_id || filters.assigned_sales_user_id) && (
-            <button type="button" onClick={() => { setPage(1); setFilters({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' }); }}>Clear filters</button>
-          )}
-          <span className="flex gap-2 ml-auto">
-            <button type="button" disabled={exporting} onClick={() => void exportFiltered('csv')}><FaFileCsv aria-hidden="true" /> Export CSV</button>
-            <button type="button" disabled={exporting} onClick={() => void exportFiltered('pdf')}><FaFilePdf aria-hidden="true" /> Export PDF</button>
-          </span>
-        </div>
-      )}
 
       {tab === 'franchisees' ? (
         <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
