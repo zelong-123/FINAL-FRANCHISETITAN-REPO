@@ -75,6 +75,7 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
      from applicants ap where ap.inquiry_id = franchise_inquiries.id limit 1) as applicant,
     ${INQUIRY_DAYS_SQL('franchise_inquiries')} as days_in_status,
     (select count(*)::int from follow_ups fu where fu.followable_type = 'inquiry' and fu.followable_id = franchise_inquiries.id) as follow_up_count,
+    (select exists(select 1 from system_notifications sn where sn.user_id = ${Number(user.id)} and sn.read_at is null and sn.type like 'inquiry%' and (sn.data ->> 'inquiry_id')::bigint = franchise_inquiries.id)) as has_unread,
     (select max(fu.next_follow_up_at) from follow_ups fu where fu.followable_type = 'inquiry' and fu.followable_id = franchise_inquiries.id
        and fu.id = (select max(x.id) from follow_ups x where x.followable_type = 'inquiry' and x.followable_id = franchise_inquiries.id)) as next_follow_up_at`;
   const columnParams: unknown[] = [];
@@ -420,26 +421,6 @@ inquiryRoutes.post('/inquiries/:inquiry/convert', adminOnly, async (c) => {
   return ok(c, { ...applicantJson(applicant), preferred_brand: brand ?? null, inquiry: await fresh(db, id) }, 'Inquiry converted to applicant.', 201);
 });
 
-inquiryRoutes.post('/inquiries/:inquiry/unconvert', adminOnly, async (c) => {
-  const { db } = c.get('deps');
-  const id = routeId(c, 'inquiry');
-  const inquiry = await loadInquiry(db, id);
-  await ensureVisible(c, db, inquiry);
-  ensureNotLockedForMarketing(c, inquiry);
-  const [applicant] = await db.query(`select * from applicants where inquiry_id = $1 limit 1`, [id]);
-  if (!applicant) return ok(c, inquiry, 'This inquiry is not converted.');
-  if (applicant.status !== 'converted') fail('inquiry', 'This applicant has already progressed past the converted stage and can no longer be unconverted.');
-
-  const known = ['new', 'contacted', 'endorsed', 'converted', 'closed', 'rejected'];
-  const restoreTo = known.includes(inquiry.converted_from_status) ? inquiry.converted_from_status : (inquiry.endorsed_to_user_id ? 'endorsed' : 'new');
-  await db.tx(async (tx) => {
-    await tx.query(`delete from applicants where id = $1`, [applicant.id]);
-    await updateInquiry(tx, inquiry, { status: restoreTo, converted_from_status: null });
-  });
-  await audit(c, db, 'inquiry.unconverted', { type: INQUIRY_MODEL, id }, null, { removed_applicant_id: applicant.id });
-  return ok(c, await withRelations(db, id), 'Conversion undone. The applicant record was removed.');
-});
-
 inquiryRoutes.post('/inquiries/:inquiry/reject', adminOnly, async (c) => {
   const { db } = c.get('deps');
   const id = routeId(c, 'inquiry');
@@ -594,7 +575,7 @@ archiveRoutes.post('/archive/inquiries/:id/purge', adminOnly, async (c) => {
   );
   requireFound(inquiry);
   if ((await db.query(`select 1 from applicants where inquiry_id = $1 limit 1`, [id])).length) {
-    fail('inquiry', 'This inquiry was converted to an applicant. Restore it and use "Undo convert" first, then archive it again.');
+    fail('inquiry', 'This inquiry was converted to an applicant, so it cannot be permanently deleted.');
   }
   await db.tx(async (tx) => {
     await tx.query(`delete from inquiry_archive_logs where franchise_inquiry_id = $1`, [id]);

@@ -163,7 +163,6 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const actionMessages = {
   endorse: 'Inquiry endorsed to the next team successfully.',
   convert: 'Inquiry converted into an applicant successfully.',
-  unconvert: 'Conversion undone. The applicant record was removed.',
   archive: 'Inquiry archived.',
   restore: 'Inquiry restored to the pipeline.',
   delete: 'Inquiry deleted.',
@@ -174,11 +173,6 @@ const actionCopy = {
     title: 'Convert inquiry to applicant?',
     button: 'Convert inquiry',
     body: 'This creates an applicant record and moves the lead into the franchise application pipeline.',
-  },
-  unconvert: {
-    title: 'Undo this conversion?',
-    button: 'Undo conversion',
-    body: 'This removes the applicant record created from this lead and returns the inquiry to the pipeline.',
   },
   archive: {
     title: 'Archive this inquiry?',
@@ -700,7 +694,14 @@ export default function Inquiries() {
   useEffect(() => {
     if (!selectedId) return;
     void api.post('/notifications/mark-seen', { record_type: 'inquiry', record_id: selectedId })
-      .then(() => window.dispatchEvent(new Event('herald:notifications-updated')))
+      .then(() => {
+        // Clear this row's red dot in the same beat as the sidebar and bell.
+        remote.setData?.((current) => current && ({
+          ...current,
+          inquiries: current.inquiries.map((row) => (String(row.id) === String(selectedId) ? { ...row, has_unread: false } : row)),
+        }));
+        window.dispatchEvent(new Event('herald:notifications-updated'));
+      })
       .catch(() => {});
   }, [selectedId]);
 
@@ -996,7 +997,7 @@ export default function Inquiries() {
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] inquiries-page later-2:[&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! [&_.eyebrow]:hidden! later-3:[&>:empty]:hidden! [&_.toolbar]:m-0! [&_.toolbar]:p-[10px_12px] [&_.toolbar]:items-center [&_.data-panel]:m-0! [&.page-container_.toolbar]:[--toolbar-control-h:48px] [&.page-container_.toolbar]:flex! [&.page-container_.toolbar]:items-center! [&.page-container_.toolbar]:gap-[10px] [&.page-container_.toolbar>input]:min-w-0 [&.page-container_.toolbar>input]:flex-[1_1_auto] [&.page-container_.toolbar>input]:h-[var(--toolbar-control-h)]! [&.page-container_.toolbar>input]:min-h-[var(--toolbar-control-h)]! [&.page-container_.toolbar>input]:[box-sizing:border-box] [&.page-container_.toolbar_select]:h-[var(--toolbar-control-h)]! [&.page-container_.toolbar_select]:min-h-[var(--toolbar-control-h)]! [&.page-container_.toolbar_select]:[box-sizing:border-box] [&.page-container_.toolbar_button.tab]:h-[var(--toolbar-control-h)]! [&.page-container_.toolbar_button.tab]:min-h-[var(--toolbar-control-h)]! [&.page-container_.toolbar_button.tab]:[box-sizing:border-box] [&.page-container_.toolbar_button.tab]:inline-flex! [&.page-container_.toolbar_button.tab]:items-center [&.page-container_.toolbar_button.tab]:justify-center [&.page-container_.toolbar_button.tab]:gap-2 [&.page-container_.toolbar_button.tab]:flex-none [&.page-container_.toolbar_button.tab]:p-[0_20px]! [&.page-container_.toolbar_button.tab]:border! [&.page-container_.toolbar_button.tab]:border-[#1f2842]! [&.page-container_.toolbar_button.tab]:rounded-[12px]! [&.page-container_.toolbar_button.tab]:[background-color:#161d30]! [&.page-container_.toolbar_button.tab]:text-[#fff]! [&.page-container_.toolbar_button.tab]:text-[1rem]! [&.page-container_.toolbar_button.tab]:font-[600]! [&.page-container_.toolbar_button.tab]:whitespace-nowrap [&.page-container_.toolbar_button.tab]:cursor-pointer [&.page-container_.toolbar_button.tab]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease,_color_0.2s_ease] [&.page-container_.toolbar_button.tab_svg]:m-0 [&.page-container_.toolbar_button.tab_svg]:text-[1rem] [&.page-container_.toolbar_button.tab:hover]:[background-color:rgba(123,_136,_255,_0.14)]! [&.page-container_.toolbar_button.tab:hover]:border-[rgba(123,_136,_255,_0.5)]! later:[&.page-container_.toolbar_button.tab.active]:[background-color:rgba(123,_136,_255,_0.22)]! later:[&.page-container_.toolbar_button.tab.active]:border-[#7b88ff]! [&.page-container_.toolbar_button.tab:focus-visible]:[outline:2px_solid_#7b88ff] [&.page-container_.toolbar_button.tab:focus-visible]:[outline-offset:2px] max-[721px]:[&.page-container_.toolbar]:flex-wrap max-[721px]:later:[&.page-container_.toolbar>input]:flex-[1_1_100%] max-[721px]:later:[&.page-container_.toolbar_button.tab]:flex-[1_1_100%]">
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError || remote.error}</Notice>
-      <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_input]:h-[40px] [&_input]:p-[0_10px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_input]:text-text" aria-label="Inquiry date range">
+      <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_label]:text-[12px] [&_label]:font-[700] [&_input]:h-[40px] [&_input]:p-[0_10px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_input]:text-text" aria-label="Inquiry date range">
         <label>From (inquiry date)<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} /></label>
         <label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} /></label>
         {(dateFrom || dateTo) && (
@@ -1095,7 +1096,7 @@ export default function Inquiries() {
                 }}
               >
                 {/* No ID in the table: the Lead ID lives in the inquiry panel (and still works in search). */}
-                <td><strong className="[.data-panel_.table-wrap_table_tbody_td_&]:block [.data-panel_.table-wrap_table_tbody_td_&]:text-text! [.data-panel_.table-wrap_table_tbody_td_&]:text-[1rem]! [.data-panel_.table-wrap_table_tbody_td_&]:font-[600]! [.data-panel_.table-wrap_table_tbody_td_&]:leading-[1.3]! [.data-panel_.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.data-panel_.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere] [.table-wrap_table_tbody_td_&]:block [.table-wrap_table_tbody_td_&]:text-text! [.table-wrap_table_tbody_td_&]:text-[1rem]! [.table-wrap_table_tbody_td_&]:font-[600]! [.table-wrap_table_tbody_td_&]:leading-[1.3]! [.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere]">{leadDisplayName(inquiry)}</strong></td>
+                <td><strong className="[.data-panel_.table-wrap_table_tbody_td_&]:block [.data-panel_.table-wrap_table_tbody_td_&]:text-text! [.data-panel_.table-wrap_table_tbody_td_&]:text-[1rem]! [.data-panel_.table-wrap_table_tbody_td_&]:font-[600]! [.data-panel_.table-wrap_table_tbody_td_&]:leading-[1.3]! [.data-panel_.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.data-panel_.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere] [.table-wrap_table_tbody_td_&]:block [.table-wrap_table_tbody_td_&]:text-text! [.table-wrap_table_tbody_td_&]:text-[1rem]! [.table-wrap_table_tbody_td_&]:font-[600]! [.table-wrap_table_tbody_td_&]:leading-[1.3]! [.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere]"><span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>{inquiry.has_unread && <span aria-label="Unread" style={{ display: 'inline-block', width: 7, height: 7, flex: '0 0 7px', borderRadius: '50%', background: '#e5484d', boxShadow: '0 0 0 3px rgba(229, 72, 77, 0.14)' }} />}<span>{leadDisplayName(inquiry)}</span></span></strong></td>
                 <td>
                   {inquiry.email || '—'}
                   <small>{inquiry.phone || '—'}</small>
@@ -1120,17 +1121,13 @@ export default function Inquiries() {
                         <span className="muted-note text-muted text-[8px] leading-[1.6]">Locked</span>
                       ) : (
                       <>
-                      {/* Slot 1: Endorse / Convert / Undo convert (always the same position) */}
+                      {/* Slot 1: Endorse / Convert (always the same position) */}
                       <div className="action-slot">
                         {canEndorse && !['endorsed', 'converted'].includes(inquiry.status) && (
                           <button onClick={() => setPendingAction({ type: 'endorse', inquiry })}>Endorse</button>
                         )}
                         {canConvert && inquiry.status !== 'converted' && (
                           <button onClick={() => setPendingAction({ type: 'convert', inquiry })}>Convert</button>
-                        )}
-                        {/* Undo a conversion that has not progressed past the first stage. */}
-                        {canConvert && inquiry.status === 'converted' && inquiry.applicant?.status === 'converted' && (
-                          <button onClick={() => setPendingAction({ type: 'unconvert', inquiry })}>Undo convert</button>
                         )}
                       </div>
 

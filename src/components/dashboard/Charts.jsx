@@ -588,7 +588,7 @@ const TRACKER_CARDS = [
 
 export function SupplyStageTracker({ data, loading, error }) {
   if (loading) return <LoadingState label="Loading supply pipeline…" />;
-  if (error) return <Notice type="error">{error}</Notice>;
+  if (error) return <Notice type="error" inline>{error}</Notice>;
 
   const stages = data?.stages || [];
   const kpis = data?.kpis || {};

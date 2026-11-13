@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FaCircleCheck,
@@ -15,8 +15,38 @@ const noticeIcons = {
   info: FaCircleInfo,
 };
 
-export function Notice({ type = 'info', children }) {
+// Error and success notices show as toasts at the bottom-right of the screen so they
+// stay visible above an open modal. Errors stay until closed; success hides after 8s.
+// `inline` keeps the notice in place (used for full-page load errors).
+export function Notice({ type = 'info', children, inline = false }) {
   if (!children) return null;
+  const toast = !inline && type !== 'info';
+  if (!toast) return <InlineNotice type={type}>{children}</InlineNotice>;
+  return <ToastNotice key={`${type}:${String(children)}`} type={type}>{children}</ToastNotice>;
+}
+
+function ToastNotice({ type, children }) {
+  const [closed, setClosed] = useState(false);
+
+  useEffect(() => {
+    if (type !== 'success') return undefined;
+    const timer = window.setTimeout(() => setClosed(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [type]);
+
+  const Icon = noticeIcons[type] || FaCircleInfo;
+  if (closed) return null;
+  return createPortal(
+    <div style={{ zIndex: 2147483600 }} className={`fixed right-[20px] bottom-[20px] max-w-[min(420px,_calc(100vw_-_40px))] flex items-start gap-[10px] p-[12px_14px] border rounded-[12px] text-[13px] leading-[1.45] [box-shadow:var(--shadow-md)] [animation:noticeIn_.25s_ease_both] ${type === 'error' ? 'border-[rgba(255,_107,_107,_.45)] text-[#ff9ca3] [background:#22151a]' : 'border-[rgba(69,_217,_145,_.45)] text-[#45d991] [background:#0f1f19]'}`} role={type === 'error' ? 'alert' : 'status'}>
+      <Icon aria-hidden="true" className="flex-[0_0_auto] mt-[3px]" />
+      <span className="flex-1 min-w-0">{children}</span>
+      <button type="button" aria-label="Close notification" className="flex-[0_0_auto] bg-transparent border-0 p-0 text-inherit cursor-pointer opacity-70 hover:opacity-100" onClick={() => setClosed(true)}><FaXmark aria-hidden="true" /></button>
+    </div>,
+    document.body,
+  );
+}
+
+function InlineNotice({ type, children }) {
   const Icon = noticeIcons[type] || FaCircleInfo;
   return (
     <div className={`flex items-start gap-[9px] m-[0_0_14px] p-[11px_13px] border border-line rounded-[12px] text-text-secondary [background:var(--surface-subtle)] text-[9px] leading-[1.55] [animation:noticeIn_.25s_ease_both] [&_svg]:flex-[0_0_auto] [&_svg]:mt-[2px] notice-${type}`} role={type === 'error' ? 'alert' : 'status'}>

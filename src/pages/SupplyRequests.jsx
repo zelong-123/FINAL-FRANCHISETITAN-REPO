@@ -27,15 +27,9 @@ const TABS = [
   ['scheduled_preparing', 'Scheduled / Preparing'], ['dispatched', 'Dispatched'], ['discrepancy', 'Discrepancy'],
   ['completed', 'Completed'], ['closed', 'Closed'],
 ];
+/** Overdue is a filter on open requests, so it lives here as its own category. */
+const OVERDUE_TAB = { key: 'overdue', label: 'Overdue', target: { tab: 'all', overdue: '1' } };
 const SORTS = [['priority', 'Priority'], ['newest', 'Date requested: newest'], ['oldest', 'Date requested: oldest'], ['target', 'Target delivery date'], ['branch', 'Branch A–Z'], ['brand', 'Brand']];
-const KPIS = [
-  ['needs_action', 'Needs my action', (role) => `Waiting for ${role === 'logistics' ? 'Logistics' : 'Admin'}`, { tab: 'needs_action' }],
-  ['overdue', 'Overdue', () => 'Past a working-day deadline', { tab: 'all', overdue: '1' }],
-  ['on_hold', 'On hold', () => 'Waiting for restock', { tab: 'on_hold' }],
-  ['in_transit', 'In transit', () => 'Dispatched or delivered', { tab: 'dispatched' }],
-  ['discrepancies', 'Discrepancies', () => 'For Admin review', { tab: 'discrepancy' }],
-];
-const METRIC = "relative min-h-[118px] flex flex-col justify-between overflow-hidden p-[16px] border border-line rounded-[18px] text-left cursor-pointer [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease] hover:[transform:translateY(-2px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_30%,_var(--border))] focus-visible:[outline:2px_solid_var(--accent)] [&_small]:text-muted [&_small]:text-[11px] [&_small]:font-[650] [&_strong]:block [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_30px)] [&_strong]:leading-[1.05] [&_strong]:tracking-[-.04em]";
 const EMPTY_FILTERS = { search: '', brand_id: '', urgency: '', from: '', to: '', sort: 'priority' };
 /** What an empty tab means, in words. */
 const EMPTY = {
@@ -262,21 +256,6 @@ export default function SupplyRequests() {
         </div>
       )}
 
-      <section className="grid grid-cols-5 gap-[12px] mb-[16px] max-[1100px]:grid-cols-3 max-[640px]:grid-cols-2" aria-label="Key figures">
-        {KPIS.map(([key, label, caption, target]) => {
-          const active = target.tab === tab && Boolean(target.overdue) === overdue;
-          const loadingFigures = !meta;
-          const value = kpis[key] ?? 0;
-          return (
-            <button key={key} type="button" aria-pressed={active} className={`${METRIC} ${active ? '!border-accent [box-shadow:0_0_0_1px_var(--accent)]' : ''}`} onClick={() => update({ tab: target.tab, overdue: target.overdue || '' })}>
-              <small>{label}</small>
-              <strong className={key === 'overdue' && value ? '!text-danger-text' : key === 'needs_action' && value ? '!text-accent-text' : ''}>{loadingFigures ? '—' : formatNumber(value)}</strong>
-              <small>{caption(role)}</small>
-            </button>
-          );
-        })}
-      </section>
-
       <div className="flex flex-wrap gap-[6px] pb-[4px] mb-[10px]" role="tablist" aria-label="Request tabs">
         {TABS.map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key && !overdue}
@@ -286,7 +265,12 @@ export default function SupplyRequests() {
             {label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(tabs[key] ?? 0)}</span>
           </button>
         ))}
-        {overdue && <span className="self-center"><Chip tone="danger">Overdue only <button type="button" aria-label="Show all, not only overdue" className="ml-[2px] cursor-pointer [background:none] border-0 text-inherit" onClick={() => update({ overdue: '' })}><FaXmark /></button></Chip></span>}
+        <button type="button" role="tab" aria-selected={overdue}
+          className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${overdue ? 'border-danger text-text [background:color-mix(in_srgb,_var(--danger)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
+          onClick={() => update(OVERDUE_TAB.target)}
+        >
+          {OVERDUE_TAB.label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(kpis.overdue ?? 0)}</span>
+        </button>
       </div>
 
       <div className="flex flex-wrap gap-[8px] items-end mb-[12px]">

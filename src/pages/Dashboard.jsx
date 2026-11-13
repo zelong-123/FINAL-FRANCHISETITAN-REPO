@@ -67,7 +67,7 @@ function PanelShell({ title, subtitle, actions, children }) {
  */
 function PanelBody({ loading, error, empty, children }) {
   if (loading) return <LoadingState label="Loading panel…" />;
-  if (error) return <Notice type="error">{error}</Notice>;
+  if (error) return <Notice type="error" inline>{error}</Notice>;
   if (empty) return empty;
   return children;
 }
@@ -986,7 +986,7 @@ function FranchiseeDashboard() {
     return { applicants: applicants.data, inventories: inventories.data, requests: requests.data };
   }, []);
   if (loading) return <LoadingState label="Loading franchise overview…" />;
-  if (error) return <Notice type="error">{error}</Notice>;
+  if (error) return <Notice type="error" inline>{error}</Notice>;
   const critical = data.inventories.filter((item) => item.stock_status === 'critical').length;
   const openRequests = data.requests.filter((item) => !['completed', 'cancelled', 'rejected'].includes(item.status)).length;
 

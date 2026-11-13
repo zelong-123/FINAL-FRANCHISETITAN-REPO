@@ -106,7 +106,7 @@ test('reassignment: Admin only, needs a reason, moves every Sales right and is l
   assert.equal(moved.status, 200);
   assert.equal(moved.json.data.assigned_sales.id, backupUser.id);
 
-  const submit = (token: string) => call('POST', `${path}/requirements/business_background`, { token, form: requirementForm('business_background') });
+  const submit = (token: string) => call('POST', `${path}/requirements/application_form`, { token, form: requirementForm('application_form') });
   assert.equal((await submit(sales)).status, 403, 'the old Sales user lost the applicant');
   assert.equal((await submit(backup)).status, 201, 'the new one has it');
 
@@ -121,13 +121,13 @@ test('reassignment: Admin only, needs a reason, moves every Sales right and is l
 test('an unassigned (legacy) applicant blocks every Sales action until Admin assigns one', async () => {
   const [legacy] = await q(`insert into applicants (full_name, status, application_date) values ('Legacy Person', 'converted', '2026-01-01') returning id`);
   const path = `/applicants/${legacy.id}`;
-  const blocked = await call('POST', `${path}/requirements/business_background`, { token: sales, form: requirementForm('business_background') });
+  const blocked = await call('POST', `${path}/requirements/application_form`, { token: sales, form: requirementForm('application_form') });
   assert.equal(blocked.status, 403);
   assert.equal(blocked.json.message, 'Admin must assign a Sales user first.');
   assert.equal((await call('GET', `/applicants?assigned_sales_user_id=unassigned`, { token: admin })).json.data.some((a: any) => a.id === legacy.id), true);
   // A first assignment does not need a reason.
   assert.equal((await call('POST', `${path}/assign-sales`, { token: admin, body: { assigned_sales_user_id: salesUser.id } })).status, 200);
-  assert.equal((await call('POST', `${path}/requirements/business_background`, { token: sales, form: requirementForm('business_background') })).status, 201);
+  assert.equal((await call('POST', `${path}/requirements/application_form`, { token: sales, form: requirementForm('application_form') })).status, 201);
 });
 
 test('LOI: stage-gated, franchisee refused, Admin only verifies, files locked once verified', async () => {

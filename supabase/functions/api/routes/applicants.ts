@@ -377,6 +377,13 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
        case when d.removed_at is not null then 'removed' when d.replaced_at is not null then 'replaced' else 'current' end as file_state
      from documents d where d.documentable_type = $1 and d.documentable_id = $2 order by d.id`, [APPLICANT_MODEL, id],
   );
+  const [statusLabelValue, stateValue, brandValue, requirementsValue, followUpsValue] = await Promise.all([
+    statusLabel(db, a),
+    scheduleState(db, a),
+    brandPayload(db, a),
+    name === 'franchisee' ? null : requirementsPayload(db, a, user),
+    name === 'franchisee' ? [] : followUpsOf(db, 'applicant', id),
+  ]);
   const payload: Row = {
     ...applicantJson(row),
     schedules: schedules.map(scheduleJson),
@@ -384,11 +391,11 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
     documents,
     milestone_state: milestoneState(a),
     lead: row.inquiry ? { id: row.inquiry.id, lead_code: row.inquiry.lead_code } : null,
-    status_label: await statusLabel(db, a),
-    ...(await scheduleState(db, a)),
-    brand_confirmation: await brandPayload(db, a),
-    requirements: name === 'franchisee' ? null : await requirementsPayload(db, a, user),
-    follow_ups: name === 'franchisee' ? [] : await followUpsOf(db, 'applicant', id),
+    status_label: statusLabelValue,
+    ...stateValue,
+    brand_confirmation: brandValue,
+    requirements: requirementsValue,
+    follow_ups: followUpsValue,
     ...(name === 'franchisee' ? {} : applicantMonitor({ ...a, days_in_stage: (await db.query(`select ${STAGE_DAYS_SQL('x')} as d from applicants x where x.id = $1`, [id]))[0].d })),
   };
   if (name !== 'franchisee') payload.schedule_sessions = await sessionsFor(db, id);

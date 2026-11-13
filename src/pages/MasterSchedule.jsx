@@ -304,6 +304,7 @@ export default function MasterSchedule({ embedded = false }) {
           slotMinTime="08:00:00"
           slotMaxTime="19:00:00"
           allDaySlot={false}
+          slotEventOverlap={false}
           nowIndicator
           navLinks
           dayMaxEvents={3}
@@ -315,6 +316,8 @@ export default function MasterSchedule({ embedded = false }) {
             if (info.isMirror) return;
             info.el.dataset.sessionId = info.event.id;
             info.el.title = eventTooltip(info.event.extendedProps.session);
+            // Status accent on the left edge; the card tint stays the same.
+            info.el.style.borderLeftColor = STATUS_COLORS[info.event.extendedProps.session.status] || '#6b7488';
             eventEls.current.set(info.event.id, info.el);
           }}
           eventWillUnmount={(info) => {

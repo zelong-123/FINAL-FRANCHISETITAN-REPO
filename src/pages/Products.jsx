@@ -3,7 +3,7 @@ import { FaImage, FaPlus, FaTrashCan, FaUtensils } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatNumber } from '../lib/format';
-import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, StatusBadge } from '../components/ApiUi';
+import { EmptyState, Field, LoadingState, Modal, Notice, StatusBadge } from '../components/ApiUi';
 import ProductImage from '../components/ProductImage';
 import SlidingPagination from '../components/SlidingPagination';
 import { PRODUCT_IMAGE_ACCEPT, productImageError } from '../lib/productImage';
@@ -20,7 +20,6 @@ export default function Products() {
   const [brandId, setBrandId] = useState('');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
   const [brands, setBrands] = useState([]);
   const [editing, setEditing] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -35,9 +34,8 @@ export default function Products() {
       per_page: PAGE_SIZE,
       ...(brandId ? { brand_id: brandId } : {}),
       ...(query ? { search: query } : {}),
-      ...(showInactive ? { include_inactive: 1 } : {}),
     }),
-    [page, brandId, query, showInactive],
+    [page, brandId, query],
   );
   const { reload } = remote;
 
@@ -59,16 +57,6 @@ export default function Products() {
 
   return (
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] products-page [&_td_small]:block [&_td_small]:mt-[2px] [&_td_small]:text-muted [&_.ghost-button_svg]:w-[11px] [&_.ghost-button_svg]:h-[11px] later-2:[&_td_small]:text-[13px]">
-      <PageHeader
-        title="Products"
-        subtitle="Create the products each brand can produce: picture, status and the recipe of warehouse stock items."
-        actions={(
-          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => { setEditing(null); setActionError(''); setNotice(''); setFormOpen(true); }}>
-            <FaUtensils aria-hidden="true" /> Add product
-          </button>
-        )}
-      />
-
       <Notice type="success">{notice}</Notice>
       <Notice type="error">{remote.error || actionError}</Notice>
 
@@ -85,10 +73,9 @@ export default function Products() {
             placeholder="Search product name or SKU"
             aria-label="Search products"
           />
-          <label className="inline-flex items-center gap-[7px] text-text-secondary whitespace-nowrap later:text-[13px] later:font-[600]">
-            <input type="checkbox" checked={showInactive} onChange={(event) => { setShowInactive(event.target.checked); setPage(1); }} />
-            Show inactive
-          </label>
+          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[40px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] whitespace-nowrap [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)]" onClick={() => { setEditing(null); setActionError(''); setNotice(''); setFormOpen(true); }}>
+            <FaUtensils aria-hidden="true" /> Add product
+          </button>
         </div>
 
         {remote.loading && !products.length ? <LoadingState label="Loading products…" /> : products.length === 0 ? (
