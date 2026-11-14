@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   FaArrowRight,
   FaChartLine,
@@ -145,7 +145,7 @@ export default function Log() {
 
             <div className="mt-[5px] flex items-center justify-between">
               <label className={fieldLabel} htmlFor="password">Password</label>
-              <Link to="/forgot-password" className="text-[11px] font-[650] text-accent-text hover:underline">Forgot password?</Link>
+              <span className="text-[10px] text-muted">Secure access</span>
             </div>
             <div className="relative">
               <input
