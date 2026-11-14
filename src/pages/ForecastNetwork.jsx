@@ -64,7 +64,6 @@ export default function ForecastNetwork() {
       <PageHeader
         title="Network requirement"
         subtitle="Every branch's estimated need next to the warehouse stock that has to cover it."
-        eyebrow="Analytics and Forecasting"
       />
 
       <p className="flex items-center gap-2 m-[0_0_14px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>

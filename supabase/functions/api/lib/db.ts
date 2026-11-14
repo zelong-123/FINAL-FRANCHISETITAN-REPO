@@ -19,7 +19,12 @@ const jsonText = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
  * Laravel: ids and counts are numbers, decimals stay exact strings, dates stay YYYY-MM-DD.
  * prepare:false because Supabase's pooler runs in transaction mode.
  * ssl:false because postgres.js's TLS upgrade throws ERR_NOT_IMPLEMENTED
+<<<<<<< HEAD
+ * (LibuvStreamWrap.prototype.useUserBuffer) in the Edge runtime. Same as the live
+ * function (v24), with postgres@3.4.4 (deno.json).
+=======
  * (LibuvStreamWrap.prototype.useUserBuffer) in the Edge runtime.
+>>>>>>> 295840d4b4ca5361cce91c6dbc49ce1df995786d
  */
 export function postgresDb(postgres: any, url: string, options: { max?: number } = {}): Db & { close(): Promise<void> } {
   const sql = postgres(url, {

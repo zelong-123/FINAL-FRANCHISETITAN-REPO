@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "node --no-warnings tools/dev-api.mjs",
+    "dev:api:demo": "node --no-warnings tools/dev-api.mjs --supply-demo",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -43,7 +44,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "hono": "^4.13.16",
-    "postgres": "^4.1.0",
+    "postgres": "3.4.4",
     "tailwindcss": "^4.1.13",
     "tsx": "^4.23.15",
     "vite": "^7.3.1"

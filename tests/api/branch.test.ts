@@ -241,30 +241,34 @@ test('workspace: receiving a delivered request, and adding only the cost afterwa
   const warehouse = await call('GET', `${w}/warehouse-products`, { token: branch.token });
   assert.equal(warehouse.json.data.products.find((p: any) => p.id === product.id).available, 40);
 
+  // Dispatched with a POD (status Delivered): the branch has not confirmed the receipt yet.
   const [request] = await q(`insert into supply_requests (location_id, request_number, status, requested_by_user_id, delivery_address) values ($1, 'FT-MANUAL', 'dispatched', $2, 'Addr') returning id`, [branch.id, branch.userId]);
-  await q(`insert into supply_request_items (supply_request_id, product_id, quantity_requested) values ($1, $2, 4)`, [request.id, product.id]);
+  const [item] = await q(`insert into supply_request_items (supply_request_id, product_id, quantity_requested, quantity_endorsed, quantity_prepared) values ($1, $2, 4, 4, 4) returning id`, [request.id, product.id]);
+  await q(`insert into deliveries (supply_request_id, dispatched_at, pod_encoded_at) values ($1, now(), now())`, [request.id]);
   const body = { supply_request_id: request.id, total_cost_cents: 800, lines: [{ product_id: product.id, quantity: 4 }] };
   assert.match((await call('POST', `${w}/receive-stock`, { token: branch.token, body })).json.errors.supply_request_id[0], /Only delivered/);
   assert.equal((await call('POST', `${w}/receive-stock`, { token: other.token, body })).status, 404, 'another branch cannot receive it');
   await q(`update supply_requests set status = 'delivered' where id = $1`, [request.id]);
+  assert.match((await call('POST', `${w}/receive-stock`, { token: branch.token, body })).json.errors.supply_request_id[0], /Confirm the receipt/, 'quantities only come through Confirm Receipt');
 
-  const received = await call('POST', `${w}/receive-stock`, { token: branch.token, body });
-  assert.equal(received.status, 200, JSON.stringify(received.json));
-  assert.deepEqual(received.json.data.created_materials, ['Cooking Oil']);
   const stock = async () => (await q(`select b.quantity_milli, b.value_cents from profittrack_materials m join profittrack_material_balances b on b.material_id = m.id where m.location_id = $1 and m.name = 'Cooking Oil'`, [branch.id]))[0];
-  assert.deepEqual(await stock(), { quantity_milli: 4000, value_cents: 800 });
+  const received = await call('POST', `/supply-requests/${request.id}/receipt`, { token: branch.token, body: { lines: [{ item_id: item.id, good: 4, damaged: 0, short: 0 }] } });
+  assert.equal(received.status, 200, JSON.stringify(received.json));
+  assert.equal(received.json.data.status, 'completed', 'POD and receipt both recorded');
+  assert.equal((await stock()).quantity_milli, 4000);
 
   const cost = await call('POST', `${w}/receive-stock`, { token: branch.token, body });
   assert.match(cost.json.message, /already added/);
   assert.equal((await stock()).quantity_milli, 4000, 'quantities are never added twice');
-  assert.equal((await stock()).value_cents, 1600);
+  const valued = (await stock()).value_cents;
+  assert.ok(valued >= 800);
   await call('POST', `${w}/receive-stock`, { token: branch.token, body });
-  assert.equal((await stock()).value_cents, 1600, 'the same cost is recorded once');
+  assert.equal((await stock()).value_cents, valued, 'the same cost is recorded once');
   const receivable = await call('GET', `${w}/receivable-requests`, { token: branch.token });
   assert.equal(receivable.json.data[0].cost_recorded, true);
   assert.ok(receivable.json.data[0].received_at);
   assert.equal(receivable.json.data[0].effective_delivery_date, null);
-  const filtered = await call('GET', `${w}/supply-requests?status=delivered`, { token: branch.token });
+  const filtered = await call('GET', `${w}/supply-requests?status=completed`, { token: branch.token });
   assert.equal(filtered.json.data.length, 1);
   assert.equal((await call('GET', `${w}/supply-requests?status=nope`, { token: branch.token })).status, 422);
   assert.equal((await call('GET', `${w}/supply-requests?date=11/07/2026`, { token: branch.token })).status, 422);

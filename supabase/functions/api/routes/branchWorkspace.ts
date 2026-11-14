@@ -12,6 +12,7 @@ import * as ledger from '../services/ledger.ts';
 import { readCsv, warehouse } from '../services/inventory.ts';
 import { receiveLines, recordCost, requirementsFor, resolveBrandProduct, syncRecipe } from '../services/branchStock.ts';
 import { notifyRoles } from '../services/notifications.ts';
+import { DELIVERED_ON, sqlList, STATUSES as SUPPLY_STATUSES } from '../services/supplyStatus.ts';
 
 export const workspaceRoutes = new Hono<AppEnv>();
 const anyBranchRole = role('admin', 'logistics', 'franchisee');
@@ -61,7 +62,7 @@ workspaceRoutes.get('/branch/workspace/warehouse-products', anyBranchRole, async
 workspaceRoutes.get('/branch/workspace/supply-requests', anyBranchRole, async (c) => {
   const { db } = c.get('deps');
   const loc = await location(c);
-  const v = await validate(db, c.req.query(), { date: ['nullable', 'date_format:Y-m-d'], status: ['nullable', 'in:draft,submitted,under_review,endorsed,rejected,preparing,dispatched,delivered,completed,cancelled'] });
+  const v = await validate(db, c.req.query(), { date: ['nullable', 'date_format:Y-m-d'], status: ['nullable', `in:${SUPPLY_STATUSES.join(',')}`] });
   const clauses = ['sr.location_id = $1'];
   const params: unknown[] = [loc.id];
   if (!boolParam(c.req.query('include_draft'))) clauses.push(`sr.status <> 'draft'`);
@@ -80,7 +81,7 @@ workspaceRoutes.get('/branch/workspace/receivable-requests', anyBranchRole, asyn
   const { db } = c.get('deps');
   const loc = await location(c);
   const rows = await db.query(
-    `select sr.*, ${EFFECTIVE_DATE('sr')}, ${ITEMS('sr')} from supply_requests sr where sr.location_id = $1 and sr.status in ('delivered', 'completed') order by sr.id desc limit 50`, [loc.id],
+    `select sr.*, ${EFFECTIVE_DATE('sr')}, ${ITEMS('sr')} from supply_requests sr where sr.location_id = $1 and sr.status in (${sqlList(DELIVERED_ON)}) order by sr.id desc limit 50`, [loc.id],
   );
   const keys = await db.query(`select idempotency_key from profittrack_material_movements where location_id = $1 and idempotency_key like 'delivery-cost-%'`, [loc.id]);
   const costed = new Set(keys.map((k) => Number(String(k.idempotency_key).split('-')[2])));
@@ -103,7 +104,10 @@ workspaceRoutes.post('/branch/workspace/receive-stock', franchisee, async (c) =>
   const total = Number(v.total_cost_cents ?? 0);
   const [request] = await db.query(`select * from supply_requests where location_id = $1 and id = $2`, [loc.id, v.supply_request_id]);
   requireFound(request);
-  if (!['delivered', 'completed'].includes(request.status)) fail('supply_request_id', 'Only delivered requests can be received.');
+  if (!DELIVERED_ON.includes(request.status)) fail('supply_request_id', 'Only delivered requests can be received.');
+  // Quantities reach the branch only through Confirm Receipt (good quantity only); afterwards this records the cost.
+  // Only a request completed under the previous workflow without a branch credit is received here.
+  if (!request.branch_received_at && request.status !== 'completed') fail('supply_request_id', 'Confirm the receipt of this delivery first (good, damaged and short per item).');
   const byProduct = new Map<number, Row>(lines.map((l) => [l.product_id, l]));
   const totalQuantity = lines.reduce((sum, l) => sum + Number(l.quantity), 0);
   // The cost is split by confirmed quantity; with no line costs the branch value still reconciles.
@@ -111,7 +115,7 @@ workspaceRoutes.post('/branch/workspace/receive-stock', franchisee, async (c) =>
     : totalQuantity > 0 ? Math.round(total * (Number(line.quantity) / totalQuantity)) : Math.trunc(total / Math.max(1, lines.length)));
   if (request.branch_received_at) {
     await db.tx((tx) => recordCost(tx, request, user, byProduct, total));
-    return ok(c, { created_materials: [], cost_recorded: true }, 'Receipt cost recorded. The quantities were already added when the delivery was marked Delivered.');
+    return ok(c, { created_materials: [], cost_recorded: true }, 'Receipt cost recorded. The quantities were already added when the receipt was confirmed.');
   }
   const received = await db.tx((tx) => receiveLines(tx, request, user, byProduct, costFor, costingEnabled));
   return ok(c, received, 'Delivered items were added to branch raw materials.');

@@ -3,6 +3,7 @@
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, manilaToday } from '../lib/http.ts';
 import { resolveWorkspace } from './branchAccess.ts';
+import { SUBMITTED_OPEN, sqlList } from './supplyStatus.ts';
 
 const TZ = 'Asia/Manila';
 const LOOKBACK_WEEKS = 26;
@@ -258,8 +259,11 @@ async function supplySnapshot(db: Db, branchId: number, productIds: number[]) {
   if (!productIds.length) return snapshot;
   const ids = `{${productIds.join(',')}}`;
   const lines = await db.query(
-    `select item.product_id, item.quantity_requested, item.quantity_fulfilled from supply_request_items item join supply_requests request on request.id = item.supply_request_id
-     where request.location_id = $1 and request.status in ('submitted', 'under_review', 'endorsed', 'preparing', 'dispatched') and item.product_id = any($2::bigint[])`, [branchId, ids],
+    // On order = every open, submitted request not yet received by the branch (backorder children
+    // included). A split request counts its endorsed quantity, so parent + backorder never double up.
+    `select item.product_id, coalesce(item.quantity_endorsed, item.quantity_requested) as quantity_requested, item.quantity_fulfilled
+     from supply_request_items item join supply_requests request on request.id = item.supply_request_id
+     where request.location_id = $1 and request.status in (${sqlList(SUBMITTED_OPEN)}) and request.branch_received_at is null and item.product_id = any($2::bigint[])`, [branchId, ids],
   );
   for (const line of lines) {
     const remaining = Math.max(0, Number(line.quantity_requested) - Number(line.quantity_fulfilled ?? 0));

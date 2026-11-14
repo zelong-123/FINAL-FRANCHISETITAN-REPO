@@ -7,6 +7,7 @@ import { abort, fail, Filter, insertRow, intParam, manilaToday, ok, paginate, pe
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
+import { sqlList, TERMINAL } from '../services/supplyStatus.ts';
 import {
   adjustStock, csvApply, csvExport, csvPreview, csvTemplate, generateForecast, inventoryJson, setStock, stockAudit, stockStatus, warehouse,
 } from '../services/inventory.ts';
@@ -204,7 +205,7 @@ inventoryRoutes.delete('/inventories/items', logistics, async (c) => {
   const productIds = [...new Set(rows.map((r) => r.product_id))];
   const blocked = await db.query(
     `select distinct p.name from supply_request_items si join supply_requests sr on sr.id = si.supply_request_id join products p on p.id = si.product_id
-     where si.product_id = any($1::bigint[]) and sr.status not in ('completed', 'cancelled', 'rejected')`, [`{${productIds.join(',')}}`],
+     where si.product_id = any($1::bigint[]) and sr.status not in (${sqlList(TERMINAL)})`, [`{${productIds.join(',')}}`],
   );
   if (blocked.length) fail('inventory_ids', `These products are still on an open supply request: ${blocked.map((b) => b.name).join(', ')}. Reject, cancel or complete the request first.`);
   // An active menu item still deducts this product from branch stock when it is sold, so the
