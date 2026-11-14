@@ -152,7 +152,7 @@ export default function Users() {
       const contact = { email: form.email.trim(), phone: form.phone || null };
       const response = isFranchisee
         ? await api.post(`/applicants/${form.applicant_id}/portal-user`, contact)
-        : await api.post('/users', { ...contact, full_name: form.full_name.trim(), role: form.role, redirect_to: `${window.location.origin}/reset-password` });
+        : await api.post('/users', { ...contact, full_name: form.full_name.trim(), role: form.role });
       const created = response.data;
       setShowCreate(false);
       setForm(blank);
@@ -275,7 +275,7 @@ export default function Users() {
                   <td>
                     <span className={`status-pill min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-line rounded-[999px] text-text-secondary [background:var(--surface-subtle)] text-[8px] font-[720] capitalize whitespace-nowrap [.readable-list_&]:text-[12px] status-${badge}`}>
                       <span className="w-[6px] h-[6px] rounded-[50%] [background:currentColor] [box-shadow:0_0_0_3px_color-mix(in_srgb,_currentColor_11%,_transparent)]" aria-hidden="true" />
-                      {badge === 'active' ? 'Active' : badge === 'suspended' ? 'Suspended' : (presence.last_active ? 'InActive' : 'Invited')}
+                      {badge === 'active' ? 'Active' : badge === 'suspended' ? 'Suspended' : 'InActive'}
                     </span>
                     {badge === 'suspended' && (
                       <small>
