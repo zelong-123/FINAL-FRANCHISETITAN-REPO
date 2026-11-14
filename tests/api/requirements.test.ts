@@ -29,7 +29,7 @@ test('the requirement list comes from one config and is sent to the browser', as
   const id = await applicant();
   const req = (await call('GET', `/applicants/${id}`, { token: admin })).json.data.requirements;
   assert.deepEqual(req.config.requirements.filter((r: any) => r.stage === 'qualification').map((r: any) => r.key),
-    ['application_form', 'government_id', 'proof_of_funds', 'initial_interview', 'proposed_site', 'business_background']);
+    ['application_form', 'government_id', 'proof_of_funds', 'initial_interview', 'proposed_site']);
   assert.equal(req.config.requirements.find((r: any) => r.key === 'franchise_agreement').stage, 'activation');
   assert.ok(req.items.every((i: any) => i.status === 'pending'));
   assert.equal(req.summary.qualification.complete, false);
@@ -93,16 +93,17 @@ test('Sales submits, Admin Accepts or Returns with a reason, Sales corrects and 
   assert.equal(Number(returnLog.changed_by_user_id), adminUser.id);
 });
 
-test('a returned item may keep the files Admin did not object to', async () => {
+test('a returned item starts clean: Admin sees only the files sent after the Return', async () => {
   const id = await applicant();
   const path = `/applicants/${id}/requirements/government_id`;
   await submit(id, 'government_id', requirementForm('government_id'));
   await call('POST', `${path}/return`, { token: admin, body: { reason: 'Wrong ID type selected.' } });
-  const fixed = await submit(id, 'government_id', requirementForm('government_id', 'qualification', { id_type: 'umid', id_copy: null }));
+  const fixed = await submit(id, 'government_id', requirementForm('government_id', 'qualification', { id_type: 'umid' }));
   assert.equal(fixed.status, 201, JSON.stringify(fixed.json));
   const item = (await call('GET', `/applicants/${id}`, { token: admin })).json.data.requirements.items.find((i: any) => i.key === 'government_id');
   assert.equal(item.data.id_type, 'umid');
-  assert.equal(item.files.length, 1, 'the earlier ID copy is still attached');
+  assert.equal(item.files.length, 1, 'only the new ID copy is shown to Admin');
+  assert.equal(item.files[0].replaced_at, null);
 });
 
 test('privacy: only Admin and the assigned Sales user see or download the files', async () => {

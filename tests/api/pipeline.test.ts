@@ -60,6 +60,19 @@ test('inquiries: archive, restore, purge keep their history and rules', async ()
 
 let applicantId: number;
 
+test('an endorsed inquiry shows an unread dot for the receiving admin until it is opened', async () => {
+  const [adminUser] = await q(`select id from users where email = $1`, [ADMIN]);
+  const { json } = await call('POST', '/inquiries', { token: marketing, body: { ...lead('Macky Velasco') } });
+  const inquiryId = json.data.id;
+  await call('POST', `/inquiries/${inquiryId}/endorse`, { token: marketing, body: { endorsed_to_user_id: adminUser.id } });
+
+  const list = async () => (await call('GET', '/inquiries', { token: admin })).json.data as any[];
+  assert.equal((await list()).find((row) => row.id === inquiryId)?.has_unread, true, 'the endorsed lead shows a dot');
+
+  await call('POST', '/notifications/mark-seen', { token: admin, body: { record_type: 'inquiry', record_id: inquiryId } });
+  assert.equal((await list()).find((row) => row.id === inquiryId)?.has_unread, false, 'opening the lead clears the dot');
+});
+
 test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve, activate', async () => {
   const { json } = await call('POST', '/inquiries', { token: marketing, body: { ...lead('Juan Dela Cruz'), preferred_franchise_location: '  Las   Pinas ' } });
   const inquiryId = json.data.id;
@@ -97,7 +110,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   // Confirm Qualified lists exactly which Qualification requirements are not Accepted yet.
   const notReady = await call('POST', `${path}/confirm-qualified`, { token: admin, body: { confirmed: true, remarks: 'Trying too early.' } });
   assert.equal(notReady.status, 422);
-  assert.match(notReady.json.errors.requirements[0], /Missing: Application form, Valid government ID, Proof of funds, Initial interview, Proposed site, Business background\./);
+  assert.match(notReady.json.errors.requirements[0], /Missing: Application form, Valid government ID, Proof of funds, Initial interview, Proposed site\./);
   // The old five-checkbox assessment is replaced.
   const keys = ['profile_reviewed', 'financial_capability_assessed', 'initial_interview_completed', 'preferred_location_evaluated', 'investment_understood'];
   const milestones = Object.fromEntries(keys.map((k) => [`qualification_${k}`, true]));
@@ -307,17 +320,15 @@ test('report, folders, rejection and restore', async () => {
   assert.equal((await call('POST', '/archive/applicants/1/restore', { token: sales })).status, 403);
 });
 
-test('unconvert removes only an unprogressed applicant, and purge needs a reason', async () => {
+test('a converted lead cannot be undone, and purge needs a reason', async () => {
   const { json } = await call('POST', '/inquiries', { token: marketing, body: lead('Undo Me') });
   const id = json.data.id;
   await call('POST', `/inquiries/${id}/endorse`, { token: marketing, body: {} });
   assert.equal((await convert(id)).status, 201);
-  const undone = await call('POST', `/inquiries/${id}/unconvert`, { token: admin, body: {} });
-  assert.equal(undone.json.data.status, 'endorsed');
-  assert.equal((await q(`select count(*)::int c from applicants where inquiry_id = $1`, [id]))[0].c, 0);
+  assert.equal((await call('POST', `/inquiries/${id}/unconvert`, { token: admin, body: {} })).status, 404);
+  assert.equal((await q(`select count(*)::int c from applicants where inquiry_id = $1`, [id]))[0].c, 1);
 
   await call('POST', `/inquiries/${id}/archive`, { token: admin });
-  assert.equal((await call('POST', `/archive/inquiries/${id}/purge`, { token: admin, body: { reason: 'x' } })).status, 422);
-  assert.equal((await call('POST', `/archive/inquiries/${id}/purge`, { token: admin, body: { reason: 'Duplicate record' } })).json.data.deleted, 1);
-  assert.equal((await q(`select count(*)::int c from franchise_inquiries where id = $1`, [id]))[0].c, 0);
+  assert.equal((await call('POST', `/archive/inquiries/${id}/purge`, { token: admin, body: { reason: 'Duplicate record' } })).status, 422);
+  assert.equal((await q(`select count(*)::int c from franchise_inquiries where id = $1`, [id]))[0].c, 1);
 });

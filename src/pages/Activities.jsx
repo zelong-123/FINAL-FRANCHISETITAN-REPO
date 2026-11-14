@@ -224,7 +224,7 @@ function CalendarNav({ cursor, onChange, compact = false }) {
           aria-label="Select month"
           onChange={(event) => onChange(new Date(year, Number(event.target.value), 1))}
         >
-          {monthNames.map((name, index) => <option key={name} value={index}>{name}</option>)}
+          {monthNames.map((name, index) => <option key={name} value={index} className="[background-color:#101421] [color:#e6e9ff]">{name}</option>)}
         </select>
         <select
           className="cal-nav-select [.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_28px_0_12px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background-color:rgba(255,_255,_255,_0.03)] [.activities-page_&]:[background-image:var(--image-2)] [.activities-page_&]:[background-repeat:no-repeat] [.activities-page_&]:[background-position:right_10px_center] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:[font-family:inherit] [.activities-page_&]:[font-style:inherit] [.activities-page_&]:[line-height:inherit] [.activities-page_&]:text-[13px] [.activities-page_&]:font-[650] [.activities-page_&]:[color-scheme:dark] [.activities-page_&]:cursor-pointer [.activities-page_&]:[appearance:none] [.activities-page_&]:[-webkit-appearance:none] [.activities-page_&]:[transition:border-color_0.15s_ease] [.activities-page_&:hover]:border-[color:var(--act-accent)] [.activities-page_&:hover]:[outline:none] [.activities-page_&:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&:focus-visible]:[outline:none]"
@@ -232,7 +232,7 @@ function CalendarNav({ cursor, onChange, compact = false }) {
           aria-label="Select year"
           onChange={(event) => onChange(new Date(Number(event.target.value), month, 1))}
         >
-          {years.map((value) => <option key={value} value={value}>{value}</option>)}
+          {years.map((value) => <option key={value} value={value} className="[background-color:#101421] [color:#e6e9ff]">{value}</option>)}
         </select>
       </div>
 
@@ -260,7 +260,13 @@ function CalendarNav({ cursor, onChange, compact = false }) {
  * event opens it — edit for managers, the schedule drawer for everyone else.
  */
 export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEvent, onMoveEvent }) {
-  const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+  const [cursor, setCursorState] = useState(() => startOfMonth(new Date()));
+  // Slide direction for the grid: +1 when moving forward (slides in from the right), -1 when going back.
+  const [slideDir, setSlideDir] = useState(0);
+  const setCursor = (next) => {
+    setSlideDir(next.getFullYear() * 12 + next.getMonth() >= cursor.getFullYear() * 12 + cursor.getMonth() ? 1 : -1);
+    setCursorState(next);
+  };
   const [openPin, setOpenPin] = useState(null); // "day:firstActivityId" of a multi-person pin whose names are listed
   const touchRef = useRef(null); // start point of a single-person pin touch (Admin move)
   const today = new Date();
@@ -286,13 +292,17 @@ export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEven
   const monthTotal = [...eventsByDay.values()].reduce((sum, list) => sum + list.length, 0);
   const monthEvents = [...eventsByDay.values()].flat();
   const monthName = cursor.toLocaleDateString([], { month: 'long' });
-  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
+  // Monday–Friday only: Saturday and Sunday are never schedulable, so they are not shown.
+  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const cells = [];
-  for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
-  while (cells.length % 7 !== 0) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const mondayIndex = (new Date(year, month, day).getDay() + 6) % 7; // Monday = 0
+    if (mondayIndex > 4) continue;
+    while (cells.length % 5 !== mondayIndex) cells.push(null);
+    cells.push(day);
+  }
+  while (cells.length % 5 !== 0) cells.push(null);
 
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
 
@@ -315,7 +325,7 @@ export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEven
       </div>
       <div className="[.activities-page_.data-panel_&]:[box-sizing:border-box] [.activities-page_.data-panel_&]:p-[var(--act-pad)]">
       <div className="[.activities-page_&]:overflow-x-auto">
-        <div className="[.activities-page_&]:grid [.activities-page_&]:grid-cols-[repeat(7,_minmax(0,_1fr))] [.activities-page_&]:gap-2 [.activities-page_&]:min-w-[680px]" aria-label="Month calendar of activities">
+        <div key={`${year}-${month}`} className={`[.activities-page_&]:grid [.activities-page_&]:grid-cols-[repeat(5,_minmax(0,_1fr))] [.activities-page_&]:gap-2 [.activities-page_&]:min-w-[560px] ${slideDir < 0 ? '[.activities-page_&]:animate-cal-slide-from-left' : '[.activities-page_&]:animate-cal-slide-from-right'}`} aria-label="Month calendar of activities">
           {weekdayLabels.map((label, index) => <span className="[.activities-page_&]:p-[0_0_4px] [.activities-page_&]:text-center [.activities-page_&]:text-[11px] [.activities-page_&]:font-[750] [.activities-page_&]:tracking-[0.06em] [.activities-page_&]:uppercase [.activities-page_&]:text-[color:var(--muted,_#8590a8)]" key={`${label}-${index}`}>{label}</span>)}
           {cells.map((day, index) => {
             if (day === null) return <span className="big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:var(--act-cell)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] is-empty" key={`empty-${index}`} />;
@@ -486,12 +496,15 @@ function formatTimeRange(activity) {
  * chosen activity (already done, prerequisite not done, already scheduled), or
  * '' when they are available.
  */
-function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blockReason, editing, onError, existingActivities = [] }) {
-  const multi = !editing && form.mode === 'multiple';
+function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blockReason, editing, onError, existingActivities = [], lockedApplicantId = null }) {
+  const multi = !editing && form.mode === 'multiple' && !lockedApplicantId;
   const hasActivity = Boolean(form.activity_type);
   const byId = (id) => applicants?.find((item) => String(item.id) === String(id));
 
-  const eligible = (applicants || []).filter((item) => !blockReason(item, form.activity_type));
+  // Opened from the applicant pipeline (Set Schedule / Set Again): only that
+  // applicant is listed and the picker is locked.
+  const eligible = (applicants || []).filter((item) => !blockReason(item, form.activity_type)
+    && (!lockedApplicantId || String(item.id) === String(lockedApplicantId)));
   const selectedMany = form.applicant_ids.map(byId).filter(Boolean);
 
   // Training sessions already booked at the chosen date/time (merge suggestion only).
@@ -569,6 +582,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
       <Field label="Activity" required full hint="Activities go in order: Orientation, then Product Tasting, then Training.">
         <select
           required
+          disabled={Boolean(lockedApplicantId)}
           value={form.activity_type}
           onChange={(e) => changeActivity(e.target.value)}
         >
@@ -579,13 +593,13 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
 
       {!editing && (
         <Field label="Schedule for" full>
-          <div className="[.activities-modal-root_&]:inline-flex [.activities-modal-root_&]:gap-1 [.activities-modal-root_&]:p-1 [.activities-modal-root_&]:[border:1px_solid_var(--act-line,_#262f45)] [.activities-modal-root_&]:rounded-[8px] [.activities-modal-root_&]:[background:rgba(255,_255,_255,_0.03)] later:[.activities-modal-root_&_button]:p-[7px_16px] [.activities-modal-root_&_button]:border-0 [.activities-modal-root_&_button]:rounded-[6px] later-2:[.activities-modal-root_&_button]:[background:transparent] later-2:[.activities-modal-root_&_button]:text-[color:var(--muted,_#8590a8)] [.activities-modal-root_&_button]:[font-family:inherit] [.activities-modal-root_&_button]:[font-style:inherit] [.activities-modal-root_&_button]:[line-height:inherit] later:[.activities-modal-root_&_button]:text-[13px] later-2:[.activities-modal-root_&_button]:font-[650] [.activities-modal-root_&_button]:cursor-pointer [.activities-modal-root_&_button]:[transition:background_0.15s_ease,_color_0.15s_ease] later:[.activities-modal-root_&_button:hover]:text-[color:var(--text,_inherit)] later:[.activities-modal-root_&_button.active]:[background:rgba(123,_136,_255,_0.18)] later-2:[.activities-modal-root_&_button.active]:text-[color:var(--accent,_#aeb6ff)]" role="group" aria-label="Number of applicants">
-            <button type="button" className={form.mode === 'single' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} aria-pressed={form.mode === 'single'} onClick={() => changeMode('single')}>
-              One applicant
-            </button>
-            <button type="button" className={form.mode === 'multiple' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} aria-pressed={form.mode === 'multiple'} onClick={() => changeMode('multiple')}>
-              Multiple applicants
-            </button>
+          <div role="group" aria-label="Number of applicants" className="inline-flex w-fit justify-self-start gap-1 p-[3px] rounded-[9px] border border-[#262f45] bg-[rgba(255,255,255,0.03)]">
+              <button type="button" aria-pressed={form.mode === 'single'} disabled={Boolean(lockedApplicantId)} onClick={() => changeMode('single')} className={`h-[30px] px-[14px] rounded-[7px] border text-[12px] font-[650] transition-colors ${form.mode === 'single' ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.16)] text-[#aeb6ff]' : 'border-transparent bg-transparent text-[#8590a8] hover:text-[#f4f4f5]'}`}>
+                One applicant
+              </button>
+              <button type="button" aria-pressed={form.mode === 'multiple'} disabled={Boolean(lockedApplicantId)} onClick={() => changeMode('multiple')} className={`h-[30px] px-[14px] rounded-[7px] border text-[12px] font-[650] transition-colors ${form.mode === 'multiple' ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.16)] text-[#aeb6ff]' : 'border-transparent bg-transparent text-[#8590a8] hover:text-[#f4f4f5]'}`}>
+                Multiple applicants
+              </button>
           </div>
         </Field>
       )}
@@ -594,7 +608,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         <Field label="Applicant" full required hint={applicantHint}>
           <select
             required
-            disabled={!hasActivity}
+            disabled={!hasActivity || Boolean(lockedApplicantId)}
             className={highlightApplicant ? 'later-2:[.activities-modal-root_select&]:border-[color:var(--act-accent,_#7b88ff)] later:[.activities-modal-root_select&]:[background-color:rgba(123,_136,_255,_0.16)] later:[.activities-modal-root_select&]:[box-shadow:0_0_0_2px_rgba(123,_136,_255,_0.45)] [.activities-modal-root_select&]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_select&]:font-[650] [.activities-modal-root_select&]:[animation:applicant-select-blink_0.8s_ease-in-out_4] motion-reduce:later:[.activities-modal-root_select&]:[animation:none]' : undefined}
             value={form.applicant_id}
             onChange={(e) => changeApplicant(e.target.value)}
@@ -610,12 +624,12 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
           required
           hint={applicantHint || `${form.applicant_ids.length} selected · ${eligible.length} available. Applicants with an active ${titleCase(form.activity_type)} schedule are disabled.`}
         >
-          <div className="[.activities-modal-root_&]:flex [.activities-modal-root_&]:flex-col [.activities-modal-root_&]:gap-[10px] [.activities-modal-root_&]:w-full">
-            <div className="[.activities-modal-root_&]:flex [.activities-modal-root_&]:gap-2 later-2:[.activities-modal-root_&_button]:p-[5px_12px] later:[.activities-modal-root_&_button]:[border:1px_solid_var(--act-line,_#262f45)] [.activities-modal-root_&_button]:rounded-[6px] later-2:[.activities-modal-root_&_button]:[background:transparent] later-3:[.activities-modal-root_&_button]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_&_button]:[font-family:inherit] [.activities-modal-root_&_button]:[font-style:inherit] [.activities-modal-root_&_button]:[line-height:inherit] later-2:[.activities-modal-root_&_button]:text-[12px] later-3:[.activities-modal-root_&_button]:font-[650] [.activities-modal-root_&_button]:cursor-pointer later:[.activities-modal-root_&_button]:[transition:border-color_0.15s_ease,_background_0.15s_ease] later:[.activities-modal-root_&_button:hover:not(:disabled)]:border-[color:var(--act-accent,_#7b88ff)] later:[.activities-modal-root_&_button:hover:not(:disabled)]:[background:rgba(123,_136,_255,_0.1)] [.activities-modal-root_&_button:disabled]:opacity-[0.45] [.activities-modal-root_&_button:disabled]:cursor-not-allowed">
+          <div className="flex flex-col gap-[10px] w-full">
+            <div className="flex gap-2 [&_button]:py-[5px] [&_button]:px-[12px] [&_button]:border [&_button]:border-[#262f45] [&_button]:rounded-[6px] [&_button]:bg-transparent [&_button]:text-[#aeb6ff] [&_button]:text-[12px] [&_button]:font-[650] [&_button]:cursor-pointer [&_button]:transition-colors hover:[&_button:not(:disabled)]:border-[#7b88ff] [&_button:disabled]:opacity-[0.45] [&_button:disabled]:cursor-not-allowed">
               <button type="button" onClick={selectAllAvailable} disabled={!hasActivity || !eligible.length}>Select all available</button>
               <button type="button" onClick={clearAll} disabled={!form.applicant_ids.length}>Clear</button>
             </div>
-            <div className="[.activities-modal-root_&]:flex [.activities-modal-root_&]:flex-col [.activities-modal-root_&]:gap-[6px] [.activities-modal-root_&]:max-h-[220px] [.activities-modal-root_&]:overflow-y-auto [.activities-modal-root_&]:p-[6px] [.activities-modal-root_&]:[border:1px_solid_var(--act-line,_#262f45)] [.activities-modal-root_&]:rounded-[8px] [.activities-modal-root_&]:[background:rgba(255,_255,_255,_0.02)]" role="group" aria-label="Applicants">
+            <div className="flex flex-col gap-[6px] max-h-[220px] overflow-y-auto p-[6px] border border-[#262f45] rounded-[8px] bg-[rgba(255,255,255,0.02)]" role="group" aria-label="Applicants">
               {(applicants || []).filter((applicant) => applicant.status === 'scheduled').map((applicant) => {
                 const blocked = hasActivity ? blockReason(applicant, form.activity_type) : '';
                 const checked = form.applicant_ids.includes(String(applicant.id));
@@ -626,12 +640,12 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
                     role="checkbox"
                     aria-checked={checked}
                     disabled={!hasActivity || Boolean(blocked)}
-                    className={`applicant-check [.activities-modal-root_&]:flex [.activities-modal-root_&]:items-center [.activities-modal-root_&]:gap-[10px] [.activities-modal-root_&]:w-full [.activities-modal-root_&]:[box-sizing:border-box] [.activities-modal-root_&]:p-[8px_10px] [.activities-modal-root_&]:border [.activities-modal-root_&]:border-transparent [.activities-modal-root_&]:rounded-[6px] [.activities-modal-root_&]:[background:transparent] [.activities-modal-root_&]:text-[color:inherit] [.activities-modal-root_&]:[font-family:inherit] [.activities-modal-root_&]:[font-weight:inherit] [.activities-modal-root_&]:[font-style:inherit] [.activities-modal-root_&]:[line-height:inherit] [.activities-modal-root_&]:text-[13.5px] [.activities-modal-root_&]:text-left [.activities-modal-root_&]:cursor-pointer [.activities-modal-root_&]:[transition:background_0.15s_ease,_border-color_0.15s_ease] [.activities-modal-root_&:hover:not(:disabled)]:[background:rgba(123,_136,_255,_0.08)] [.activities-modal-root_&.is-checked]:[background:rgba(123,_136,_255,_0.14)] [.activities-modal-root_&.is-checked]:border-[rgba(123,_136,_255,_0.4)] [.activities-modal-root_&:focus-visible]:[outline:2px_solid_var(--act-accent,_#7b88ff)] [.activities-modal-root_&:focus-visible]:[outline-offset:1px] [.activities-modal-root_&.is-blocked]:opacity-[0.55] [.activities-modal-root_&.is-blocked]:cursor-not-allowed ${checked ? ' is-checked' : ''}${blocked ? ' is-blocked' : ''}`}
+                    className={`flex items-center gap-[10px] w-full box-border p-[8px_10px] border rounded-[6px] text-left text-[13.5px] cursor-pointer transition-colors ${checked ? 'border-[rgba(123,136,255,0.4)] bg-[rgba(123,136,255,0.14)]' : 'border-transparent bg-transparent'} hover:enabled:bg-[rgba(123,136,255,0.08)] focus-visible:outline-2 focus-visible:outline-[#7b88ff] ${blocked ? 'opacity-[0.55] cursor-not-allowed' : ''}`}
                     onClick={() => toggleApplicant(applicant.id)}
                   >
-                    <span className="[.activities-modal-root_&]:inline-grid [.activities-modal-root_&]:place-items-center [.activities-modal-root_&]:flex-none [.activities-modal-root_&]:w-[18px] [.activities-modal-root_&]:h-[18px] [.activities-modal-root_&]:[border:1px_solid_var(--act-line,_#262f45)] [.activities-modal-root_&]:rounded-[4px] [.activities-modal-root_&]:text-[10px] [.activities-modal-root_&]:text-[#fff] [.activities-modal-root_.applicant-check.is-checked_&]:[background:var(--act-accent,_#7b88ff)] [.activities-modal-root_.applicant-check.is-checked_&]:border-[color:var(--act-accent,_#7b88ff)]" aria-hidden="true">{checked && <FaCheck />}</span>
-                    <span className="[.activities-modal-root_&]:flex-1 [.activities-modal-root_&]:min-w-0 [.activities-modal-root_&]:overflow-hidden [.activities-modal-root_&]:text-ellipsis [.activities-modal-root_&]:whitespace-nowrap">{applicant.full_name}</span>
-                    {blocked && <span className="[.activities-modal-root_&]:flex-none [.activities-modal-root_&]:p-[2px_8px] [.activities-modal-root_&]:border [.activities-modal-root_&]:border-[rgba(34,_197,_94,_0.4)] [.activities-modal-root_&]:rounded-[4px] [.activities-modal-root_&]:[background:rgba(34,_197,_94,_0.12)] [.activities-modal-root_&]:text-[#22c55e] [.activities-modal-root_&]:text-[11px] [.activities-modal-root_&]:font-[650]">{blocked}</span>}
+                    <span className={`inline-grid place-items-center flex-none w-[18px] h-[18px] border rounded-[4px] text-[10px] text-white ${checked ? 'bg-[#7b88ff] border-[#7b88ff]' : 'border-[#262f45]'}`} aria-hidden="true">{checked && <FaCheck />}</span>
+                    <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{applicant.full_name}</span>
+                    {blocked && <span className="flex-none p-[2px_8px] border border-[rgba(34,197,94,0.4)] rounded-[4px] bg-[rgba(34,197,94,0.12)] text-[#22c55e] text-[11px] font-[650]">{blocked}</span>}
                   </button>
                 );
               })}
@@ -710,6 +724,7 @@ export default function Activities() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blankForm);
   const [highlightApplicant, setHighlightApplicant] = useState(false);
+  const [lockedApplicantId, setLockedApplicantId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
@@ -981,6 +996,7 @@ export default function Activities() {
       attendee: person?.full_name || '',
     });
     setHighlightApplicant(Boolean(person));
+    setLockedApplicantId(person ? String(person.id) : null);
     setShowCreate(true);
     setScheduleGlow(true);
   }, [applicants, canManage, navigate]);
@@ -1003,6 +1019,7 @@ export default function Activities() {
       ...(startDate ? { start_date: toDateInput(startDate) } : {}),
     });
     setHighlightApplicant(Boolean(applicant));
+    setLockedApplicantId(applicant && applicant.id ? String(applicant.id) : null);
     setShowCreate(true);
   };
 
@@ -1021,12 +1038,14 @@ export default function Activities() {
     setShowCreate(false);
     setEditing(null);
     setHighlightApplicant(false);
+    setLockedApplicantId(null);
   };
 
   const openEdit = (activity) => {
     setActionError('');
     setSuccess('');
     setHighlightApplicant(false);
+    setLockedApplicantId(null);
     setEditing(activity);
     const name = activity.applicant?.full_name
       || applicants.find((item) => String(item.id) === String(activity.applicant_id))?.full_name
@@ -1046,7 +1065,7 @@ export default function Activities() {
       setActionError('Select an activity.');
       return;
     }
-    const multi = !editing && form.mode === 'multiple';
+    const multi = !editing && form.mode === 'multiple' && !lockedApplicantId;
     const ids = multi ? form.applicant_ids : [form.applicant_id].filter(Boolean);
     if (!ids.length) {
       setActionError(multi ? 'Select at least one applicant.' : 'Select an applicant.');
@@ -1360,7 +1379,7 @@ export default function Activities() {
         {canManage && (
           <button
             type="button"
-            className={`primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.unified-toolbar-container_&]:flex-[0_0_auto] [.unified-toolbar-container_&]:inline-flex [.unified-toolbar-container_&]:items-center [.unified-toolbar-container_&]:justify-center [.unified-toolbar-container_&]:gap-2 [.unified-toolbar-container_&]:h-[44px] [.unified-toolbar-container_&]:min-h-[44px] [.unified-toolbar-container_&]:p-[0_18px] [.unified-toolbar-container_&]:rounded-[10px] [.unified-toolbar-container_&]:text-[13px] [.unified-toolbar-container_&]:font-[700] max-[721px]:later:[.unified-toolbar-container_&]:flex-[1_1_100%] ${scheduleGlow ? ' text-[#39ffb0]! border-[#39ffb0]! [animation:schedule-rotate-glow_1.4s_linear_infinite]' : ''}`}
+            className={`primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.unified-toolbar-container_&]:flex-[0_0_auto] [.unified-toolbar-container_&]:ml-auto [.unified-toolbar-container_&]:inline-flex [.unified-toolbar-container_&]:items-center [.unified-toolbar-container_&]:justify-center [.unified-toolbar-container_&]:gap-2 [.unified-toolbar-container_&]:h-[44px] [.unified-toolbar-container_&]:min-h-[44px] [.unified-toolbar-container_&]:p-[0_18px] [.unified-toolbar-container_&]:rounded-[10px] [.unified-toolbar-container_&]:text-[13px] [.unified-toolbar-container_&]:font-[700] max-[721px]:later:[.unified-toolbar-container_&]:flex-[1_1_100%] ${scheduleGlow ? ' text-[#39ffb0]! border-[#39ffb0]! [animation:schedule-rotate-glow_1.4s_linear_infinite]' : ''}`}
             onClick={() => { setScheduleGlow(false); openCreate(); }}
           >
             <FaCalendarPlus aria-hidden="true" /> Schedule activity
@@ -1387,7 +1406,7 @@ export default function Activities() {
               <table>
                 <thead>
                   <tr>
-                    <th>Person</th><th>Activity assigned</th><th>Action</th>
+                    <th>Person</th><th>Activity assigned</th><th>Date assigned</th><th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1425,17 +1444,22 @@ export default function Activities() {
                         <td>
                           {activity ? (
                             <span
-                              className={`inline-flex items-center gap-[5px] p-[4px_9px] border border-line rounded-[999px] [background:var(--surface-subtle)] text-text-secondary text-[8px] [&.is-completed]:text-success-text [&.is-completed]:border-[color:color-mix(in_srgb,_var(--success)_28%,_transparent)] [&.is-completed]:[background:color-mix(in_srgb,_var(--success)_8%,_transparent)] later:[&.is-overdue]:text-danger-text later:[&.is-overdue]:border-[color:color-mix(in_srgb,_var(--danger)_28%,_transparent)] later:[&.is-overdue]:[background:color-mix(in_srgb,_var(--danger)_8%,_transparent)] [.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:gap-[6px] [.activities-page_&]:w-[224px] [.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_10px] [.activities-page_&]:rounded-[9999px] [.activities-page_&]:border later-2:[.activities-page_&]:border-[#394259] later-2:[.activities-page_&]:[background:#101421] [.activities-page_&]:text-[12px] [.activities-page_&]:leading-[1] [.activities-page_&]:whitespace-nowrap [.activities-page_&]:overflow-hidden [.activities-page_&>svg]:flex-[0_0_auto] later:[.activities-page_&>svg]:w-[12px] later:[.activities-page_&>svg]:h-[12px] [.activities-page_&_small]:flex-[0_1_auto] [.activities-page_&_small]:min-w-0 [.activities-page_&_small]:max-w-[52%] later:[.activities-page_&_small]:m-0 [.activities-page_&_small]:overflow-hidden [.activities-page_&_small]:pl-[6px] [.activities-page_&_small]:border-l [.activities-page_&_small]:border-l-[color:color-mix(in_srgb,_currentColor_28%,_transparent)] [.activities-page_&_small]:text-[color:var(--muted,_#8590a8)] later-2:[.activities-page_&_small]:text-[10px] later-2:[.activities-page_&_small]:font-[500] [.activities-page_&_small]:text-ellipsis [.activities-page_&_small]:whitespace-nowrap [.activities-page_&.is-completed]:border-[rgba(34,_197,_94,_0.55)] [.activities-page_&.is-completed]:[background:#101421] [.activities-page_&.is-completed]:text-[#22c55e] [.activities-page_&.is-completed_small]:text-[#7fd6a2] [.activities-page_&.is-overdue]:w-[252px] later:[.activities-page_&.is-overdue]:border-[rgba(244,_63,_94,_0.55)] [.activities-page_&.is-overdue]:[background:#101421] later:[.activities-page_&.is-overdue]:text-[#f43f5e] later:[.activities-page_&.is-overdue_small]:text-[#f3a0ae] ${accomplished ? ' is-completed' : ''}${overdue ? ' is-overdue' : ''}`}
+                              className={`inline-flex items-center gap-[5px] p-[4px_9px] border border-line rounded-[999px] [background:var(--surface-subtle)] text-text-secondary text-[8px] [&.is-completed]:text-success-text [&.is-completed]:border-[color:color-mix(in_srgb,_var(--success)_28%,_transparent)] [&.is-completed]:[background:color-mix(in_srgb,_var(--success)_8%,_transparent)] later:[&.is-overdue]:text-danger-text later:[&.is-overdue]:border-[color:color-mix(in_srgb,_var(--danger)_28%,_transparent)] later:[&.is-overdue]:[background:color-mix(in_srgb,_var(--danger)_8%,_transparent)] [.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:border-0! [.activities-page_&]:[background:transparent]! [.activities-page_&]:gap-[6px] [.activities-page_&]:w-[224px] [.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_10px] [.activities-page_&]:rounded-[9999px] [.activities-page_&]:border later-2:[.activities-page_&]:border-[#394259] later-2:[.activities-page_&]:[background:#101421] [.activities-page_&]:text-[14px] [.activities-page_&]:leading-[1] [.activities-page_&]:whitespace-nowrap [.activities-page_&]:overflow-hidden [.activities-page_&>svg]:flex-[0_0_auto] later:[.activities-page_&>svg]:w-[12px] later:[.activities-page_&>svg]:h-[12px] [.activities-page_&_small]:flex-[0_1_auto] [.activities-page_&_small]:min-w-0 [.activities-page_&_small]:max-w-[52%] later:[.activities-page_&_small]:m-0 [.activities-page_&_small]:overflow-hidden [.activities-page_&_small]:pl-[6px] [.activities-page_&_small]:border-l [.activities-page_&_small]:border-l-[color:color-mix(in_srgb,_currentColor_28%,_transparent)] [.activities-page_&_small]:text-[color:var(--muted,_#8590a8)] later-2:[.activities-page_&_small]:text-[10px] later-2:[.activities-page_&_small]:font-[500] [.activities-page_&_small]:text-ellipsis [.activities-page_&_small]:whitespace-nowrap [.activities-page_&.is-completed]:border-[rgba(34,_197,_94,_0.55)] [.activities-page_&.is-completed]:[background:#101421] [.activities-page_&.is-completed]:text-[#22c55e] [.activities-page_&.is-completed_small]:text-[#7fd6a2] [.activities-page_&.is-overdue]:w-[252px] later:[.activities-page_&.is-overdue]:border-[rgba(244,_63,_94,_0.55)] [.activities-page_&.is-overdue]:[background:#101421] later:[.activities-page_&.is-overdue]:text-[#f43f5e] later:[.activities-page_&.is-overdue_small]:text-[#f3a0ae] ${accomplished ? ' is-completed' : ''}${overdue ? ' is-overdue' : ''}`}
                               title={chipText}
                               aria-label={chipText}
                             >
                               {accomplished ? <FaCheck aria-hidden="true" /> : overdue ? <FaTriangleExclamation aria-hidden="true" /> : <FaCalendarDays aria-hidden="true" />}
                               <span className="[.activities-page_&]:flex-[1_1_auto] [.activities-page_&]:min-w-0 [.activities-page_&]:overflow-hidden [.activities-page_&]:text-ellipsis [.activities-page_&]:whitespace-nowrap">{activityLabel(activity)}</span>
-                              <small>{overdue ? 'Applicant did not attend the schedule' : formatDate(activity.starts_at)}</small>
+                              {overdue && <small>Applicant did not attend the schedule</small>}
                             </span>
                           ) : (
                             <span className="muted-note text-muted text-[8px] leading-[1.6]">Nothing scheduled</span>
                           )}
+                        </td>
+                        <td className="pr-8!">
+                          {activity ? (
+                            <span className="[.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:text-[14px]">{formatDate(activity.starts_at)}</span>
+                          ) : null}
                         </td>
                         <td onClick={(event) => event.stopPropagation()}>
                           <div className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative">
@@ -1467,12 +1491,12 @@ export default function Activities() {
                                   )
                                 ) : (
                                   <>
-                                    <button type="button" onClick={() => openEdit(activity)}><FaPen aria-hidden="true" /> Adjust</button>
-                                    {canComplete && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
+                                    <button type="button" className="inline-flex items-center gap-[6px] h-[32px] px-[12px] rounded-[10px] border border-[#394259] [background:transparent] text-[#d5dbec] text-[12px] font-[600] whitespace-nowrap cursor-pointer hover:border-[#7b88ff] hover:text-[#fff]" onClick={() => openEdit(activity)}><FaPen aria-hidden="true" /> Adjust</button>
+                                    {canComplete && !activity.is_missed && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
                                       <button
                                         type="button"
                                         disabled={nowMs < new Date(activity.starts_at).getTime()}
-                                        className="[.activities-page_.row-actions_&]:inline-grid [.activities-page_.row-actions_&]:place-items-center [.activities-page_.row-actions_&]:w-[26px] [.activities-page_.row-actions_&]:min-w-[26px] [.activities-page_.row-actions_&]:h-[26px] [.activities-page_.row-actions_&]:p-0 [.activities-page_.row-actions_&]:border [.activities-page_.row-actions_&]:border-[rgba(57,_255,_176,_0.42)] [.activities-page_.row-actions_&]:rounded-[6px] [.activities-page_.row-actions_&]:[background:rgba(57,_255,_176,_0.1)] [.activities-page_.row-actions_&]:text-[#39ffb0] [.activities-page_.row-actions_&]:text-[11px] [.activities-page_.row-actions_&]:leading-[1] [.activities-page_.row-actions_&]:[box-shadow:none] [.activities-page_.row-actions_&:hover:not(:disabled)]:border-[rgba(57,_255,_176,_0.75)] [.activities-page_.row-actions_&:hover:not(:disabled)]:[background:rgba(57,_255,_176,_0.2)] [.activities-page_.row-actions_&:hover:not(:disabled)]:[transform:none]"
+                                        className={`inline-flex items-center justify-center h-[32px] px-[16px] rounded-[10px] border text-[12px] font-[700] tracking-[.06em] uppercase whitespace-nowrap [background:#101421] disabled:cursor-not-allowed ${nowMs < new Date(activity.starts_at).getTime() ? 'border-[#394259] text-[#fff]' : 'border-[#4f8f4a] text-[#86c76b]'}`}
                                         title={nowMs < new Date(activity.starts_at).getTime() ? `Available on ${manilaDateTimeLabel(activity.starts_at)}` : 'Mark Complete'}
                                         aria-label="Mark Complete"
                                         onClick={() => {
@@ -1488,7 +1512,7 @@ export default function Activities() {
                                           });
                                         }}
                                       >
-                                        <FaCheck aria-hidden="true" />
+                                        Complete
                                       </button>
                                     )}
                                     {canComplete && activity.approval_status === 'immediate' && ['pending', 'confirmed'].includes(activity.status) && nowMs < new Date(activity.starts_at).getTime() && (
@@ -1620,6 +1644,7 @@ export default function Activities() {
               setForm={setForm}
               applicants={applicants}
               highlightApplicant={highlightApplicant}
+              lockedApplicantId={editing ? null : lockedApplicantId}
               blockReason={blockReason}
               editing={editing}
               onError={setActionError}
@@ -1794,8 +1819,8 @@ export default function Activities() {
                   )}
                 </div>
               </div>
-              <button type="button" className="drawer-toggle [.activities-page_.inquiry-drawer_&]:absolute [.activities-page_.inquiry-drawer_&]:top-[14px] [.activities-page_.inquiry-drawer_&]:right-[14px] [.activities-page_.inquiry-drawer_&]:left-auto [.activities-page_.inquiry-drawer_&]:z-2" onClick={closeDetails} aria-label="Close details" title="Close (Esc)">
-                <FaXmark />
+              <button type="button" className="drawer-toggle [.activities-page_.inquiry-drawer_&]:absolute [.activities-page_.inquiry-drawer_&]:top-[14px] [.activities-page_.inquiry-drawer_&]:right-[14px] [.activities-page_.inquiry-drawer_&]:left-auto [.activities-page_.inquiry-drawer_&]:z-2 flex-none w-[34px] h-[34px] grid place-items-center p-0 rounded-[8px] [border:1px_solid_var(--drawer-border)] [background:transparent] text-[color:var(--drawer-muted)] cursor-pointer [transition:color_0.2s_ease,_border-color_0.2s_ease,_background-color_0.2s_ease] [&_svg]:m-0 hover:text-[color:var(--drawer-text)] hover:border-[color:var(--drawer-accent)] hover:[background:rgba(123,_136,_255,_0.08)] focus-visible:[outline:2px_solid_var(--drawer-accent)] focus-visible:[outline-offset:2px]" onClick={closeDetails} aria-label="Close details" title="Close (Esc)">
+                <FaXmark aria-hidden="true" />
               </button>
             </header>
             <div className="drawer-body flex-[1_1_auto] min-h-0 overflow-y-auto [overscroll-behavior:contain] p-[8px_28px_32px] [&_section]:p-[20px_0_6px] [&_section+section]:[border-top:1px_solid_var(--drawer-border)] [&_h3]:m-[0_0_14px] [&_h3]:text-[0.74rem] [&_h3]:font-[700] [&_h3]:tracking-[0.09em] [&_h3]:uppercase [&_h3]:text-[color:var(--drawer-muted)] [&_dl]:m-0 max-[521px]:later:pl-[18px] max-[521px]:later:pr-[18px]">
@@ -1832,7 +1857,7 @@ export default function Activities() {
                         <button type="button" onClick={() => openEdit(activity)}>Adjust</button>
                         <button type="button" onClick={() => setDeleting({ ...shown, current: activity })}>Cancel schedule</button>
                       </div>}
-                      {role === 'sales' && ['pending', 'confirmed'].includes(activity.status) && activity.approval_status !== 'rejected' && <button type="button" onClick={() => openEdit(activity)}>Adjust</button>}
+                      {role === 'sales' && ['pending', 'confirmed'].includes(activity.status) && activity.approval_status !== 'rejected' && <button type="button" className="inline-flex items-center justify-center gap-[6px] h-[32px] px-[12px] mt-[8px] rounded-[10px] border border-[#394259] [background:transparent] text-[#d5dbec] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] hover:text-[#fff]" onClick={() => openEdit(activity)}><FaPen aria-hidden="true" /> Adjust</button>}
                     </li>
                   ))}
                 </ul>

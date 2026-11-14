@@ -37,6 +37,8 @@
   --animate-dot-pulse: dot-pulse 1s ease-in-out infinite alternate;
   --animate-login-progress: login-progress 1.05s linear both;
   --animate-shake-in: shake-in .35s ease;
+  --animate-cal-slide-from-right: cal-slide-from-right .3s ease-out both;
+  --animate-cal-slide-from-left: cal-slide-from-left .3s ease-out both;
 
   @keyframes ambient-float { to { transform: translate3d(30px, -25px, 0) scale(1.08); } }
   @keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
@@ -48,6 +50,9 @@
   @keyframes dot-pulse { to { opacity: .35; transform: scale(.75); } }
   @keyframes login-progress { from { transform: scaleX(0); } }
   @keyframes shake-in { 0%, 100% { transform: translateX(0); } 35% { transform: translateX(-4px); } 70% { transform: translateX(4px); } }
+  @keyframes qual-slide-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes cal-slide-from-right { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes cal-slide-from-left { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: translateX(0); } }
 }
 
 /* Laptops with little height: the sign-in card tightens, width behaviour unchanged. */
@@ -285,8 +290,12 @@
 .ms-calendar .fc .fc-daygrid-day-number { padding: 6px 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
 .ms-calendar .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number { color: var(--accent-text); font-weight: 750; }
 .ms-calendar .fc .fc-daygrid-day-frame:hover { background: var(--surface-subtle); }
-.ms-calendar .fc-event { cursor: pointer; overflow: hidden; border-width: 1px; border-radius: 7px; box-shadow: none; }
-.ms-calendar .fc-event:hover { filter: brightness(1.06); }
+.ms-calendar .fc-event { cursor: pointer; overflow: hidden; border-width: 1px; border-left-width: 3px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); transition: filter .15s ease, box-shadow .15s ease; }
+.ms-calendar .fc-event:hover { filter: brightness(1.12); box-shadow: 0 4px 12px rgba(0, 0, 0, .28); }
+.ms-calendar .fc-timegrid-event .ms-event-body { padding: 5px 7px; gap: 2px; }
+.ms-calendar .fc-timegrid-event .ms-event-body strong { font-size: 11.5px; font-weight: 720; }
+.ms-calendar .fc .fc-timegrid-event-harness { padding: 0 2px; }
+.ms-calendar .fc .fc-timegrid-now-indicator-line { box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
 .ms-calendar .fc-event.is-cancelled { opacity: .55; }
 .ms-calendar .fc-event.is-merged { opacity: .55; }
 .ms-calendar .fc-event.is-rescheduled { opacity: .55; }
@@ -394,4 +403,87 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 @keyframes apDotPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
+}
+
+/* Responsive: Inquiries, Applicants and Activities pages. Scoped to their page roots. */
+.inquiries-page,
+.applicant-pipeline-page,
+.activities-page {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.inquiries-page .data-panel,
+.applicant-pipeline-page .data-panel,
+.activities-page .data-panel {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Wide tables scroll inside their panel instead of squeezing or pushing the page sideways. */
+.inquiries-page .table-wrap,
+.applicant-pipeline-page .table-wrap,
+.activities-page .table-wrap {
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+.inquiries-page .table-wrap table,
+.applicant-pipeline-page .table-wrap table,
+.activities-page .table-wrap table {
+  min-width: 760px;
+}
+
+/* Tablets and narrow browser zoom: toolbars wrap and fields take full rows. */
+@media (max-width: 900px) {
+  .applicant-pipeline-page .unified-toolbar-container,
+  .activities-page .unified-toolbar-container {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .applicant-pipeline-page .unified-toolbar-container > input,
+  .applicant-pipeline-page .unified-toolbar-container > select,
+  .activities-page .unified-toolbar-container > input,
+  .activities-page .unified-toolbar-container > select {
+    flex: 1 1 180px;
+    min-width: 0;
+  }
+}
+
+/* Phones: tighter page padding, date filters stack, buttons stay tappable. */
+@media (max-width: 600px) {
+  .inquiries-page,
+  .applicant-pipeline-page,
+  .activities-page {
+    padding: 14px 10px 24px;
+  }
+
+  .inquiries-page [aria-label='Inquiry date range'] > label,
+  .inquiries-page [aria-label='Inquiry date range'] > button,
+  .inquiries-page [aria-label='Inquiry date range'] > span {
+    flex: 1 1 100%;
+  }
+
+  .inquiries-page [aria-label='Inquiry date range'] input,
+  .inquiries-page .toolbar input,
+  .inquiries-page .toolbar select {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .inquiries-page .table-wrap table,
+  .applicant-pipeline-page .table-wrap table,
+  .activities-page .table-wrap table {
+    min-width: 620px;
+  }
+}
+
+/* Large TV screens: scale the whole page so it reads like a laptop. */
+@media (min-width: 2200px) {
+  .inquiries-page,
+  .applicant-pipeline-page,
+  .activities-page {
+    zoom: 1.2;
+  }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FaCircleCheck,
@@ -15,8 +15,38 @@ const noticeIcons = {
   info: FaCircleInfo,
 };
 
-export function Notice({ type = 'info', children }) {
+// Error and success notices show as toasts at the bottom-right of the screen so they
+// stay visible above an open modal. Errors stay until closed; success hides after 8s.
+// `inline` keeps the notice in place (used for full-page load errors).
+export function Notice({ type = 'info', children, inline = false }) {
   if (!children) return null;
+  const toast = !inline && type !== 'info';
+  if (!toast) return <InlineNotice type={type}>{children}</InlineNotice>;
+  return <ToastNotice key={`${type}:${String(children)}`} type={type}>{children}</ToastNotice>;
+}
+
+function ToastNotice({ type, children }) {
+  const [closed, setClosed] = useState(false);
+
+  useEffect(() => {
+    if (type !== 'success') return undefined;
+    const timer = window.setTimeout(() => setClosed(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [type]);
+
+  const Icon = noticeIcons[type] || FaCircleInfo;
+  if (closed) return null;
+  return createPortal(
+    <div style={{ zIndex: 2147483600 }} className={`fixed right-[20px] bottom-[20px] max-w-[min(420px,_calc(100vw_-_40px))] flex items-start gap-[10px] p-[12px_14px] border rounded-[12px] text-[13px] leading-[1.45] [box-shadow:var(--shadow-md)] [animation:noticeIn_.25s_ease_both] ${type === 'error' ? 'border-[rgba(255,_107,_107,_.45)] text-[#ff9ca3] [background:#22151a]' : 'border-[rgba(69,_217,_145,_.45)] text-[#45d991] [background:#0f1f19]'}`} role={type === 'error' ? 'alert' : 'status'}>
+      <Icon aria-hidden="true" className="flex-[0_0_auto] mt-[3px]" />
+      <span className="flex-1 min-w-0">{children}</span>
+      <button type="button" aria-label="Close notification" className="flex-[0_0_auto] bg-transparent border-0 p-0 text-inherit cursor-pointer opacity-70 hover:opacity-100" onClick={() => setClosed(true)}><FaXmark aria-hidden="true" /></button>
+    </div>,
+    document.body,
+  );
+}
+
+function InlineNotice({ type, children }) {
   const Icon = noticeIcons[type] || FaCircleInfo;
   return (
     <div className={`flex items-start gap-[9px] m-[0_0_14px] p-[11px_13px] border border-line rounded-[12px] text-text-secondary [background:var(--surface-subtle)] text-[9px] leading-[1.55] [animation:noticeIn_.25s_ease_both] [&_svg]:flex-[0_0_auto] [&_svg]:mt-[2px] notice-${type}`} role={type === 'error' ? 'alert' : 'status'}>
@@ -60,15 +90,12 @@ export function EmptyState({ label = 'No records found.', detail = 'Try changing
   );
 }
 
-export function PageHeader({ title, subtitle, actions, eyebrow = 'Herald operations' }) {
+export function PageHeader({ actions }) {
+  // Page titles now live in the breadcrumb header, so only actions are rendered here.
+  if (!actions) return null;
   return (
-    <header className="flex items-end justify-between gap-6 mb-[25px] [&>div:first-child]:min-w-0 [&_h1]:m-0 [&_h1]:text-text [&_h1]:text-[clamp(27px,_3.2vw,_39px)] [&_h1]:leading-[1.08] [&_h1]:tracking-[-.045em] [&_p]:max-w-[720px] [&_p]:m-[9px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.65] [.users-page_&]:flex [.users-page_&]:items-center [.users-page_&]:justify-between [.users-page_&]:gap-4 [.users-page_&]:min-h-0 [.users-page_&]:m-0 [.users-page_&]:p-0 [.users-page_&_.page-eyebrow]:hidden [.users-page_&_h1]:m-0 [.users-page_&_h1]:text-[2rem] [.users-page_&_h1]:font-[800] [.users-page_&_h1]:leading-[1.15] [.users-page_&_h1]:tracking-[-.045em] [.users-page_&_p]:m-[6px_0_0] [.users-page_&_p]:text-muted [.users-page_&_p]:text-[12px] max-[681px]:later:items-start max-[681px]:flex-col max-[681px]:later:gap-4 max-[451px]:later:[&_h1]:text-[29px] [.dashboard-page_&_.page-eyebrow]:hidden [.dashboard-page_&_p]:hidden [.dashboard-page_&]:m-[0_0_14px] [.dashboard-page_&]:p-0 [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-4 [.activities-page_&]:m-0 [.activities-page_&]:p-0 [.activities-page_&]:min-h-0 [.activities-page_&_.page-eyebrow]:hidden [.activities-page_&_h1]:m-0 [.activities-page_&_h1]:text-[2rem] [.activities-page_&_h1]:font-[800] [.activities-page_&_h1]:leading-[1.15] [.activities-page_&_h1]:tracking-[-.045em] [.applicant-pipeline-page_&]:flex [.applicant-pipeline-page_&]:items-center [.applicant-pipeline-page_&]:justify-between [.applicant-pipeline-page_&]:gap-4 [.applicant-pipeline-page_&]:min-h-0 [.applicant-pipeline-page_&]:m-0 [.applicant-pipeline-page_&]:p-0 [.applicant-pipeline-page_&_.page-eyebrow]:hidden [.applicant-pipeline-page_&_h1]:m-0 [.applicant-pipeline-page_&_h1]:text-[2rem] [.applicant-pipeline-page_&_h1]:font-[800] [.applicant-pipeline-page_&_h1]:leading-[1.15]">
-      <div>
-        <span className="page-eyebrow block mb-2 text-accent-text text-[8px] font-[850] tracking-[.15em] uppercase [.insight-copy_&]:mb-2 [.inquiries-page_&]:hidden!">{eyebrow}</span>
-        <h1>{title}</h1>
-        {subtitle && <p>{subtitle}</p>}
-      </div>
-      {actions && <div className="[&>button]:min-h-[42px] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-2 [&>button]:p-[0_16px] [&>button]:border [&>button]:border-transparent [&>button]:rounded-[12px] [&>button]:text-[#fff] [&>button]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&>button]:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] [&>button]:text-[12px] [&>button]:font-[760] [&>button]:tracking-[.01em] [&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&>a]:min-h-[42px] [&>a]:inline-flex [&>a]:items-center [&>a]:justify-center [&>a]:gap-2 [&>a]:p-[0_16px] [&>a]:border [&>a]:border-transparent [&>a]:rounded-[12px] [&>a]:text-[#fff] [&>a]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&>a]:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] [&>a]:text-[12px] [&>a]:font-[760] [&>a]:tracking-[.01em] [&>a]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [&>button:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [&>a:hover]:[transform:translateY(-2px)] [&>a:hover]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&>a:hover]:[filter:saturate(1.08)] later:[&>button:active:not(:disabled)]:[transform:translateY(0)] flex flex-wrap justify-end gap-[9px] max-[681px]:w-full max-[681px]:later:[justify-content:stretch] max-[681px]:[&>button]:flex-1 max-[681px]:[&>a]:flex-1">{actions}</div>}
+    <header className="flex items-end justify-end gap-6 mb-[25px] [&>div:first-child]:min-w-0 [&_h1]:m-0 [&_h1]:text-text [&_h1]:text-[clamp(27px,_3.2vw,_39px)] [&_h1]:leading-[1.08] [&_h1]:tracking-[-.045em] [&_p]:max-w-[720px] [&_p]:m-[9px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.65] [.users-page_&]:flex [.users-page_&]:items-center [.users-page_&]:justify-between [.users-page_&]:gap-4 [.users-page_&]:min-h-0 [.users-page_&]:m-0 [.users-page_&]:p-0 [.users-page_&_.page-eyebrow]:hidden [.users-page_&_h1]:m-0 [.users-page_&_h1]:text-[2rem] [.users-page_&_h1]:font-[800] [.users-page_&_h1]:leading-[1.15] [.users-page_&_h1]:tracking-[-.045em] [.users-page_&_p]:m-[6px_0_0] [.users-page_&_p]:text-muted [.users-page_&_p]:text-[12px] max-[681px]:later:items-start max-[681px]:flex-col max-[681px]:later:gap-4 max-[451px]:later:[&_h1]:text-[29px] [.dashboard-page_&_.page-eyebrow]:hidden [.dashboard-page_&_p]:hidden [.dashboard-page_&]:m-[0_0_14px] [.dashboard-page_&]:p-0 [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-4 [.activities-page_&]:m-0 [.activities-page_&]:p-0 [.activities-page_&]:min-h-0 [.activities-page_&_.page-eyebrow]:hidden [.activities-page_&_h1]:m-0 [.activities-page_&_h1]:text-[2rem] [.activities-page_&_h1]:font-[800] [.activities-page_&_h1]:leading-[1.15] [.activities-page_&_h1]:tracking-[-.045em] [.applicant-pipeline-page_&]:flex [.applicant-pipeline-page_&]:items-center [.applicant-pipeline-page_&]:justify-between [.applicant-pipeline-page_&]:gap-4 [.applicant-pipeline-page_&]:min-h-0 [.applicant-pipeline-page_&]:m-0 [.applicant-pipeline-page_&]:p-0 [.applicant-pipeline-page_&_.page-eyebrow]:hidden [.applicant-pipeline-page_&_h1]:m-0 [.applicant-pipeline-page_&_h1]:text-[2rem] [.applicant-pipeline-page_&_h1]:font-[800] [.applicant-pipeline-page_&_h1]:leading-[1.15]">
+      <div className="[&>button]:min-h-[42px] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-2 [&>button]:p-[0_16px] [&>button]:border [&>button]:border-transparent [&>button]:rounded-[12px] [&>button]:text-[#fff] [&>button]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&>button]:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] [&>button]:text-[12px] [&>button]:font-[760] [&>button]:tracking-[.01em] [&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&>a]:min-h-[42px] [&>a]:inline-flex [&>a]:items-center [&>a]:justify-center [&>a]:gap-2 [&>a]:p-[0_16px] [&>a]:border [&>a]:border-transparent [&>a]:rounded-[12px] [&>a]:text-[#fff] [&>a]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&>a]:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] [&>a]:text-[12px] [&>a]:font-[760] [&>a]:tracking-[.01em] [&>a]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [&>button:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [&>a:hover]:[transform:translateY(-2px)] [&>a:hover]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&>a:hover]:[filter:saturate(1.08)] later:[&>button:active:not(:disabled)]:[transform:translateY(0)] flex flex-wrap justify-end gap-[9px] max-[681px]:w-full max-[681px]:later:[justify-content:stretch] max-[681px]:[&>button]:flex-1 max-[681px]:[&>a]:flex-1">{actions}</div>
     </header>
   );
 }

@@ -2,7 +2,6 @@ import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Log from './components/Log';
 import BranchLogin from './components/BranchLogin';
-import ResetPassword from './components/ResetPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AppLoader } from './components/ApiUi';
 import { AuthProvider, ROLE_HOME, useAuth } from './context/AuthContext';
@@ -98,8 +97,6 @@ export default function App() {
             {/* VITE_PORTAL (lib/portal.js): the staff build has no branch login, the branch
                 build has no staff login or staff pages; unset keeps every route. */}
             <Route path="/" element={IS_BRANCH_PORTAL ? <BranchLogin /> : <Log />} />
-            {/* Public: opened from the "create your password" email. */}
-            <Route path="/reset-password" element={<ResetPassword />} />
             {!IS_STAFF_PORTAL && (
               <>
                 <Route path="/branch-login" element={<BranchLogin />} />

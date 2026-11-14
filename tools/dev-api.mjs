@@ -19,6 +19,14 @@ const auth = fakeAuth(db);
 await linkSeedUsers(db, auth, password);
 const api = createApp({ db, auth, files: memoryFiles(), costingEnabled: false });
 
+// npm run dev:api:demo: the supply workflow demo (local only; it refuses anything but this
+// in-memory PGlite database). See supabase/seed/supplyDemo.ts and docs/defense-demo.md.
+if (process.argv.includes('--supply-demo')) {
+  const { seedSupplyDemo } = await import('../supabase/seed/supplyDemo.ts');
+  const made = await seedSupplyDemo(pg, api, { local: true, password });
+  console.log('Supply demo ready:', made);
+}
+
 const root = new Hono();
 root.use('/auth/*', cors({ origin: '*', allowHeaders: ['authorization', 'content-type', 'apikey', 'x-client-info', 'x-supabase-api-version'] }));
 

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supply requests – Franchise Titan</title>
+<style>
+:root{color-scheme:dark;--bg:#0a0e1c;--p:#10162a;--p2:#151c34;--bd:#232c4a;--tx:#eef1fb;--mu:#8e98b8;--ac:#6d7bff;--ac2:#a78bfa;--ok:#34d399;--wn:#fbbf24;--er:#f87171;--bl:#60a5fa;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 Inter,system-ui,Segoe UI,sans-serif}
+.app{max-width:1280px;margin:auto;padding:20px}
+header{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-end;margin-bottom:16px}
+h1{margin:0;font-size:30px;letter-spacing:-.5px}.sub{color:var(--mu);font-size:12px}
+.eyebrow{font-size:10px;letter-spacing:.15em;color:var(--ac);font-weight:700}
+.role{display:flex;background:var(--p);border:1px solid var(--bd);border-radius:12px;padding:3px}
+.role button{background:none;border:0;color:var(--mu);padding:8px 14px;border-radius:9px;cursor:pointer;font-weight:600}
+.role button.on{background:linear-gradient(135deg,var(--ac),var(--ac2));color:#fff}
+.btn{background:var(--p2);border:1px solid var(--bd);color:var(--tx);padding:8px 14px;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px}
+.btn:hover{border-color:var(--ac)}.btn.pri{background:linear-gradient(135deg,var(--ac),var(--ac2));border:0;color:#fff}
+.btn.dng{color:var(--er)}.btn.sm{padding:6px 11px;font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--p);border:1px solid var(--bd);border-radius:16px;padding:14px 16px;cursor:pointer}
+.kpi:hover{border-color:var(--ac)}.kpi small{color:var(--mu);font-size:11px}.kpi b{display:block;font-size:28px;margin:2px 0}
+.kpi.warn b{color:var(--er)}.kpi.act b{color:var(--ac2)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;flex:1 1 100%}
+.tab{white-space:nowrap;background:var(--p);border:1px solid var(--bd);color:var(--mu);padding:8px 13px;border-radius:11px;cursor:pointer;font-weight:600}
+.tab span{margin-left:6px;background:var(--p2);padding:1px 7px;border-radius:8px;font-size:11px}
+.tab.on{color:#fff;border-color:var(--ac);background:#1a2250}
+input,select,textarea{background:var(--p);border:1px solid var(--bd);color:var(--tx);border-radius:10px;padding:9px 12px;font:inherit;width:100%}
+.bar input{flex:1 1 240px;width:auto}.bar select{width:auto}
+.card{background:var(--p);border:1px solid var(--bd);border-radius:16px;overflow:hidden}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:900px}
+th{font-size:10px;letter-spacing:.12em;color:var(--mu);text-align:left;padding:12px 16px;background:var(--p2)}
+td{padding:13px 16px;border-top:1px solid var(--bd);vertical-align:middle}
+tr.row{cursor:pointer}tr.row:hover td{background:#131a33}
+tr.mine td:first-child{box-shadow:inset 3px 0 var(--ac2)}
+.br{font-weight:700;font-size:15px}.id{color:var(--mu);font-size:12px;font-family:ui-monospace,monospace}
+.chip{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;border:1px solid}
+.n{color:var(--mu);border-color:var(--bd)}.u{color:var(--wn);border-color:#5b4a1c;background:#2a2410}
+.c{color:var(--er);border-color:#6b2a2a;background:#2b1414}.g{color:var(--ok);border-color:#1d5a44;background:#0f2a22}
+.b{color:var(--bl);border-color:#27487a;background:#111f38}.h{color:var(--wn);border-color:#5b4a1c;background:#2a2410}
+.seg{display:flex;gap:3px;margin-bottom:5px}.seg i{width:16px;height:5px;border-radius:3px;background:var(--bd)}
+.seg i.d{background:var(--ac)}.seg i.cur{background:var(--ac2);box-shadow:0 0 6px var(--ac2)}
+.st{font-weight:600;font-size:13px}.ow{font-size:11px;color:var(--mu)}
+.ov{color:var(--er);font-size:11px;font-weight:700}
+.empty{padding:40px;text-align:center;color:var(--mu)}
+.ov-bg{position:fixed;inset:0;background:#02040dcc;display:none;z-index:20}
+.ov-bg.on{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100%);background:var(--p);border-left:1px solid var(--bd);z-index:21;overflow:auto;transform:translateX(100%);transition:.25s;padding:22px;padding-top:calc(22px + env(safe-area-inset-top,0px))}
+.drawer.on{transform:none}
+.drawer h2{margin:4px 0 2px;font-size:24px}
+.sec{margin-top:20px}.sec h3{font-size:11px;letter-spacing:.14em;color:var(--mu);margin:0 0 8px}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px}.kv div{background:var(--p2);border-radius:10px;padding:9px 12px}
+.kv small{display:block;color:var(--mu);font-size:11px}
+.items{width:100%;min-width:0;font-size:13px}.items th{padding:8px}.items td{padding:9px 8px}
+.low{color:var(--er);font-weight:700}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.tl{border-left:2px solid var(--bd);margin-left:6px;padding-left:16px}
+.tl div{position:relative;margin-bottom:14px}.tl div:before{content:"";position:absolute;left:-23px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--ac)}
+.tl small{color:var(--mu)}
+.alert{background:#2a2410;border:1px solid #5b4a1c;color:var(--wn);padding:10px 12px;border-radius:10px;margin-top:12px;font-size:13px}
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:30;padding:16px}
+.modal.on{display:flex}.mb{background:var(--p);border:1px solid var(--bd);border-radius:18px;padding:22px;width:min(460px,100%);max-height:90vh;overflow:auto}
+.mb h3{margin:0 0 4px;font-size:20px}.mb label{display:block;margin:14px 0 5px;font-size:12px;color:var(--mu);font-weight:600}
+.mb .f{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#14301f;border:1px solid #1d5a44;color:var(--ok);padding:10px 18px;border-radius:12px;display:none;z-index:40}
+.x{float:right}
+</style></head><body><div class="app">
+<header><div><div class="eyebrow">HERALD OPERATIONS</div><h1>Supply requests</h1><div class="sub">Ordering and fulfillment workflow</div></div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><div class="sub">Viewing as</div><div class="role" id="role"></div><button class="btn pri" onclick="toast('Opens New Supply Request form')">+ New supply request</button></div></header>
+<div class="kpis" id="kpis"></div>
+<div class="bar"><div class="tabs" id="tabs"></div>
+<input id="q" placeholder="Search branch, city, brand or request ID" oninput="render()">
+<select id="urg" onchange="render()"><option value="">All urgency</option><option>Normal</option><option>Urgent</option><option>Critical</option></select>
+<select id="sort" onchange="render()"><option value="pri">Sort: Priority</option><option value="tgt">Sort: Target date</option><option value="br">Sort: Branch A–Z</option></select></div>
+<div class="card scroll"><table><thead><tr><th>BRANCH / REQUEST</th><th>ITEMS</th><th>URGENCY</th><th>PROGRESS</th><th>TARGET</th><th style="text-align:right">NEXT STEP</th></tr></thead><tbody id="tb"></tbody></table></div>
+</div>
+<div class="ov-bg" id="bg" onclick="closeAll()"></div>
+<aside class="drawer" id="dr"></aside>
+<div class="modal" id="md"><div class="mb" id="mb"></div></div>
+<div class="toast" id="ts"></div>
+<script>
+const S=['Submitted','Admin Review','Logistics Confirm','Scheduled','Preparing','Dispatched','Delivered','Completed'];
+let role='Admin',tab='mine',cur=null;
+let R=[
+{id:'FT-20261111-W3G4IW',br:'Daily Dash',city:'Muntinlupa City',st:3,fl:null,u:'Normal',tg:'Nov 13',ov:0,items:[['Coffee beans',10,10,'OK','kg',8],['Cups',200,420,'OK','pcs',200]],tl:[['Branch','Submitted','Nov 11, 9:00 AM'],['Admin','Endorsed (Full)','Nov 11, 10:30 AM']]},
+{id:'FT-20261111-NXQU6E',br:'Daily Dash',city:'Taguig',st:2,fl:null,u:'Critical',tg:'Nov 13',ov:0,reason:'Ubos na ang coffee beans sa branch',items:[['Coffee beans',10,6,'Critical','kg',8],['Cups',400,900,'Normal','pcs',200],['Fresh Milk',20,30,'Low','L',18]],bulk:'Grand opening promo',tl:[['Branch','Submitted','Nov 11, 9:00 AM']]},
+{id:'FT-20261111-9QIGMK',br:'GoDo',city:'Quezon City',st:5,fl:null,u:'Urgent',tg:'Nov 13',ov:0,reason:'May mall event',items:[['Graham Crumbs',5,12,'OK','kg',4],['Ice',40,80,'OK','kg',30]],tl:[['Branch','Submitted','Nov 10, 9:00 AM'],['Admin','Endorsed (Full)','Nov 10, 10:30 AM'],['Logistics','Accepted schedule','Nov 10, 2:00 PM']]},
+{id:'FT-20261110-A71RTD',br:'Kkopi',city:'Makati',st:6,fl:null,u:'Normal',tg:'Nov 12',ov:1,items:[['Tea leaves',8,20,'OK','kg',8]],tl:[['Branch','Submitted','Nov 9'],['Logistics','Dispatched – Juan, ABC 1234, ETA 11:00','Nov 11, 8:00 AM']]},
+{id:'FT-20261108-HLD002',br:'Daily Dash',city:'Batangas City',st:2,fl:'hold',u:'Normal',tg:'Nov 20',ov:0,reason:'Hinihintay ang supplier',items:[['Coffee beans',10,4,'Low','kg',8]],tl:[['Branch','Submitted','Nov 8'],['Admin','On Hold – restock Nov 20','Nov 8']]},
+{id:'FT-20261109-LG3NDT',br:'GoDo',city:'Pasig',st:3,fl:'newdate',u:'Normal',tg:'Nov 14',ov:0,items:[['Cream Cheese',6,10,'OK','kg',5]],tl:[['Logistics','Requested new date: Nov 14 (Nasa repair ang truck)','Nov 10']]},
+{id:'FT-20261105-DSC771',br:'Kkopi',city:'Makati',st:7,fl:'disc',u:'Normal',tg:'Nov 8',ov:0,items:[['Cups',200,200,'OK','pcs',200]],tl:[['Branch','Received: 195 maayos, 5 sira (nadurog ang kahon)','Nov 8'],['Logistics','POD encoded','Nov 8']]},
+{id:'FT-20261104-OKK100',br:'GoDo',city:'Quezon City',st:8,fl:null,u:'Normal',tg:'Nov 6',ov:0,items:[['Ice',30,60,'OK','kg',30]],tl:[['System','Completed','Nov 6']]}
+];
+function owner(r){if(r.st==8)return'';if(r.fl)return'Admin';if(r.st<=2)return'Admin';if(r.st<=6)return'Logistics';return'Branch'}
+function btnTxt(r){const o=owner(r);if(o!=role)return'';if(r.fl=='hold')return'Resume';if(r.fl=='disc')return'Resolve';if(r.fl=='newdate')return'Review date';
+return role=='Admin'?'Review':{3:'Confirm schedule',4:'Start preparing',5:'Dispatch',6:'Encode POD'}[r.st]}
+function stat(r){return r.fl=='hold'?'On Hold (Restock)':r.fl=='disc'?'Discrepancy Review':r.fl=='newdate'?'New date requested':S[r.st-1]}
+const pr={Critical:0,Urgent:1,Normal:2};
+const tabs=[['mine','Needs my action',r=>owner(r)==role],['all','All',r=>1],['rev','Under review',r=>r.st<=2&&!r.fl],['hold','On hold',r=>r.fl=='hold'],['ship','Scheduled / Preparing',r=>r.st==4||r.st==5],['dsp','Dispatched',r=>r.st==6],['disc','Discrepancy',r=>r.fl=='disc'],['done','Completed',r=>r.st==8]];
+function list(){let q=document.getElementById('q').value.toLowerCase(),u=urg.value,f=tabs.find(t=>t[0]==tab)[2];
+let L=R.filter(r=>f(r)&&(!u||r.u==u)&&(r.br+r.city+r.id).toLowerCase().includes(q));const s=sort.value;
+L.sort((a,b)=>s=='br'?a.br.localeCompare(b.br):s=='tgt'?a.tg.localeCompare(b.tg):(b.ov-a.ov)||(pr[a.u]-pr[b.u]));return L}
+function render(){
+document.getElementById('role').innerHTML=['Admin','Logistics'].map(x=>`<button class="${x==role?'on':''}" onclick="role='${x}';tab='mine';render()">${x}</button>`).join('');
+const act=R.filter(r=>owner(r)==role).length,ov=R.filter(r=>r.ov).length;
+kpis.innerHTML=`<div class="kpi act" onclick="tab='mine';render()"><small>Needs my action</small><b>${act}</b><small>Waiting for ${role}</small></div>
+<div class="kpi warn" onclick="tab='all';render()"><small>Overdue</small><b>${ov}</b><small>Past SLA or target date</small></div>
+<div class="kpi" onclick="tab='hold';render()"><small>On hold</small><b>${R.filter(r=>r.fl=='hold').length}</b><small>Waiting for restock</small></div>
+<div class="kpi" onclick="tab='dsp';render()"><small>In transit</small><b>${R.filter(r=>r.st==6).length}</b><small>Dispatched</small></div>
+<div class="kpi" onclick="tab='disc';render()"><small>Discrepancies</small><b>${R.filter(r=>r.fl=='disc').length}</b><small>For review</small></div>`;
+tabs.innerHTML=tabs0();
+const L=list();
+tb.innerHTML=L.length?L.map(r=>{const b=btnTxt(r),o=owner(r);return`<tr class="row ${o==role?'mine':''}" onclick="openD('${r.id}')">
+<td><div class="br">${r.br} · ${r.city}</div><div class="id">${r.id}</div></td>
+<td>${r.items.length} item${r.items.length>1?'s':''}<div class="sub">${r.items.slice(0,2).map(i=>i[0]).join(', ')}${r.items.length>2?'…':''}</div></td>
+<td><span class="chip ${r.u=='Critical'?'c':r.u=='Urgent'?'u':'n'}">${r.u}</span></td>
+<td><div class="seg">${S.map((_,i)=>`<i class="${i+1<r.st||r.st==8?'d':i+1==r.st?'cur':''}"></i>`).join('')}</div><div class="st">${stat(r)}</div><div class="ow">${o?'Waiting: '+o:'Closed'}</div></td>
+<td>${r.tg}${r.ov?'<div class="ov">● OVERDUE</div>':''}</td>
+<td style="text-align:right">${b?`<button class="btn pri sm" onclick="event.stopPropagation();openD('${r.id}')">${b}</button>`:'<span class="sub">View</span>'}</td></tr>`}).join(''):'<tr><td colspan="6" class="empty">Walang request sa view na ito.</td></tr>'}
+function tabs0(){return tabs.map(t=>`<button class="tab ${t[0]==tab?'on':''}" onclick="tab='${t[0]}';render()">${t[1]}<span>${R.filter(t[2].bind?r=>owner(r)==role&&t[0]=='mine'||t[0]!='mine'&&t[2](r):0).length}</span></button>`).join('')}
+function openD(id){cur=R.find(r=>r.id==id);drawer()}
+function drawer(){const r=cur;
+dr.innerHTML=`<button class="btn sm x" onclick="closeAll()">✕ Close</button><div class="eyebrow">${r.id}</div><h2>${r.br} · ${r.city}</h2>
+<div style="margin:6px 0"><span class="chip b">${stat(r)}</span> <span class="chip ${r.u=='Critical'?'c':r.u=='Urgent'?'u':'n'}">${r.u}</span> ${r.ov?'<span class="chip c">Overdue</span>':''}</div>
+<div class="seg" style="margin-top:12px">${S.map((_,i)=>`<i style="flex:1" class="${i+1<r.st||r.st==8?'d':i+1==r.st?'cur':''}"></i>`).join('')}</div>
+<div class="sub">${S.map((s,i)=>i+1==r.st?'Stage '+(i+1)+' of 8 · '+s:'').join('')}</div>
+${r.reason?`<div class="alert"><b>Reason:</b> ${r.reason}${r.bulk?'<br><b>Bulk reason:</b> '+r.bulk:''}</div>`:''}
+<div class="sec"><h3>NEXT ACTION · ${owner(r)||'NONE'}</h3><div class="actions">${acts(r)}</div></div>
+<div class="sec"><h3>DETAILS</h3><div class="kv"><div><small>Target delivery</small>${r.tg}, 2026</div><div><small>Delivery address</small>Branch default</div><div><small>Contact</small>09171234567</div><div><small>Open requests (branch)</small>1</div></div></div>
+<div class="sec"><h3>ITEMS</h3><table class="items"><tr><th>Item</th><th>Requested</th><th>Warehouse</th><th>Branch stock</th><th>Estimate</th></tr>
+${r.items.map(i=>`<tr><td>${i[0]}</td><td>${i[1]} ${i[4]}</td><td class="${i[2]<i[1]?'low':''}">${i[2]} ${i[4]}${i[2]<i[1]?' ⚠':''}</td><td>${i[3]}</td><td>${i[5]}</td></tr>`).join('')}</table></div>
+<div class="sec"><h3>AUDIT TRAIL</h3><div class="tl">${r.tl.slice().reverse().map(t=>`<div><b>${t[1]}</b><br><small>${t[0]} · ${t[2]}</small></div>`).join('')}</div></div>`;
+bg.classList.add('on');dr.classList.add('on')}
+function B(l,fn,c){return`<button class="btn ${c||''}" onclick="${fn}">${l}</button>`}
+function acts(r){const o=owner(r);if(o!=role)return`<span class="sub">${o?'Naghihintay kay '+o+'. Read-only ito para sa '+role+'.':'Closed.'}</span>`;
+if(r.fl=='hold')return B('Resume request',"adv('Resume')",'pri')+B('Update restock date',"M('Update restock date',[['date','New expected date'],['text','Reason']],'Restock date updated')")+B('Cancel','M("Cancel request",[["text","Reason"]],"Cancelled")','dng');
+if(r.fl=='disc')return['Accept loss','For Logistics investigation','Branch to re-request'].map(x=>B(x,`M('${x}',[['text','Remarks']],'Completed with Discrepancy',()=>{r.fl=null;r.st=8})`)).join('');
+if(r.fl=='newdate')return B('Approve new date',"adv('Approve date')",'pri')+B('Reject','M("Reject date",[["text","Reason"]],"Date rejected")','dng');
+if(role=='Admin')return B('Endorse – Full',"adv('Endorsed (Full)')",'pri')+B('Fulfillment decision','decide()')+B('Return for correction','M("Return for correction",[["text","Reason"]],"Returned to branch")')+B('Reject','M("Reject request",[["text","Reason"]],"Rejected")','dng');
+if(r.st==3)return B('Accept schedule',"adv('Accepted schedule')",'pri')+B('Request new date','M("Request new date",[["date","New date"],["text","Reason"]],"Sent to Admin")')+B('Report shortage','M("Report shortage",[["number","Actual quantity"],["text","Reason"]],"Sent back to Admin")');
+if(r.st==4)return B('Start preparing',"adv('Preparing')",'pri');
+if(r.st==5)return B('Dispatch','M("Dispatch",[["text","Driver name"],["tel","Driver contact (11 digits)"],["text","Plate number"],["datetime-local","Departure"],["datetime-local","ETA"]],"Dispatched",()=>adv("Dispatched",1))','pri')+B('Report shortage','M("Report shortage",[["number","Actual quantity"],["text","Reason"]],"Sent back to Admin")');
+if(r.st==6)return B('Encode POD','M("Encode POD",[["text","Received by"],["datetime-local","Actual delivery"],["file","POD (photo or signature)"]],"POD saved",()=>adv("POD encoded",1))','pri')}
+function adv(t,silent){cur.fl=null;cur.st=Math.min(cur.st+1,8);if(cur.st==2)cur.st=3;cur.tl.push([role,t,'Just now']);if(!silent)toast(t);render();drawer()}
+function decide(){M('Fulfillment decision',[['select','Type',['Hold for Restock','Partial – Ship Now','Partial – Consolidated']],['date','Expected restock date'],['text','Reason']],'Decision saved',()=>{cur.tl.push(['Admin','Fulfillment decision recorded','Just now']);if(1){cur.fl='hold'}})}
+function M(title,f,ok,fn){mb.innerHTML=`<h3>${title}</h3>`+f.map(x=>`<label>${x[1]}</label>`+(x[0]=='select'?`<select>${x[2].map(o=>`<option>${o}</option>`).join('')}</select>`:x[0]=='text'&&/Reason|Remarks/.test(x[1])?'<textarea rows="3"></textarea>':`<input type="${x[0]}">`)).join('')+`<div class="f"><button class="btn" onclick="md.classList.remove('on')">Cancel</button><button class="btn pri" id="go">Confirm</button></div>`;
+md.classList.add('on');md.style.background='#02040dcc';go.onclick=()=>{md.classList.remove('on');if(fn)fn();else{cur.tl.push([role,title,'Just now']);if(/Reject request|Returned|Cancel/.test(title)&&!/date/.test(title)){cur.st=8;cur.fl=null}else if(/Request new date/.test(title)){cur.fl='newdate'}else if(/Report shortage/.test(title)){cur.st=2;cur.fl=null}}toast(ok);render();drawer()}}
+function closeAll(){bg.classList.remove('on');dr.classList.remove('on');md.classList.remove('on')}
+function toast(t){ts.textContent=t;ts.style.display='block';setTimeout(()=>ts.style.display='none',2200)}
+render();
+</script></body></html>
