@@ -71,7 +71,9 @@ test('the LOI cannot be submitted or verified without a file', async () => {
 test('Proposed site at LOI Submission: save, reload, Admin return with reason, resubmit, verify, then read-only', async () => {
   const id = await applicant('loi_submitted', { loi_confirmed_at: new Date() });
   assert.equal((await site(id, requirementForm('proposed_site', 'loi', { site_photos: null }))).json.errors.site_photos[0], 'Attach the site photos.');
-  assert.ok((await site(id, requirementForm('proposed_site', 'loi', { address: null }))).json.errors.address);
+  assert.match((await site(id, requirementForm('proposed_site', 'loi', { location: null }))).json.errors['location.province_code'][0], /Choose a Province/);
+  assert.match((await site(id, requirementForm('proposed_site', 'loi', { 'location.city_code': '' }))).json.errors['location.city_code'][0], /Choose a City\/Municipality/,'City/Municipality is required');
+  assert.match((await site(id, requirementForm('proposed_site', 'loi', { 'location.city_code': '0402103000' }))).json.errors['location.city_code'][0], /is not in Metro Manila/, 'a city outside the province is refused');
   assert.ok((await site(id, requirementForm('proposed_site', 'loi', { ownership: 'rented' }))).json.errors.ownership);
   assert.equal((await site(id, requirementForm('proposed_site', 'loi'), admin)).status, 403, 'Admin does not encode it');
   const sent = await site(id);
@@ -80,7 +82,9 @@ test('Proposed site at LOI Submission: save, reload, Admin return with reason, r
   for (const token of [admin, sales]) {
     const item = (await detail(id, token)).requirements.items.find((i: any) => i.key === 'proposed_site');
     assert.equal(item.status, 'submitted');
-    assert.equal(item.data.address, '123 Real St, Las Pinas', 'saved and shown again on reload');
+    assert.equal(item.data.address, 'Talon Uno, Las Piñas City, Metro Manila (NCR)', 'saved and shown again on reload');
+    assert.deepEqual([item.data.location.province, item.data.location.city, item.data.location.barangay], ['Metro Manila (NCR)', 'Las Piñas City', 'Talon Uno']);
+    assert.equal(item.location_text, 'Talon Uno, Las Piñas City, Metro Manila (NCR)', 'Admin sees the formatted location');
     assert.equal(item.data.ownership, 'leased');
     assert.equal(item.files.length, 1);
   }

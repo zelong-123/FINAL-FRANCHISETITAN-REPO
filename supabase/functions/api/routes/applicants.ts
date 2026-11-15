@@ -32,6 +32,7 @@ import { moveToForApproval, OFF_MESSAGE, recordPayload } from '../services/payme
 import { entryStatus, legacySatisfied, paymentProgress } from '../services/requiredPayments.ts';
 import { applicantMonitor, applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, STAGE_DAYS_SQL } from '../services/monitoring.ts';
 import { applicantHistory, REPORT_PAGES } from '../services/applicationDetail.ts';
+import { locationText, readLocation } from '../services/psgc.ts';
 import { canSeeRequirementFiles, requirementsPayload } from './requirements.ts';
 import { accountAuditValues, cleanOptionalPhone, issueInitialCredentials } from '../services/credentials.ts';
 
@@ -520,6 +521,7 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   const [names] = await db.query(
     `select (select full_name from users where id = $1) as reviewed, (select full_name from users where id = $2) as loi_by, (select full_name from users where id = $3) as approved,
        (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code,
+       (select current_city from franchise_inquiries where id = $5) as inquiry_city, (select preferred_franchise_location from franchise_inquiries where id = $5) as inquiry_preferred,
        (select name from brands where id = coalesce($6::bigint, (select i.preferred_brand_id from franchise_inquiries i where i.id = $5), $4)) as inquiry_brand,
        (select b.name from activity_schedules s join brands b on b.id = s.selected_brand_id where s.applicant_id = $7 and s.activity_type = 'orientation' and s.status = 'completed'
          order by coalesce(s.completed_at, s.starts_at) desc limit 1) as selected_brand`,
@@ -543,6 +545,10 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   return {
     applicant: {
       id, applicant_code: a.applicant_code, lead_code: names.lead_code ?? null, full_name: a.full_name, email: a.email, phone: a.phone, address: a.address, notes: a.notes,
+      // Current residence and preferred franchise location (copied from the inquiry; older free text as fallback).
+      residence_location: a.residence_location ?? null, preferred_location: a.preferred_location ?? null, no_preferred_location: Boolean(a.no_preferred_location),
+      address_text: locationText(a.residence_location, a.address ?? names.inquiry_city),
+      preferred_location_text: locationText(a.preferred_location, names.inquiry_preferred, Boolean(a.no_preferred_location)),
       status: a.status, status_label: await statusLabel(db, a), application_date: a.application_date, approved_at: iso(a.approved_at),
       assigned_sales: a.assigned_sales_user_id ? { id: a.assigned_sales_user_id, full_name: assignedSales[0]?.full_name ?? null } : null, preferred_brand: a.preferred_brand_id && names.brand ? { id: a.preferred_brand_id, name: names.brand } : null,
       inquiry_brand: names.inquiry_brand ?? null, selected_brand: names.selected_brand ?? null,
@@ -649,6 +655,26 @@ applicantRoutes.put('/applicants/:applicant', admin, async (c) => {
   await audit(c, db, 'applicant.updated', { type: APPLICANT_MODEL, id: a.id }, a, saved);
   const [brand] = await db.query(`select * from brands where id = $1`, [saved.preferred_brand_id]);
   return ok(c, { ...applicantJson(saved), preferred_brand: brand ?? null }, 'Applicant updated.');
+});
+
+/**
+ * The preferred franchise location (general area), added or changed later by the assigned Sales user
+ * or Admin: Province -> City/Municipality -> Barangay/area. No City/Municipality = "No preferred
+ * location yet". The inquiry keeps its original values.
+ */
+applicantRoutes.put('/applicants/:applicant/preferred-location', role('admin', 'sales'), async (c) => {
+  const { db } = c.get('deps');
+  const a = await load(c);
+  authorize(c, a, true);
+  await assertAssignedSales(c, a);
+  if (a.archived_at || ['active_franchisee', 'rejected'].includes(a.status)) fail('applicant', 'A closed or archived applicant keeps its preferred location.');
+  const input = await readInput(c);
+  const preferred = await readLocation(db, input.preferred_location, 'preferred_location');
+  const saved = (await updateRow(db, 'applicants', a.id, { preferred_location: preferred, no_preferred_location: !preferred?.city_code }))!;
+  await audit(c, db, 'applicant.preferred_location_updated', { type: APPLICANT_MODEL, id: a.id },
+    { preferred_location: a.preferred_location ?? null, no_preferred_location: Boolean(a.no_preferred_location) },
+    { preferred_location: saved.preferred_location ?? null, no_preferred_location: Boolean(saved.no_preferred_location) });
+  return ok(c, applicantJson(saved), 'Preferred franchise location saved.');
 });
 
 /** Admin assigns, or reassigns with a required reason, the Sales user who handles the applicant. */
@@ -1120,7 +1146,10 @@ applicantRoutes.post('/applicants/:applicant/activate', admin, async (c) => {
   if (!owner || owner.role_name !== 'franchisee' || owner.account_status !== 'active') {
     fail('account', 'Create an active Franchisee branch account before marking this applicant as an Active Franchisee.');
   }
-  const v = await validate(db, await readInput(c), { business_name: ['nullable', 'string', 'max:255'] });
+  const input = await readInput(c);
+  const v = await validate(db, input, { business_name: ['nullable', 'string', 'max:255'] });
+  // The branch name is suggested from the verified Proposed site; Admin may edit it.
+  const branchName = input.location && typeof input.location === 'object' ? String(input.location.name ?? '').trim().slice(0, 255) || null : null;
   const franchisee = await db.tx(async (tx) => {
     const [locked] = await tx.query(`select * from applicants where id = $1 for update`, [a.id]);
     const [existing] = await tx.query(`select * from franchisees where applicant_id = $1 limit 1`, [a.id]);
@@ -1130,7 +1159,7 @@ applicantRoutes.post('/applicants/:applicant/activate', admin, async (c) => {
     };
     const row = existing ? await updateRow(tx, 'franchisees', existing.id, fields) : await insertRow(tx, 'franchisees', { applicant_id: a.id, ...fields });
     if (locked.status !== 'active_franchisee') await transition(c, tx, locked, 'active_franchisee', user, 'Marked as active franchisee.', 'applicant.activated');
-    await provisionBranch(tx, row!.id);
+    await provisionBranch(tx, row!.id, { name: branchName });
     return row!;
   });
   const [appRow] = await db.query(`select * from applicants where id = $1`, [a.id]);

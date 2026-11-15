@@ -283,7 +283,9 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.ok(!('auth_user_id' in portal.json.data));
   assert.equal((await q(`select status from applicants where id = $1`, [applicantId]))[0].status, 'active_franchisee');
   const [branch] = await q(`select l.* from franchise_locations l join franchisees f on f.id = l.franchisee_id where f.applicant_id = $1`, [applicantId]);
-  assert.match(branch.name, / · Las Pinas$/, 'branch named from brand + preferred location, never the person');
+  assert.match(branch.name, / Las Piñas City – Talon Uno$/, 'a new branch is named "<Brand> <City> – <Barangay/St>" from the verified Proposed site, never the person');
+  assert.equal(branch.address, 'Talon Uno, Las Piñas City, Metro Manila (NCR)');
+  assert.equal(branch.province, 'Metro Manila (NCR)');
   assert.ok((await q(`select archived_at from franchise_inquiries where id = $1`, [inquiryId]))[0].archived_at, 'active franchisee archives its lead');
   assert.equal((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'rejected' } })).status, 422, 'terminal stage');
   assert.equal((await call('DELETE', path, { token: admin })).status, 422);

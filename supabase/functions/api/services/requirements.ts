@@ -2,8 +2,9 @@
 // from the API (GET /applicants/:id → requirements.config), so nothing is duplicated there.
 import type { Db, Row } from '../lib/db.ts';
 import { fail, manilaToday } from '../lib/http.ts';
+import { formatLocation, readLocation } from './psgc.ts';
 
-export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select'; required?: boolean; options?: { value: string; label: string }[]; min_length?: number; not_future?: boolean; letters_only?: boolean; show_when?: { key: string; value: string } };
+export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select' | 'location'; required?: boolean; placeholder?: string; barangay_label?: string; options?: { value: string; label: string }[]; min_length?: number; not_future?: boolean; letters_only?: boolean; show_when?: { key: string; value: string } };
 export type FileDef = { key: string; label: string; required: boolean; multiple?: boolean; accept: string };
 export type RequirementDef = { key: string; stage: string; label: string; help: string; fields: FieldDef[]; files: FileDef[] };
 
@@ -57,9 +58,12 @@ export const REQUIREMENTS: RequirementDef[] = [
     files: [{ key: 'interview_sheet', label: 'Signed interview sheet', required: true, accept: DOCS }],
   },
   {
-    key: 'proposed_site', stage: 'loi', label: 'Proposed site', help: 'The address, whether it is owned or leased, and photos of the site.',
+    key: 'proposed_site', stage: 'loi', label: 'Proposed site', help: 'The site location (Province, City/Municipality, Barangay/St), whether it is owned or leased, and photos of the site.',
     fields: [
-      { key: 'address', label: 'Site address', type: 'text', required: true },
+      // Province and City/Municipality required (PSGC list), Barangay/St optional text. Sent as
+      // location.province_code / location.city_code / location.barangay; stored as data.location, with
+      // data.address = the formatted text (older rows keep their typed address there).
+      { key: 'location', label: 'Site location', type: 'location', required: true, barangay_label: 'Barangay/St', placeholder: 'Barangay/St (Optional)' },
       { key: 'ownership', label: 'Owned or leased', type: 'select', required: true, options: [{ value: 'owned', label: 'Owned' }, { value: 'leased', label: 'Leased' }] },
     ],
     files: [{ key: 'site_photos', label: 'Site photos', required: true, multiple: true, accept: IMAGES }],
@@ -81,6 +85,7 @@ export const loadRequirementRows = async (db: Db, applicantId: number): Promise<
 export function readFields(def: RequirementDef, input: Row, choices: Record<string, { value: string; label: string }[]> = {}): Row {
   const data: Row = {};
   for (const field of def.fields) {
+    if (field.type === 'location') continue; // read by readLocationFields (needs the database)
     const raw = input[field.key];
     const value = raw === undefined || raw === null ? '' : String(raw).trim();
     if (field.show_when && String(input[field.show_when.key] ?? '').trim() !== field.show_when.value) continue;
@@ -95,6 +100,20 @@ export function readFields(def: RequirementDef, input: Row, choices: Record<stri
     if (field.min_length && value.length < field.min_length) fail(field.key, `${field.label} must be at least ${field.min_length} characters.`);
     if (value.length > 5000) fail(field.key, `${field.label} is too long.`);
     data[field.key] = value;
+  }
+  return data;
+}
+
+/** The location fields of a requirement (Proposed site): checked against the PSGC list. */
+export async function readLocationFields(db: Db, def: RequirementDef, input: Row): Promise<Row> {
+  const data: Row = {};
+  for (const field of def.fields.filter((f) => f.type === 'location')) {
+    const nested = input[field.key] && typeof input[field.key] === 'object' ? input[field.key] : {};
+    const part = (k: string) => input[`${field.key}.${k}`] ?? nested[k];
+    const loc = await readLocation(db, { province_code: part('province_code'), city_code: part('city_code'), barangay: part('barangay') }, field.key, { required: Boolean(field.required) });
+    if (!loc) continue;
+    data[field.key] = loc;
+    if (field.key === 'location') data.address = formatLocation(loc);
   }
   return data;
 }
