@@ -7,6 +7,8 @@ import {
   FaRotateLeft, FaTableCellsLarge, FaTrashCan, FaUserCheck, FaXmark,
 } from 'react-icons/fa6';
 import RequirementFileDrop from '../components/RequirementFileDrop';
+import LocationPicker from '../components/LocationPicker';
+import { differentFromPreferred, formatLocation, locationInput, locationText, suggestBranchName } from '../lib/locations';
 import {
   API_BASE_URL, api, authToken, firstValidationMessage,
 } from '../lib/api';
@@ -1235,6 +1237,39 @@ function RequirementStatus({ status }) {
  * Requirements of one stage: details + proof files submitted by the assigned Sales user,
  * Accepted or Returned (with a reason) by Admin. The list itself comes from the API config.
  */
+/** Current residence (from the inquiry) and the preferred franchise location, which Sales or Admin may add later. */
+function ApplicantLocations({ editing, canEdit, busy, onSave }) {
+  const [draft, setDraft] = useState(null);
+  const residence = locationText(editing.residence_location, editing.address);
+  const preferred = locationText(editing.preferred_location, null, editing.no_preferred_location);
+  return (
+    <div className="col-span-full grid gap-[8px] p-[12px_14px] border border-[#2b344c] rounded-[11px] [background:#0c111d] text-[13px]">
+      <div className="flex justify-between gap-4 flex-wrap"><span className="text-[#8f9bbd]">Current residence</span><span className="text-right text-[#e6eaf5]">{residence || '—'}</span></div>
+      <div className="flex justify-between gap-4 flex-wrap items-center">
+        <span className="text-[#8f9bbd]">Preferred franchise location</span>
+        <span className="inline-flex items-center gap-2 text-right text-[#e6eaf5]">
+          {preferred || '—'}
+          {canEdit && !draft && (
+            <button type="button" className="text-[12px] font-[600] text-[#8fb4ff] bg-transparent border-0 cursor-pointer hover:underline disabled:opacity-50" disabled={busy}
+              onClick={() => setDraft({ ...(editing.preferred_location || {}) })}>{editing.preferred_location?.city_code ? 'Change' : 'Add'}</button>
+          )}
+        </span>
+      </div>
+      {draft && (
+        <div className="grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[10px] max-[681px]:grid-cols-[1fr]">
+          <LocationPicker value={draft} onChange={setDraft} labels={{ barangay: 'Barangay/area' }} barangayPlaceholder="Barangay/area (Optional)" />
+          <span className="col-span-full flex justify-end gap-2">
+            <button type="button" className="min-h-[32px] p-[0_14px] border border-[#2b344c] rounded-[8px] bg-transparent text-[#c9d0e0] text-[12px] font-[600] disabled:opacity-50" disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
+            <button type="button" className="min-h-[32px] p-[0_14px] border border-[#3b5bdb] rounded-[8px] bg-[#1e3a8a] text-white text-[12px] font-[600] disabled:opacity-50" disabled={busy}
+              onClick={async () => { await onSave({ preferred_location: locationInput(draft) }); setDraft(null); }}>Save location</button>
+          </span>
+          {!draft.city_code && <small className="col-span-full text-muted">No City/Municipality: saved as "No preferred location yet".</small>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy, onSubmit, onAccept, onReturn, onReopen, onError, readOnly = false, title = null }) {
   const { user } = useAuth();
   const [editingKey, setEditingKey] = useState(null);
@@ -1277,14 +1312,27 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
   const summary = req.summary[stage] || {};
   const itemOf = (key) => req.items.find((item) => item.key === key) || { status: 'pending', data: {} };
   const optionLabel = (field, value) => field.options?.find((o) => o.value === value)?.label || value;
+  const shownValue = (field, item) => (field.type === 'location'
+    ? (item.location_text || formatLocation(item.data?.[field.key]) || item.data?.address || null)
+    : item.data?.[field.key] ? (field.type === 'date' ? formatDate(item.data[field.key]) : optionLabel(field, item.data[field.key])) : null);
   const startEdit = (def) => {
     const item = itemOf(def.key);
     setEditingKey(def.key);
-    setValues(Object.fromEntries(def.fields.map((field) => [field.key, item.data?.[field.key] || ''])));
+    setValues(Object.fromEntries(def.fields.map((field) => [field.key, field.type === 'location'
+      ? (item.data?.[field.key]?.city_code ? item.data[field.key] : { ...(item.location_prefill || {}) })
+      : (item.data?.[field.key] || '')])));
   };
   const send = (def) => {
     const body = new FormData();
-    for (const field of def.fields) if (values[field.key] && (!field.show_when || values[field.show_when.key] === field.show_when.value)) body.append(field.key, values[field.key]);
+    for (const field of def.fields) {
+      if (field.type === 'location') {
+        // Province and City/Municipality codes + the Barangay/St text (the API fills the names).
+        const loc = values[field.key] || {};
+        for (const key of ['province_code', 'city_code', 'barangay']) if (loc[key]) body.append(`${field.key}.${key}`, String(loc[key]).trim());
+        continue;
+      }
+      if (values[field.key] && (!field.show_when || values[field.show_when.key] === field.show_when.value)) body.append(field.key, values[field.key]);
+    }
     for (const slot of def.files) for (const file of values[`file:${slot.key}`] || []) body.append(slot.key, file);
     onSubmit(def.key, body);
     setEditingKey(null);
@@ -1351,7 +1399,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                 {activeDef.fields.map((field) => (
                   <div key={field.key} className="flex justify-between gap-4 text-[13px]">
                     <span className="text-[#8f9bbd]">{field.label}:</span>
-                    <span className="text-right font-bold text-[#e6eaf5]">{activeItem.data?.[field.key] ? (field.type === 'date' ? formatDate(activeItem.data[field.key]) : optionLabel(field, activeItem.data[field.key])) : '—'}</span>
+                    <span className="text-right font-bold text-[#e6eaf5]">{shownValue(field, activeItem) ?? '—'}</span>
                   </div>
                 ))}
                 {activeItem.status === 'accepted' && (
@@ -1447,16 +1495,17 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                 <div className="min-h-0 overflow-hidden grid gap-[6px]">
                 <small className="text-[#8f9bbd]">{def.help}</small>
                 {item.status === 'pending' && !summary.open && <span className="text-muted">Not started yet</span>}
-                {def.fields.some((field) => item.data?.[field.key]) && (
+                {def.fields.some((field) => shownValue(field, item)) && (
                   <dl className="grid grid-cols-[minmax(0,_1fr)_auto] gap-[6px_16px] m-0 [&_dt]:text-[#8f9bbd] [&_dd]:m-0 [&_dd]:text-right [&_dd]:text-[#e6eaf5] [&_dd]:[overflow-wrap:anywhere]">
-                    {def.fields.map((field) => (item.data?.[field.key] ? (
+                    {def.fields.map((field) => (shownValue(field, item) ? (
                       <React.Fragment key={field.key}>
                         <dt>{field.label}</dt>
-                        <dd>{field.type === 'date' ? formatDate(item.data[field.key]) : optionLabel(field, item.data[field.key])}</dd>
+                        <dd>{shownValue(field, item)}</dd>
                       </React.Fragment>
                     ) : null))}
                   </dl>
                 )}
+                {item.location_note && <small className="text-[#fbbf24]">{item.location_note}</small>}
                 {(item.files || []).length > 0 && (
                   <div className="flex justify-between items-start gap-4 flex-wrap">
                     <span className="text-[#c9d0e0]">Files:</span>
@@ -1491,6 +1540,21 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                   <div className="min-h-0 overflow-hidden">
                   <div className="grid gap-[10px] mt-1">
                     {def.fields.filter((field) => !field.show_when || values[field.show_when.key] === field.show_when.value).map((field) => (
+                      field.type === 'location' ? (
+                        <React.Fragment key={field.key}>
+                          <LocationPicker
+                            value={values[field.key] || {}}
+                            onChange={(next) => setValues({ ...values, [field.key]: next })}
+                            required={field.required}
+                            full
+                            labels={{ barangay: field.barangay_label || 'Barangay' }}
+                            barangayPlaceholder={field.placeholder || 'Barangay (Optional)'}
+                          />
+                          {differentFromPreferred(values[field.key], item.location_prefill) && (
+                            <small className="text-[#fbbf24]">{differentFromPreferred(values[field.key], item.location_prefill)}</small>
+                          )}
+                        </React.Fragment>
+                      ) : (
                       <Field key={field.key} label={field.label} required={field.required} full>
                         {field.type === 'select' ? (
                           <select value={values[field.key] || ''} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}>
@@ -1508,6 +1572,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                           />
                         )}
                       </Field>
+                      )
                     ))}
                     {def.files.map((slot) => (
                       <RequirementFileDrop
@@ -2591,6 +2656,7 @@ export default function Applicants() {
   const rejectPaymentEntry = (entry, reason) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${entry.id}/reject`, { reason, revision: entry.revision }), 'Payment rejected — Sales was told why.');
   const moveToForApproval = () => runRequest(() => api.post(`/applicants/${editing.id}/payments/complete`, {}), 'All required payments are Verified — the applicant is now at For Approval.');
   const logApplicantFollowUp = (body) => runRequest(() => api.post(`/applicants/${editing.id}/follow-ups`, body), 'Follow-up logged.');
+  const savePreferredLocation = (body) => runRequest(() => api.put(`/applicants/${editing.id}/preferred-location`, body), 'Preferred franchise location saved.');
   const submitRequirement = (key, body) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}`, body), 'Sent to Admin for review.');
   const acceptRequirement = (key, note = '') => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/accept`, note ? { note } : {}), 'Requirement accepted.');
   const reopenRequirement = (key, reason) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/reopen`, { reason }), 'Requirement re-opened for review.');
@@ -2918,13 +2984,16 @@ export default function Applicants() {
   const openActivateForm = () => {
     const existing = editing?.franchisee;
     const location = existing?.locations?.[0];
+    // A NEW branch is named "<Brand> <City/Municipality> – <Barangay/St>" from the verified Proposed site (editable).
+    const site = editing?.requirements?.items?.find((item) => item.key === 'proposed_site');
+    const siteLocation = site?.status === 'accepted' && site.data?.location?.city_code ? site.data.location : null;
     setActivateForm({
       business_name: existing?.business_name || editing?.full_name || '',
-      'location.name': location?.name || '',
+      'location.name': location?.name || suggestBranchName(editing?.preferred_brand?.name, siteLocation),
       'location.preferred_branch_type': location?.preferred_branch_type || editing?.preferred_brand?.name || '',
-      'location.address': location?.address || editing?.address || '',
-      'location.city': location?.city || '',
-      'location.province': location?.province || '',
+      'location.address': location?.address || formatLocation(siteLocation) || editing?.address || '',
+      'location.city': location?.city || siteLocation?.city || '',
+      'location.province': location?.province || siteLocation?.province || '',
       'location.region': location?.region || '',
       'location.contact_number': location?.contact_number || editing?.phone || '',
     });
@@ -3950,6 +4019,12 @@ export default function Applicants() {
                   <Field label="Email"><input type="email" value={draft.email} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field>
                   <Field label="Phone"><input value={draft.phone} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field>
                   <Field label="Address"><input value={draft.address} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field>
+                  <ApplicantLocations
+                    editing={editing}
+                    canEdit={(isAdminRole || isAssignedSales) && !editing.archived_at && !['active_franchisee', 'rejected'].includes(editing.status)}
+                    busy={acting}
+                    onSave={savePreferredLocation}
+                  />
                   <Field label="Notes" full>
                     <textarea value={draft.notes} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
                   </Field>

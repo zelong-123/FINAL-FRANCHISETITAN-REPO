@@ -13,6 +13,8 @@ import { can } from '../lib/roleAccess';
 import RecordCode from '../components/RecordCode';
 import FollowUpLog from '../components/FollowUpLog';
 import { downloadCsv, downloadPdf } from '../lib/export';
+import LocationPicker from '../components/LocationPicker';
+import { locationInput, locationText } from '../lib/locations';
 
 const initialForm = {
   first_name: '',
@@ -22,8 +24,8 @@ const initialForm = {
   phone: '',
   viber_number: '',
   preferred_brand_id: '', // shown to users as "Concept"
-  current_city: '',
-  preferred_franchise_location: '',
+  residence_location: {},  // Province -> City/Municipality -> Barangay -> Street (all optional)
+  preferred_location: {},  // Province -> City/Municipality -> Barangay/area (all optional)
   remarks: '',
 };
 
@@ -372,8 +374,8 @@ export default function Inquiries() {
       phone: digitsOnly(inquiry.phone),
       viber_number: digitsOnly(inquiry.viber_number),
       preferred_brand_id: String(inquiry.preferred_brand_id ?? inquiry.preferred_brand?.id ?? ''),
-      current_city: inquiry.current_city || '',
-      preferred_franchise_location: inquiry.preferred_franchise_location || '',
+      residence_location: inquiry.residence_location || {},
+      preferred_location: inquiry.preferred_location || {},
       remarks: inquiry.remarks || '',
     });
     setEditingId(inquiry.id);
@@ -422,8 +424,11 @@ export default function Inquiries() {
   const postInquiry = async (duplicateReasonText = null) => {
     const firstName = form.first_name.trim();
     const lastName = form.last_name.trim();
+    const { residence_location: residence, preferred_location: preferred, ...fields } = form;
     const payload = {
-      ...form,
+      ...fields,
+      residence_location: locationInput(residence),
+      preferred_location: locationInput(preferred),
       first_name: firstName,
       last_name: lastName,
       // Kept so the existing backend validation on lead_name keeps working.
@@ -447,8 +452,11 @@ export default function Inquiries() {
     await remote.reload();
   };
 
-  const submitCreate = async (event) => {
-    event.preventDefault();
+  // "No preferred franchise location yet?" — asked when saving without a City/Municipality.
+  const [askNoPreferred, setAskNoPreferred] = useState(null); // 'form' | 'drawer'
+
+  const submitCreate = async (event, confirmedNoLocation = false) => {
+    event?.preventDefault();
     if (saving) return;
     setActionError('');
     setSuccess('');
@@ -456,6 +464,10 @@ export default function Inquiries() {
     const validationError = validateForm();
     if (validationError) {
       setActionError(validationError);
+      return;
+    }
+    if (!confirmedNoLocation && !form.preferred_location?.city_code) {
+      setAskNoPreferred('form');
       return;
     }
 
@@ -533,7 +545,7 @@ export default function Inquiries() {
       email: current.email.trim() ? current.email : (row.email || ''),
       phone: current.phone.trim() ? current.phone : digitsOnly(row.phone),
       viber_number: current.viber_number.trim() ? current.viber_number : digitsOnly(row.viber_number),
-      current_city: current.current_city.trim() ? current.current_city : (row.current_city || ''),
+      residence_location: current.residence_location?.city_code ? current.residence_location : (row.residence_location || {}),
     }));
     setSuggestField(null);
     setSuggestions([]);
@@ -561,7 +573,7 @@ export default function Inquiries() {
     return (
       <ul className="absolute top-[calc(100%_+_4px)] left-0 right-0 z-20 m-0 p-1 [list-style:none] max-h-[232px] overflow-y-auto [background:#0d1220] border border-[#1f2842] rounded-[10px]" role="listbox" aria-label="Existing contacts">
         {suggestions.map((row, index) => {
-          const details = [row.phone, row.email, row.current_city].filter(Boolean).join(' · ');
+          const details = [row.phone, row.email, locationText(row.residence_location, row.current_city)].filter(Boolean).join(' · ');
           return (
             <li
               key={row.id}
@@ -630,9 +642,10 @@ export default function Inquiries() {
         all.push(...(result.data || []));
         if (!result.meta || p >= Number(result.meta.last_page || 1)) break;
       }
-      const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
+      const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Current residence', 'Preferred franchise location', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
       const rows = all.map((r) => [
-        r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '', titleCase(r.source || ''),
+        r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '',
+        locationText(r.residence_location, r.current_city) || '', locationText(r.preferred_location, r.preferred_franchise_location, r.no_preferred_location) || '', titleCase(r.source || ''),
         r.inquiry_date ? formatDate(r.inquiry_date) : '', titleCase(r.status || ''), r.days_in_status ?? '', r.overdue ? 'Yes' : 'No',
         r.follow_up_count ?? 0, r.next_follow_up_at ? formatDate(r.next_follow_up_at, true) : '',
       ]);
@@ -835,7 +848,7 @@ export default function Inquiries() {
       phone: digitsOnly(shown.phone),
       email: shown.email || '',
       preferred_brand_id: String(shown.preferred_brand_id ?? shown.preferred_brand?.id ?? ''),
-      preferred_franchise_location: shown.preferred_franchise_location || '',
+      preferred_location: shown.preferred_location || {},
       remarks: shown.remarks || '',
     });
     setDrawerError('');
@@ -853,7 +866,7 @@ export default function Inquiries() {
     setDrawerError('');
   }, [selectedId]);
 
-  const saveDrawerEdit = async () => {
+  const saveDrawerEdit = async (confirmedNoLocation = false) => {
     if (!shown || !drawerForm || drawerSaving) return;
     const f = drawerForm;
     if (!f.first_name.trim() || !f.last_name.trim()) {
@@ -868,6 +881,10 @@ export default function Inquiries() {
       setDrawerError('Please choose a concept (brand).');
       return;
     }
+    if (!confirmedNoLocation && !f.preferred_location?.city_code) {
+      setAskNoPreferred('drawer');
+      return;
+    }
     setDrawerSaving(true);
     setDrawerError('');
     setSuccess('');
@@ -877,14 +894,13 @@ export default function Inquiries() {
         source: shown.source,
         // For Viber leads the phone number is the Viber number, so keep them in sync.
         viber_number: shown.source === 'viber' ? (f.phone || null) : (shown.viber_number || null),
-        current_city: shown.current_city || '',
         first_name: f.first_name.trim(),
         last_name: f.last_name.trim(),
         lead_name: `${f.first_name.trim()} ${f.last_name.trim()}`.trim(),
         email: f.email.trim(),
         phone: f.phone,
         preferred_brand_id: f.preferred_brand_id ? Number(f.preferred_brand_id) : null,
-        preferred_franchise_location: f.preferred_franchise_location.trim(),
+        preferred_location: locationInput(f.preferred_location),
         remarks: f.remarks,
       });
       setDrawerEditing(false);
@@ -1242,20 +1258,20 @@ export default function Inquiries() {
                         {brandOptions.map((brand) => <option key={brand.id} value={brand.id} style={{ color: brandColor(brand.name) }}>{brand.name}</option>)}
                       </select>
                     </label>
-                    <label>
-                      <span>Preferred franchise location</span>
-                      <input
-                        value={drawerForm.preferred_franchise_location}
-                        onChange={(e) => setDrawerForm({ ...drawerForm, preferred_franchise_location: e.target.value })}
-                      />
-                    </label>
+                    <h3>Preferred franchise location</h3>
+                    <LocationPicker
+                      value={drawerForm.preferred_location}
+                      onChange={(next) => setDrawerForm({ ...drawerForm, preferred_location: next })}
+                      labels={{ barangay: 'Barangay/area' }}
+                      barangayPlaceholder="Barangay/area (Optional)"
+                    />
                     <label>
                       <span>Remarks</span>
                       <textarea rows={4} value={drawerForm.remarks} onChange={(e) => setDrawerForm({ ...drawerForm, remarks: e.target.value })} />
                     </label>
                     <div className="flex justify-end gap-2 p-[6px_0_14px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:flex [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:justify-end [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:gap-[10px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:mt-1 [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:p-[16px_0_0] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:[border-top:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:min-h-[40px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:p-[0_18px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:rounded-[8px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[font-family:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[font-style:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[line-height:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:text-[0.88rem] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:font-[650] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:cursor-pointer [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[border:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[background:transparent] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:text-[color:var(--drawer-muted,_#b4bdd4)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[transition:background-color_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.05)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:border-[rgba(123,_136,_255,_0.45)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:text-[color:var(--drawer-text,_#e6e9f2)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:disabled]:opacity-[0.55] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:disabled]:cursor-not-allowed [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:focus-visible]:[outline:2px_solid_var(--drawer-accent,_#7b88ff)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:focus-visible]:[outline-offset:2px]">
                       <button type="button" onClick={cancelDrawerEdit} disabled={drawerSaving}>Cancel</button>
-                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={saveDrawerEdit} disabled={drawerSaving}>
+                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => saveDrawerEdit()} disabled={drawerSaving}>
                         {drawerSaving ? 'Saving…' : 'Save changes'}
                       </button>
                     </div>
@@ -1282,8 +1298,10 @@ export default function Inquiries() {
                       <h3>Franchise interest</h3>
                       <dl>
                         <DetailRow label="Concept">{shownConcept ? <BrandText name={shownConcept} /> : null}</DetailRow>
-                        <DetailRow label="Current city of residence">{shown.current_city}</DetailRow>
-                        <DetailRow label="Preferred franchise location">{shown.preferred_franchise_location}</DetailRow>
+                        <DetailRow label="Current residence">{locationText(shown.residence_location, shown.current_city)}</DetailRow>
+                        <DetailRow label="Preferred franchise location">{locationText(shown.preferred_location, shown.preferred_franchise_location, shown.no_preferred_location)}</DetailRow>
+                        {shown.residence_location?.city_code && shown.current_city && <DetailRow label="Residence (typed earlier)">{shown.current_city}</DetailRow>}
+                        {(shown.preferred_location?.city_code || shown.no_preferred_location) && shown.preferred_franchise_location && <DetailRow label="Preferred location (typed earlier)">{shown.preferred_franchise_location}</DetailRow>}
                         {shown.address && <DetailRow label="Address (previous record)">{shown.address}</DetailRow>}
                       </dl>
                     </section>
@@ -1382,12 +1400,19 @@ export default function Inquiries() {
                   {brandOptions.map((brand) => <option key={brand.id} value={brand.id} style={{ color: brandColor(brand.name) }}>{brand.name}</option>)}
                 </select>
               </Field>
-              <Field label="Current city of residence">
-                <input value={form.current_city} onChange={(e) => setForm({ ...form, current_city: e.target.value })} />
-              </Field>
-              <Field label="Preferred franchise location">
-                <input value={form.preferred_franchise_location} onChange={(e) => setForm({ ...form, preferred_franchise_location: e.target.value })} />
-              </Field>
+              <h4 className="col-span-full m-[6px_0_0] text-[11px] font-[760] tracking-[.08em] uppercase text-text-secondary">Current residence</h4>
+              <LocationPicker
+                value={form.residence_location}
+                onChange={(next) => setForm((current) => ({ ...current, residence_location: next }))}
+                street
+              />
+              <h4 className="col-span-full m-[6px_0_0] text-[11px] font-[760] tracking-[.08em] uppercase text-text-secondary">Preferred franchise location</h4>
+              <LocationPicker
+                value={form.preferred_location}
+                onChange={(next) => setForm((current) => ({ ...current, preferred_location: next }))}
+                labels={{ barangay: 'Barangay/area' }}
+                barangayPlaceholder="Barangay/area (Optional)"
+              />
               {/* Logged By is never typed: it is the signed-in user, or the
                   person who encoded the record when editing. */}
               <Field label="Logged By" full>
@@ -1440,6 +1465,28 @@ export default function Inquiries() {
                 </div>
               )}
             </form>
+          </Modal>
+        </ModalPortal>
+      )}
+
+      {askNoPreferred && (
+        <ModalPortal>
+          <Modal
+            title="No preferred franchise location yet?"
+            onClose={() => setAskNoPreferred(null)}
+            size="small"
+            footer={(
+              <>
+                <button type="button" onClick={() => setAskNoPreferred(null)}>Go back</button>
+                <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760]"
+                  onClick={() => { const from = askNoPreferred; setAskNoPreferred(null); if (from === 'drawer') saveDrawerEdit(true); else submitCreate(null, true); }}>
+                  Yes, no location yet
+                </button>
+              </>
+            )}
+          >
+            <p className="m-0 text-[14px] leading-[1.6]">No preferred franchise location yet? The applicant can decide later.</p>
+            <p className="m-[8px_0_0] text-[13px] text-muted">It is saved as "No preferred location yet". Marketing or Sales can add it later.</p>
           </Modal>
         </ModalPortal>
       )}

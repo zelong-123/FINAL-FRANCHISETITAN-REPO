@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FaChevronLeft, FaChevronRight, FaFileCsv, FaFileLines, FaFilePdf, FaImage, FaLock, FaPrint, FaXmark } from 'react-icons/fa6';
 import { API_BASE_URL, authToken } from '../../lib/api';
 import { downloadCsv, downloadPdf } from '../../lib/export';
+import { formatLocation } from '../../lib/locations';
 import { formatDate, manilaDateTimeLabel, titleCase } from '../../lib/format';
 
 /*
@@ -224,7 +225,10 @@ export default function ApplicationDetailReport({ report, onClose }) {
         <Badge tone={{ accepted: 'done', submitted: 'current', returned: 'warn' }[item.status] || 'waiting'}>{REQ_STATUS[item.status] || item.status}</Badge>
       </div>
       <Pairs rows={[
-        ...def.fields.map((field) => [field.label, field.type === 'date' ? day(item.data?.[field.key]) : (field.options?.find((o) => o.value === item.data?.[field.key])?.label ?? item.data?.[field.key])]),
+        ...def.fields.map((field) => [field.label, field.type === 'location'
+          ? (item.location_text || formatLocation(item.data?.[field.key]) || item.data?.address)
+          : field.type === 'date' ? day(item.data?.[field.key]) : (field.options?.find((o) => o.value === item.data?.[field.key])?.label ?? item.data?.[field.key])]),
+        item.location_note && ['Note', item.location_note],
         ['Submitted by', item.submitted_at ? `${nameOf(item.submitted_by) || '—'} · ${when(item.submitted_at)}` : 'Not submitted yet'],
         item.reviewed_at && [item.status === 'returned' ? 'Returned by' : 'Accepted by', `${nameOf(item.reviewed_by) || '—'} · ${when(item.reviewed_at)}`],
         item.status === 'returned' && ['Return reason', item.return_reason],
@@ -239,7 +243,8 @@ export default function ApplicationDetailReport({ report, onClose }) {
         <Card title="Applicant">
           <Pairs rows={[
             ['Name', a.full_name], ['Applicant ID', a.applicant_code], ['Lead ID', a.lead_code || 'No source lead (added directly)'],
-            ['Email', a.email], ['Phone', a.phone], ['Address', a.address], ['Date applied', day(a.application_date)],
+            ['Email', a.email], ['Phone', a.phone], ['Address', a.address_text ?? a.address],
+            ['Preferred franchise location', a.preferred_location_text], ['Date applied', day(a.application_date)],
             ['Brand', a.preferred_brand?.name ? (
               <span className="inline-flex items-center gap-2">{a.preferred_brand.name}{data.brand_confirmation?.locked && <><FaLock aria-hidden="true" /> {data.brand_confirmation.legacy ? 'Locked (legacy)' : 'Locked'}</>}</span>
             ) : null],
@@ -276,6 +281,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
             <Pairs rows={[
               ['Status', summary?.legacy ? 'Legacy record - requirements not captured' : summary?.complete ? 'Every requirement accepted' : `Missing: ${(summary?.missing || []).join(', ')}`],
               ['Confirmed Qualified by', data.people?.qualified_by ? `${nameOf(data.people.qualified_by)} · ${when(data.qualification?.qualified_at) || ''}` : null],
+              ['Current residence', a.address_text ?? a.address], ['Preferred franchise location', a.preferred_location_text],
             ]} />
           </Card>
           {!summary?.legacy && renderRequirementCards('qualification')}
@@ -357,6 +363,9 @@ export default function ApplicationDetailReport({ report, onClose }) {
               note: d.removed_at ? `Removed${d.removed_reason ? `: ${d.removed_reason}` : ''}` : d.replaced_at ? 'Replaced' : '',
             }))} />
           </Card>
+          {data.requirements?.summary?.loi?.legacy
+            ? <Card title="Proposed site"><p className="m-0 text-[14px] text-[#fbbf24]">Legacy record - requirements not captured.</p></Card>
+            : renderRequirementCards('loi')}
         </>
       );
     },
@@ -460,11 +469,19 @@ export default function ApplicationDetailReport({ report, onClose }) {
   const exportReport = (kind) => {
     if (!data) return;
     const rows = [['Overview', 'Applicant ID', a.applicant_code || ''], ['Overview', 'Name', a.full_name], ['Overview', 'Current stage', a.status_label],
-      ['Overview', 'Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned']];
+      ['Overview', 'Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned'],
+      ['Overview', 'Address', a.address_text ?? a.address ?? ''], ['Overview', 'Preferred franchise location', a.preferred_location_text || '']];
     if (a.inquiry_brand || a.selected_brand) rows.push(['Overview', 'Brand selection', brandLine(a)]);
     reqItems('qualification').forEach(({ def, item }) => rows.push(['Qualification', def.label, REQ_STATUS[item.status] || item.status]));
     (data.activity_rows || []).forEach((r) => rows.push(['Scheduled Activities', ACTIVITY_LABELS[r.activity_type] || r.activity_type, `${titleCase(r.status)}${r.review_status ? ` / ${r.review_status}` : ''} · ${when(r.starts_at) || ''}`]));
     if (data.loi) rows.push(['LOI', 'Verification', titleCase(String(data.loi.verification_status || '').replace(/_/g, ' '))]);
+    reqItems('loi').forEach(({ def, item }) => {
+      rows.push(['LOI', def.label, REQ_STATUS[item.status] || item.status]);
+      const where = item.location_text || formatLocation(item.data?.location) || item.data?.address;
+      if (where) rows.push(['LOI', 'Proposed site location', where]);
+      if (item.data?.ownership) rows.push(['LOI', 'Owned or leased', titleCase(item.data.ownership)]);
+      if (item.location_note) rows.push(['LOI', 'Note', item.location_note]);
+    });
     if (data.payment_record) {
       const pr = data.payment_record;
       rows.push(['Payment Record', 'Status', pr.badge_label], ['Payment Record', 'Required payments verified', pr.required_count ? `${pr.verified_count} of ${pr.required_count}` : '—']);
