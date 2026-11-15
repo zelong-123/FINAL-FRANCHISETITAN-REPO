@@ -22,8 +22,9 @@ import {
 import { fileRef, logEvent, logStageChange, transition } from '../services/applicantStage.ts';
 import { activeSalesUser, assertAssignedSales, notifyAssignedSales, optionalReason, requireReason } from '../services/accountability.ts';
 import {
-  assertBrandUnlocked, BRAND_METHODS, brandState, latestBrandConfirmation, retastingDone, tastedBrandId,
+  assertBrandUnlocked, BRAND_CONFIRMATION_ENABLED, BRAND_CONFIRMATION_RETIRED, BRAND_METHODS, brandState, latestBrandConfirmation, retastingDone, tastedBrandId,
 } from '../services/brandConfirmation.ts';
+import { activityDocumentsSql, PAST_SCHEDULING } from '../services/orientationTasting.ts';
 import { assertNoSessionOfOtherBrand, sessionsFor, syncApplicantAttendance } from '../services/scheduleHooks.ts';
 import { forgetActivity, releaseCompletedTastingKeys } from '../services/schedule/sync.ts';
 import { assertStageRequirements, loiRequirement } from '../services/requirements.ts';
@@ -345,6 +346,7 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
   const person = (col: string) => NAME(`a.${col}`);
   const [row] = await db.query(
     `select a.*, (select to_jsonb(b) from brands b where b.id = a.preferred_brand_id) as preferred_brand,
+       (select b.name from brands b where b.id = coalesce(a.inquiry_brand_id, (select fi2.preferred_brand_id from franchise_inquiries fi2 where fi2.id = a.inquiry_id), a.preferred_brand_id)) as inquiry_brand_name,
        (select to_jsonb(fi) from franchise_inquiries fi where fi.id = a.inquiry_id) as inquiry,
        (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'phone', u.phone) from users u where u.id = a.user_id) as "user",
        ${HISTORY('a.id')} as status_history,
@@ -361,9 +363,9 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
   const schedules = await db.query(
     `select s.*, ${NAME('s.assigned_to_user_id')} as assigned_to, ${NAME('s.completion_submitted_by_user_id')} as completion_submitted_by,
        ${NAME('s.reviewed_by_user_id')} as reviewed_by, (select b.name from brands b where b.id = s.tasted_brand_id) as tasted_brand_name,
-       coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'original_name', d.original_name, 'mime_type', d.mime_type, 'created_at', d.created_at, 'replaced_at', d.replaced_at) order by d.id)
-         from documents d where d.documentable_type = 'App\\Models\\ActivitySchedule' and d.documentable_id = s.id and d.type = 'attendance_proof'), '[]'::jsonb) as proof_documents
-     from activity_schedules s where s.applicant_id = $1 order by s.id`, [id],
+       (select b.name from brands b where b.id = s.selected_brand_id) as selected_brand_name,
+       ${activityDocumentsSql('$2')} as proof_documents
+     from activity_schedules s where s.applicant_id = $1 order by s.id`, [id, user.id],
   );
   const paymentRows = await db.query(
     `select p.*, coalesce((select jsonb_agg(to_jsonb(d) order by d.id) from documents d where d.documentable_type = 'App\\Models\\Payment' and d.documentable_id = p.id), '[]'::jsonb) as documents,
@@ -453,10 +455,10 @@ applicantRoutes.get('/applicants/:applicant/report', viewers, async (c) => {
        s.result_notes, s.no_show_reason, s.completion_submitted_at, s.review_status, s.reviewed_at, s.return_reason,
        ${NAME('s.completion_submitted_by_user_id')} as completion_submitted_by, ${NAME('s.reviewed_by_user_id')} as reviewed_by,
        ${NAME('s.scheduled_by_user_id')} as scheduled_by, ${NAME('s.approved_by_user_id')} as approved_by,
-       (select b.name from brands b where b.id = s.tasted_brand_id) as tasted_brand_name,
-       coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'original_name', d.original_name, 'mime_type', d.mime_type, 'replaced_at', d.replaced_at) order by d.id)
-         from documents d where d.documentable_type = 'App\\Models\\ActivitySchedule' and d.documentable_id = s.id and d.type = 'attendance_proof'), '[]'::jsonb) as proof_documents
-     from activity_schedules s where s.applicant_id = $1 order by s.starts_at, s.id`, [a.id],
+       s.selected_brand_id, (select b.name from brands b where b.id = s.tasted_brand_id) as tasted_brand_name,
+       (select b.name from brands b where b.id = s.selected_brand_id) as selected_brand_name,
+       ${activityDocumentsSql('$2')} as proof_documents
+     from activity_schedules s where s.applicant_id = $1 order by s.starts_at, s.id`, [a.id, user.id],
   );
   const loiDocuments = await db.query(
     `select d.id, d.original_name, d.mime_type, d.created_at, d.replaced_at, d.removed_at, d.removed_reason, ${NAME('d.uploaded_by_user_id')} as uploaded_by, ${NAME('d.removed_by_user_id')} as removed_by
@@ -517,8 +519,11 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   const assignedSales = await db.query(`select full_name from users where id = $1`, [a.assigned_sales_user_id ?? null]);
   const [names] = await db.query(
     `select (select full_name from users where id = $1) as reviewed, (select full_name from users where id = $2) as loi_by, (select full_name from users where id = $3) as approved,
-       (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code`,
-    [a.reviewed_by_user_id, a.loi_confirmed_by_user_id, a.approved_by_user_id, a.preferred_brand_id, a.inquiry_id],
+       (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code,
+       (select name from brands where id = coalesce($6::bigint, (select i.preferred_brand_id from franchise_inquiries i where i.id = $5), $4)) as inquiry_brand,
+       (select b.name from activity_schedules s join brands b on b.id = s.selected_brand_id where s.applicant_id = $7 and s.activity_type = 'orientation' and s.status = 'completed'
+         order by coalesce(s.completed_at, s.starts_at) desc limit 1) as selected_brand`,
+    [a.reviewed_by_user_id, a.loi_confirmed_by_user_id, a.approved_by_user_id, a.preferred_brand_id, a.inquiry_id, a.inquiry_brand_id ?? null, id],
   );
   const qualified = history.find((h) => h.to_status === 'qualified');
   const approvedHistory = history.find((h) => h.to_status === 'approved');
@@ -540,6 +545,7 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
       id, applicant_code: a.applicant_code, lead_code: names.lead_code ?? null, full_name: a.full_name, email: a.email, phone: a.phone, address: a.address, notes: a.notes,
       status: a.status, status_label: await statusLabel(db, a), application_date: a.application_date, approved_at: iso(a.approved_at),
       assigned_sales: a.assigned_sales_user_id ? { id: a.assigned_sales_user_id, full_name: assignedSales[0]?.full_name ?? null } : null, preferred_brand: a.preferred_brand_id && names.brand ? { id: a.preferred_brand_id, name: names.brand } : null,
+      inquiry_brand: names.inquiry_brand ?? null, selected_brand: names.selected_brand ?? null,
     },
     qualification: {
       items: QUALIFICATION_KEYS.map((key) => ({ key, label: MILESTONES[key], completed: Boolean(milestones[key]), completed_at: details[key]?.on ?? null, recorded_by: details[key]?.by ?? null })),
@@ -631,7 +637,7 @@ applicantRoutes.put('/applicants/:applicant', admin, async (c) => {
   if (brandChanging) {
     await assertBrandUnlocked(db, a);
     const completed = await db.query(`select 1 from activity_schedules where applicant_id = $1 and activity_type = 'product_tasting' and status = 'completed' limit 1`, [a.id]);
-    if ((a.milestones ?? {}).product_tasting_attended || completed.length) fail('preferred_brand_id', 'Locked after Product Tasting completion.');
+    if ((a.milestones ?? {}).product_tasting_attended || completed.length) fail('preferred_brand_id', 'Locked after Product Tasting completion (older record).');
     await assertNoSessionOfOtherBrand(db, a.id, v.preferred_brand_id ?? null);
   }
   const saved = (await updateRow(db, 'applicants', a.id, v))!;
@@ -685,7 +691,7 @@ const moved = async (db: Db, id: number, extra: Row = {}) => {
   return { ...row, milestone_state: milestoneState(row), ...(await scheduleState(db, row)), brand_confirmation: await brandPayload(db, row), ...extra };
 };
 
-// ---- Brand Confirmation (between Product Tasting and Training) ----
+// ---- Brand Confirmation: retired (the brand is selected at Orientation/Tasting); kept read-only ----
 const BRAND_NAME = (expr: string) => `(select jsonb_build_object('id', b.id, 'name', b.name) from brands b where b.id = ${expr})`;
 
 async function brandPayload(db: Db, a: Row): Promise<Row> {
@@ -696,18 +702,16 @@ async function brandPayload(db: Db, a: Row): Promise<Row> {
      from applicant_brand_confirmations c where c.applicant_id = $1 order by c.id`, [a.id],
   );
   const [lockedBy] = a.brand_locked_by_user_id ? await db.query(`select full_name from users where id = $1`, [a.brand_locked_by_user_id]) : [];
-  const tastingDone = await activityDone(db, a, 'product_tasting');
   const latest = rows[rows.length - 1] ?? null;
   let blocked: string | null = null;
   if (state.locked) blocked = state.legacy ? 'Legacy - brand confirmation not captured.' : 'The brand is confirmed and locked.';
-  else if (!tastingDone) blocked = 'Available after Product Tasting is Done (Sales marked it Complete and Admin marked it Attended).';
-  else if (latest?.status === 'submitted') blocked = 'Waiting for Admin to confirm or return the submission.';
+  else blocked = BRAND_CONFIRMATION_RETIRED;
   return {
     locked: state.locked, legacy: state.legacy, confirmed: state.confirmed,
     locked_at: iso(a.brand_locked_at), locked_by: lockedBy?.full_name ?? null,
     tasted_brand_id: await tastedBrandId(db, a),
-    retasting_required: state.retasting_required, retasting_done: state.retasting_done,
-    can_submit: !blocked && !a.archived_at && a.status === 'scheduled',
+    retasting_required: state.retasting_required, retasting_done: state.retasting_done, retired: true,
+    can_submit: false,
     blocked_reason: blocked,
     current: latest, history: rows,
   };
@@ -718,6 +722,7 @@ applicantRoutes.post('/applicants/:applicant/brand-confirmation', viewers, async
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  if (!BRAND_CONFIRMATION_ENABLED) fail('brand_confirmation', BRAND_CONFIRMATION_RETIRED);
   if (roleName(c) !== 'sales') abort(403, 'Only the assigned Sales user submits the Brand Confirmation. Admin reviews and confirms it.');
   await assertAssignedSales(c, a);
   const user = c.get('user');
@@ -773,6 +778,7 @@ applicantRoutes.post('/applicants/:applicant/brand-confirmation/confirm', viewer
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  if (!BRAND_CONFIRMATION_ENABLED) fail('brand_confirmation', BRAND_CONFIRMATION_RETIRED);
   if (roleName(c) !== 'admin') abort(403, 'Only Admin can confirm the brand.');
   const user = c.get('user');
   const v = await validate(db, await readInput(c), { confirmed: ['required', 'accepted'], remarks: ['nullable', 'string', 'max:2000'] });
@@ -800,6 +806,7 @@ applicantRoutes.post('/applicants/:applicant/brand-confirmation/return', viewers
   const { db } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
+  if (!BRAND_CONFIRMATION_ENABLED) fail('brand_confirmation', BRAND_CONFIRMATION_RETIRED);
   if (roleName(c) !== 'admin') abort(403, 'Only Admin can return the Brand Confirmation.');
   const user = c.get('user');
   const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
@@ -846,6 +853,8 @@ applicantRoutes.patch('/applicants/:applicant/milestones', admin, async (c) => {
     if (alreadySaved) { working[key] = true; continue; }
     const label = activityLabel(type);
     if (!completedTypes.includes(type)) fail('milestones', `You cannot mark ${label} as attended yet — Sales must mark it Complete first.`);
+    // Orientation/Tasting is verified only from its review card (every file opened, not by the encoder).
+    if (type === 'orientation' && !PAST_SCHEDULING.includes(a.status)) fail('milestones', 'Orientation/Tasting is verified from its review card: open every submitted file, then Verify.');
     if (index > 0) {
       const previous = ACTIVITY_ORDER[index - 1];
       if (!completedTypes.includes(previous) || !working[TRACKED_ACTIVITY_MILESTONES[previous]]) {

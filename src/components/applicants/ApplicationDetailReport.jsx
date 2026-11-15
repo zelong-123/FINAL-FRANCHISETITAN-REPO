@@ -21,7 +21,9 @@ const PAGES = [
 const STAGE_ORDER = ['converted', 'qualified', 'scheduled', 'loi_submitted', 'payment_submitted', 'for_approval', 'approved', 'active_franchisee'];
 // The applicant stage at which each page starts (Overview and History always apply).
 const PAGE_FROM = { qualification: 'converted', activities: 'scheduled', loi: 'loi_submitted', payment: 'payment_submitted', approval: 'for_approval' };
-const ACTIVITY_LABELS = { orientation: 'Orientation', product_tasting: 'Product Tasting', training: 'Training' };
+// Orientation and Product Tasting are one activity: Orientation/Tasting (older Product Tasting rows read the same).
+const ACTIVITY_LABELS = { orientation: 'Orientation/Tasting', product_tasting: 'Orientation/Tasting', training: 'Training' };
+const brandLine = (a) => `Inquired brand: ${a.inquiry_brand || '—'} · Selected brand: ${a.selected_brand || '—'}`;
 const REQ_STATUS = { pending: 'Pending', submitted: 'Submitted', accepted: 'Accepted', returned: 'Returned' };
 const TONE = {
   done: 'text-[#45d991] border-[rgba(69,_217,_145,_.45)]',
@@ -238,6 +240,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
             ['Brand', a.preferred_brand?.name ? (
               <span className="inline-flex items-center gap-2">{a.preferred_brand.name}{data.brand_confirmation?.locked && <><FaLock aria-hidden="true" /> {data.brand_confirmation.legacy ? 'Locked (legacy)' : 'Locked'}</>}</span>
             ) : null],
+            (a.inquiry_brand || a.selected_brand) && ['Brand selection', brandLine(a)],
             ['Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned'],
             ['Current stage', a.status_label],
             ['Time in this stage', data.monitor ? (
@@ -284,11 +287,11 @@ export default function ApplicationDetailReport({ report, onClose }) {
     activities: () => {
       if (!reached('activities')) return <NotStarted note="Activities start once Admin clicks Set Schedule." />;
       const rows = data.activity_rows || [];
-      const bc = data.brand_confirmation;
       return (
         <>
-          {['orientation', 'product_tasting', 'training'].map((type) => {
-            const own = rows.filter((r) => r.activity_type === type && r.approval_status !== 'rejected');
+          {(a.inquiry_brand || a.selected_brand) && <p className="m-0 text-[14px] text-[#c9d0e0]">{brandLine(a)}</p>}
+          {['orientation', 'training'].map((type) => {
+            const own = rows.filter((r) => (r.activity_type === type || (type === 'orientation' && r.activity_type === 'product_tasting')) && r.approval_status !== 'rejected');
             return (
               <Card key={type} title={ACTIVITY_LABELS[type]}>
                 {!own.length && <p className="m-0 text-[14px] text-[#c9d0e0]"><strong>Not started yet</strong></p>}
@@ -296,7 +299,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
                   <div key={r.id} className="grid gap-2 [&+&]:mt-3 [&+&]:pt-3 [&+&]:border-t [&+&]:border-t-[#2a3041]">
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={r.status === 'completed' ? (r.review_status === 'accepted' || r.legacy_completion ? 'done' : 'current') : r.status === 'no_show' ? 'bad' : r.review_status === 'returned' ? 'warn' : 'waiting'}>
-                        {r.status === 'no_show' ? 'No Show' : r.review_status === 'accepted' ? 'Attended (accepted)' : r.review_status === 'returned' ? 'Returned to Sales' : titleCase(r.status)}
+                        {r.status === 'no_show' ? 'No Show' : r.review_status === 'accepted' ? (r.activity_type === 'orientation' && r.selected_brand_name ? 'Verified' : 'Attended (accepted)') : r.review_status === 'returned' ? 'Returned to Sales' : titleCase(r.status)}
                       </Badge>
                       {r.completed_before_schedule && <Badge tone="warn">Completed before schedule (legacy)</Badge>}
                     </div>
@@ -305,35 +308,27 @@ export default function ApplicationDetailReport({ report, onClose }) {
                       r.actual_started_at && ['Actual date and time', when(r.actual_started_at)],
                       r.handler_name && ['Handled by', r.handler_name],
                       r.tasted_brand_name && ['Brand tasted', r.tasted_brand_name],
+                      r.selected_brand_name && ['Selected brand', r.selected_brand_name],
                       r.result_notes && ['Notes', r.result_notes],
                       r.no_show_reason && ['No Show reason', r.no_show_reason],
                       r.completion_submitted_at && ['Completed by (Sales)', `${nameOf(r.completion_submitted_by) || '—'} · ${when(r.completion_submitted_at)}`],
-                      r.reviewed_at && [r.review_status === 'returned' ? 'Returned by (Admin)' : 'Marked Attended by (Admin)', `${nameOf(r.reviewed_by) || '—'} · ${when(r.reviewed_at)}`],
+                      r.reviewed_at && [r.review_status === 'returned' ? 'Returned by (Admin)' : r.selected_brand_name ? 'Verified by (Admin)' : 'Marked Attended by (Admin)', `${nameOf(r.reviewed_by) || '—'} · ${when(r.reviewed_at)}`],
                       r.review_status === 'returned' && ['Return reason', r.return_reason],
                     ]} />
-                    <Files label="Attendance proof" items={r.proof_documents === null ? null : (r.proof_documents || []).map((d) => ({
-                      key: `p${d.id}`, name: d.original_name, mime: d.mime_type, note: d.replaced_at ? 'Replaced' : '', path: `/activities/${r.id}/documents/${d.id}/download`,
-                    }))} />
+                    {[['Attendance proof', (d) => d.type !== 'brand_selection'], ['Brand selection document', (d) => d.type === 'brand_selection']].map(([label, keep]) => {
+                      const docs = r.proof_documents === null ? null : (r.proof_documents || []).filter(keep);
+                      if (docs !== null && !docs.length && label !== 'Attendance proof') return null;
+                      return (
+                        <Files key={label} label={label} items={docs === null ? null : docs.map((d) => ({
+                          key: `p${d.id}`, name: d.original_name, mime: d.mime_type, note: d.replaced_at ? 'Replaced' : '', path: `/activities/${r.id}/documents/${d.id}/download`,
+                        }))} />
+                      );
+                    })}
                   </div>
                 ))}
               </Card>
             );
           })}
-          <Card title="Brand Confirmation">
-            {bc?.legacy && <p className="m-0 text-[14px] text-[#fbbf24]">Legacy - brand confirmation not captured. The brand is locked.</p>}
-            {!bc?.legacy && !bc?.current && <p className="m-0 text-[14px] text-[#c9d0e0]"><strong>Not started yet</strong></p>}
-            {bc?.current && (
-              <Pairs rows={[
-                ['Status', bc.confirmed ? <span className="inline-flex items-center gap-2"><FaLock aria-hidden="true" /> Confirmed and locked</span> : REQ_STATUS[bc.current.status] || titleCase(bc.current.status)],
-                ['Final brand', bc.current.final_brand?.name], ['Brand tasted', bc.current.tasted_brand?.name],
-                ['How the applicant confirmed', titleCase(String(bc.current.confirmation_method || '').replace(/_/g, ' '))], ['Date confirmed', day(bc.current.confirmed_on)],
-                ['Notes', bc.current.notes], bc.current.change_reason && ['Reason for the change', bc.current.change_reason],
-                ['Submitted by (Sales)', `${nameOf(bc.current.submitted_by) || '—'} · ${when(bc.current.submitted_at)}`],
-                bc.confirmed && ['Confirmed by (Admin)', `${bc.locked_by || '—'} · ${when(bc.locked_at)}`],
-                bc.current.status === 'returned' && ['Return reason', bc.current.return_reason],
-              ]} />
-            )}
-          </Card>
         </>
       );
     },
@@ -463,6 +458,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
     if (!data) return;
     const rows = [['Overview', 'Applicant ID', a.applicant_code || ''], ['Overview', 'Name', a.full_name], ['Overview', 'Current stage', a.status_label],
       ['Overview', 'Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned']];
+    if (a.inquiry_brand || a.selected_brand) rows.push(['Overview', 'Brand selection', brandLine(a)]);
     reqItems('qualification').forEach(({ def, item }) => rows.push(['Qualification', def.label, REQ_STATUS[item.status] || item.status]));
     (data.activity_rows || []).forEach((r) => rows.push(['Scheduled Activities', ACTIVITY_LABELS[r.activity_type] || r.activity_type, `${titleCase(r.status)}${r.review_status ? ` / ${r.review_status}` : ''} · ${when(r.starts_at) || ''}`]));
     if (data.loi) rows.push(['LOI', 'Verification', titleCase(String(data.loi.verification_status || '').replace(/_/g, ' '))]);

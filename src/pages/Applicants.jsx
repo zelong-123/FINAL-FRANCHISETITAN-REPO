@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import QualificationReview from '../components/applicants/QualificationReview.jsx';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -6,6 +6,7 @@ import {
   FaCheck, FaChevronDown, FaClipboardCheck, FaClock, FaEye, FaFileCsv, FaFilePdf, FaImage, FaList, FaLock, FaPen, FaPrint, FaStore,
   FaRotateLeft, FaTableCellsLarge, FaTrashCan, FaUserCheck, FaXmark,
 } from 'react-icons/fa6';
+import RequirementFileDrop from '../components/RequirementFileDrop';
 import {
   API_BASE_URL, api, authToken, firstValidationMessage,
 } from '../lib/api';
@@ -256,26 +257,28 @@ function ApplicantPagination({ meta, page, onPage, noun = 'applicants' }) {
  * The tracker is display-only: stages are moved with the single primary action button
  * below it (the API is the state machine), so steps are never clickable.
  */
-function Stepper({ items, qualificationProgress = null, attendedProgress = null, loiProgress = null }) {
+function Stepper({ items, qualificationProgress = null, attendedProgress = null, loiProgress = null, scheduleHalves = null }) {
   return (
     <ol className="flex items-start [list-style:none] p-0 m-0 gap-0 max-[721px]:overflow-x-auto max-[721px]:later:pb-[5px]">
       {items.map((item, index) => {
         const next = items[index + 1];
         // The Converted -> Qualified connector follows the Qualification requirements progress.
         const fillsQualification = index === 0 && qualificationProgress != null;
-        // Scheduling: the connector fills per admin-attended activity (1 of 3, 2 of 3, 3 of 3).
-        const fillsScheduling = item.key === 'scheduled' && attendedProgress != null;
+        // Scheduling: two halves, Orientation/Tasting (left) and Training (right), each green once verified by Admin.
+        const splitsScheduling = item.key === 'scheduled' && scheduleHalves != null;
+        const fillsScheduling = !splitsScheduling && item.key === 'scheduled' && attendedProgress != null;
         // LOI Submission: two halves, the LOI (left) and the Proposed site (right), each green once verified.
         const splitsLoi = item.key === 'loi_submitted' && loiProgress != null;
-        const lineDone = !fillsQualification && !fillsScheduling && !splitsLoi && item.state === 'done' && Boolean(next) && next.state !== 'todo';
+        const halves = splitsLoi ? loiProgress : splitsScheduling ? scheduleHalves : null;
+        const lineDone = !fillsQualification && !fillsScheduling && !halves && item.state === 'done' && Boolean(next) && next.state !== 'todo';
         const fill = fillsQualification ? qualificationProgress : fillsScheduling ? attendedProgress : null;
         const lineStyle = fill != null ? { '--qp': `${Math.round(fill * 100)}%` }
-          : splitsLoi ? { '--h1': loiProgress.left ? '#25c77a' : '#30364c', '--h2': loiProgress.right ? '#25c77a' : '#30364c' } : undefined;
+          : halves ? { '--h1': halves.left ? '#25c77a' : '#30364c', '--h2': halves.right ? '#25c77a' : '#30364c' } : undefined;
         return (
           <li
             key={item.key}
             style={lineStyle}
-            className={`ap-step flex flex-col items-center gap-[6px] later:flex-[1_1_0] min-w-0 relative text-center [&:not(:last-child)::after]:[content:''] [&:not(:last-child)::after]:absolute [&:not(:last-child)::after]:top-[11px] [&:not(:last-child)::after]:left-[calc(50%_+_13px)] [&:not(:last-child)::after]:right-[calc(-50%_+_13px)] [&:not(:last-child)::after]:h-[4px] [&:not(:last-child)::after]:[background:linear-gradient(to_right,#25c77a_var(--qp,0%),#30364c_var(--qp,0%))] [&.line-done:not(:last-child)::after]:[background:#25c77a] [&.split-line:not(:last-child)::after]:[background:linear-gradient(to_right,var(--h1)_0_50%,var(--h2)_50%_100%)] later-2:[&.is-done_.ap-node]:text-[#071a12] later:[&.is-done_.ap-node]:[background:#25c77a] later-2:[&.is-done_.ap-node]:border-[#25c77a] later-3:[&.is-current_.ap-node]:text-[#fff] later-2:[&.is-current_.ap-node]:[background:#7668f6] later-3:[&.is-current_.ap-node]:border-[#8b80ff] [&.is-current_.ap-node]:[box-shadow:0_0_0_3px_rgba(118,_104,_246,_.14)] max-[721px]:later:min-w-[66px] [#update-applicant-form_&:not(:last-child)::after]:top-[10px] later-4:[&.is-pending_.ap-node]:[background:rgba(245,_158,_11,_.18)] later-5:[&.is-pending_.ap-node]:border-[#f59e0b] later-5:[&.is-pending_.ap-node]:text-[#fbbf24] is-${item.state}${lineDone ? ' line-done' : ''}${splitsLoi ? ' split-line' : ''}`}
+            className={`ap-step flex flex-col items-center gap-[6px] later:flex-[1_1_0] min-w-0 relative text-center [&:not(:last-child)::after]:[content:''] [&:not(:last-child)::after]:absolute [&:not(:last-child)::after]:top-[11px] [&:not(:last-child)::after]:left-[calc(50%_+_13px)] [&:not(:last-child)::after]:right-[calc(-50%_+_13px)] [&:not(:last-child)::after]:h-[4px] [&:not(:last-child)::after]:[background:linear-gradient(to_right,#25c77a_var(--qp,0%),#30364c_var(--qp,0%))] [&.line-done:not(:last-child)::after]:[background:#25c77a] [&.split-line:not(:last-child)::after]:[background:linear-gradient(to_right,var(--h1)_0_50%,var(--h2)_50%_100%)] later-2:[&.is-done_.ap-node]:text-[#071a12] later:[&.is-done_.ap-node]:[background:#25c77a] later-2:[&.is-done_.ap-node]:border-[#25c77a] later-3:[&.is-current_.ap-node]:text-[#fff] later-2:[&.is-current_.ap-node]:[background:#7668f6] later-3:[&.is-current_.ap-node]:border-[#8b80ff] [&.is-current_.ap-node]:[box-shadow:0_0_0_3px_rgba(118,_104,_246,_.14)] max-[721px]:later:min-w-[66px] [#update-applicant-form_&:not(:last-child)::after]:top-[10px] later-4:[&.is-pending_.ap-node]:[background:rgba(245,_158,_11,_.18)] later-5:[&.is-pending_.ap-node]:border-[#f59e0b] later-5:[&.is-pending_.ap-node]:text-[#fbbf24] is-${item.state}${lineDone ? ' line-done' : ''}${halves ? ' split-line' : ''}`}
           >
             <div className="flex relative z-1 w-full min-w-0 p-[0_3px] items-center flex-col gap-[6px] border-0 [background:transparent] text-[color:inherit] cursor-default later:[button&]:cursor-pointer later:[button&:disabled]:cursor-not-allowed later:[button&:disabled]:opacity-[.6]">
               <span className="ap-node relative z-1 place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex items-center justify-center later:w-[25px] later:h-[25px] rounded-[50%] later:[background:#20263b] later:border later:border-[#3a4261] later:text-[#9ba5bd] later:text-[10px] font-[700] [#update-applicant-form_&]:w-[23px] [#update-applicant-form_&]:h-[23px]">
@@ -298,12 +301,11 @@ function Stepper({ items, qualificationProgress = null, attendedProgress = null,
   );
 }
 
-/* Exactly the three tracked activities rendered in the schedule section.
- * The "other" type is never shown here and gates nothing. */
+/* The two tracked activities rendered in the schedule section. Orientation and Product
+ * Tasting are one activity: Orientation/Tasting (stored key 'orientation'). */
 
 const TRACKED_ACTIVITIES = [
-  { type: 'orientation', key: 'orientation_attended', label: 'Orientation' },
-  { type: 'product_tasting', key: 'product_tasting_attended', label: 'Product Tasting' },
+  { type: 'orientation', key: 'orientation_attended', label: 'Orientation/Tasting' },
   { type: 'training', key: 'training_completed', label: 'Training' },
 ];
 
@@ -359,7 +361,7 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
       if (!allAttended) {
         const outstanding = pendingActivities.length
           ? pendingActivities.join(', ')
-          : 'Orientation, Product Tasting, Training';
+          : 'Orientation/Tasting, Training';
         return {
           label: 'Completed',
           enabled: false,
@@ -1223,112 +1225,6 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
 }
 
 /** Drop zone for requirement files: pick from File manager or drag and drop. Staged files can be viewed or removed before sending. */
-/** A small preview for a picked image file (object URL, revoked on unmount). */
-function FileThumb({ file }) {
-  const url = useMemo(() => (file && /^image\//.test(file.type || '') ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
-  return (
-    <span className="grid flex-none place-items-center w-[38px] h-[38px] overflow-hidden rounded-[7px] border border-[#2b344c] bg-[#151c2c] text-[#9aa6c4] text-[15px]" aria-hidden="true">
-      {url ? <img src={url} alt="" className="w-full h-full object-cover" /> : (/pdf/i.test(file?.type || file?.name || '') ? <FaFilePdf /> : <FaImage />)}
-    </span>
-  );
-}
-
-/**
- * The requirement file uploader (drag and drop + Choose file), shared by the Qualification requirements
- * and the Payment Record receipts. Optional: `max` files in total, `saved` files already on record (kept
- * unless removed), per-file Replace, and a `validate(file)` check that refuses a file with a message.
- */
-function RequirementFileDrop({
-  label, required, accept, multiple, files, onChange,
-  max = null, saved = [], onSavedChange = null, onViewSaved = null, replaceable = false, validate = null, hint = null, disabled = false,
-}) {
-  const [dragging, setDragging] = useState(false);
-  const [problem, setProblem] = useState('');
-  const [replacing, setReplacing] = useState(null);
-  const inputRef = useRef(null);
-  const replaceRef = useRef(null);
-  const total = files.length + saved.length;
-  const full = max != null && total >= max;
-  const accepted = (list) => {
-    for (const file of list) {
-      const issue = validate ? validate(file) : '';
-      if (issue) { setProblem(issue); return null; }
-    }
-    return list;
-  };
-  const addFiles = (list) => {
-    setProblem('');
-    if (!list.length || disabled) return;
-    const ok = accepted(list);
-    if (!ok) return;
-    if (!multiple) { onChange(ok.slice(0, 1)); return; }
-    let next = [...files, ...ok];
-    if (max != null && saved.length + next.length > max) {
-      setProblem(`You can attach at most ${max} files. Remove or replace one first.`);
-      next = next.slice(0, Math.max(0, max - saved.length));
-    }
-    onChange(next);
-  };
-  const replaceWith = (file) => {
-    setProblem('');
-    if (!file || !replacing) return;
-    if (!accepted([file])) { setReplacing(null); return; }
-    if (replacing.kind === 'new') onChange(files.map((f, i) => (i === replacing.index ? file : f)));
-    else { onSavedChange?.(saved.filter((d) => d.id !== replacing.id)); onChange([...files, file]); }
-    setReplacing(null);
-  };
-  const startReplace = (target) => { setReplacing(target); window.setTimeout(() => replaceRef.current?.click(), 0); };
-  const viewFile = (file) => {
-    const url = URL.createObjectURL(file);
-    window.open(url, '_blank', 'noopener');
-    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-  };
-  const action = 'text-[12px] font-[600] bg-transparent border-0 cursor-pointer hover:underline disabled:opacity-50';
-  const row = 'flex items-center gap-[10px] p-[6px_10px] border border-[#2b344c] rounded-[8px] bg-[#0c111d] text-[13px] text-[#c9d0e0]';
-  return (
-    <div className="grid gap-[6px] content-start">
-      <span className="text-[12px] font-[650] text-[#c9d0e0]">{label}{required && <span className="text-[#f87171]"> *</span>}</span>
-      <div
-        onDragOver={(e) => { e.preventDefault(); if (!full && !disabled) setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); if (full) { setProblem(`You can attach at most ${max} files. Remove or replace one first.`); return; } addFiles([...(e.dataTransfer.files || [])]); }}
-        className={`grid place-items-center gap-[8px] p-[16px] border border-dashed rounded-[10px] text-[13px] text-[#9aa6c4] ${dragging ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.08)]' : 'border-[#2b344c] bg-[#101626]'} ${full || disabled ? 'opacity-60' : ''}`}
-      >
-        <span>{full ? `Maximum of ${max} files attached` : 'Select a file or drag and drop it here'}</span>
-        <button type="button" disabled={full || disabled} className="min-h-[30px] p-[0_12px] border border-[#2b344c] rounded-[8px] bg-[#1a2133] text-[#c9d0e0] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] disabled:cursor-not-allowed" onClick={() => inputRef.current?.click()}>Choose file</button>
-        <input ref={inputRef} type="file" className="hidden" multiple={Boolean(multiple)} accept={accept} onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = ''; }} />
-        <input ref={replaceRef} type="file" className="hidden" accept={accept} onChange={(e) => { replaceWith(e.target.files?.[0] || null); e.target.value = ''; }} />
-      </div>
-      {hint && <small className="text-[#8f9bbd] text-[12px]">{hint}</small>}
-      {problem && <small className="text-[#ff9ca3] text-[12px]" role="alert">{problem}</small>}
-      {total > 0 && (
-        <ul className="m-0 p-0 [list-style:none] grid gap-[6px]">
-          {saved.map((doc) => (
-            <li key={`saved-${doc.id}`} className={row}>
-              <span className="grid flex-none place-items-center w-[38px] h-[38px] rounded-[7px] border border-[#2b344c] bg-[#151c2c] text-[#9aa6c4] text-[15px]" aria-hidden="true">
-                {/pdf/i.test(doc.mime_type || doc.original_name || '') ? <FaFilePdf /> : <FaImage />}
-              </span>
-              <span className="flex-1 min-w-0"><span className="block truncate">{doc.original_name}</span><small className="text-[#8f9bbd]">Attached earlier</small></span>
-              {onViewSaved && <button type="button" className={`${action} text-[#8fb4ff]`} onClick={() => onViewSaved(doc)}>View</button>}
-              {replaceable && onSavedChange && <button type="button" disabled={disabled} className={`${action} text-[#c9d0e0]`} onClick={() => startReplace({ kind: 'saved', id: doc.id })}>Replace</button>}
-              {onSavedChange && <button type="button" disabled={disabled} className={`${action} text-[#f87171]`} onClick={() => { setProblem(''); onSavedChange(saved.filter((d) => d.id !== doc.id)); }}>Remove</button>}
-            </li>
-          ))}
-          {files.map((file, index) => (
-            <li key={`${file.name}-${index}`} className={row}>
-              {replaceable && <FileThumb file={file} />}
-              <span className="flex-1 min-w-0 truncate">{file.name}</span>
-              <button type="button" className={`${action} text-[#8fb4ff]`} onClick={() => viewFile(file)}>View</button>
-              {replaceable && <button type="button" disabled={disabled} className={`${action} text-[#c9d0e0]`} onClick={() => startReplace({ kind: 'new', index })}>Replace</button>}
-              <button type="button" disabled={disabled} className={`${action} text-[#f87171]`} onClick={() => { setProblem(''); onChange(files.filter((_, i) => i !== index)); }}>{replaceable ? 'Remove' : 'Delete'}</button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 function RequirementStatus({ status }) {
   const info = REQUIREMENT_STATUS[status] || REQUIREMENT_STATUS.pending;
@@ -1665,7 +1561,6 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
   );
 }
 
-const BRAND_METHOD_LABELS = { in_person: 'In person', call: 'Call', message: 'Message', written: 'Written' };
 
 /** The attendance proof route is authenticated, so the file is fetched as a blob and opened. */
 async function openActivityProof(activityId, document) {
@@ -1688,11 +1583,15 @@ function latestActivityOf(editing, type) {
 
 /**
  * What Sales submitted for an activity (attendance, time, handler, notes, proof) — Admin
- * reads it here before marking Attended or returning it with a reason.
+ * reads it here before marking it Attended (Verify for Orientation/Tasting) or returning it.
+ * Orientation/Tasting: Admin must open every current file before Verify works (the server keeps
+ * the views per file and per Admin), and cannot verify a submission they encoded.
  */
-function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn, onError }) {
+function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn, onError, currentUserId = null, inquiryBrandName = null }) {
   const [returning, setReturning] = useState(false);
   const [reason, setReason] = useState('');
+  // Files opened in this view since the page loaded (the server records them too).
+  const [opened, setOpened] = useState(() => new Set());
   if (!activity || !activity.completion_submitted_at) {
     if (activity?.completed_before_schedule) {
       return <small className="inline-flex w-fit p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] text-[#fbbf24] text-[11px] font-[700]">Completed before schedule (legacy)</small>;
@@ -1700,8 +1599,30 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
     return null;
   }
   const proofs = activity.proof_documents || [];
-  const reviewLabel = { submitted: 'Waiting for Admin review', returned: 'Returned to Sales', accepted: 'Attended (accepted)' }[activity.review_status] || '';
+  const isTasting = activity.activity_type === 'orientation';
+  const newFlow = isTasting && proofs.some((doc) => doc.type === 'brand_selection');
+  const reviewLabel = { submitted: 'Waiting for Admin review', returned: 'Returned to Sales', accepted: newFlow ? 'Verified' : 'Attended (accepted)' }[activity.review_status] || '';
   const canReview = isAdminRole && activity.review_status === 'submitted';
+  const current = proofs.filter((doc) => !doc.replaced_at);
+  const viewed = (doc) => Boolean(doc.viewed_by_me) || opened.has(doc.id);
+  const unviewed = current.filter((doc) => !viewed(doc));
+  const ownSubmission = currentUserId != null && Number(activity.completion_submitted_by?.id) === Number(currentUserId);
+  const verifyBlocked = newFlow && (unviewed.length > 0 || ownSubmission);
+  const open = (doc) => openActivityProof(activity.id, doc)
+    .then(() => setOpened((set) => new Set(set).add(doc.id)))
+    .catch((error) => onError(error.message));
+  const fileButton = (doc) => (
+    <button key={doc.id} type="button" disabled={busy} onClick={() => open(doc)} className="inline-flex items-center gap-[6px]">
+      {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
+      {newFlow && isAdminRole && !doc.replaced_at && (viewed(doc)
+        ? <span className="text-[#34d399] text-[11px] font-[700]"><FaCheck aria-hidden="true" /> Viewed</span>
+        : <span className="text-[#fbbf24] text-[11px] font-[700]">Not viewed</span>)}
+    </button>
+  );
+  const group = (label, type) => {
+    const list = proofs.filter((doc) => (type ? doc.type === type : true));
+    return list.length ? <span className="flex flex-wrap gap-2 items-center">{label}: {list.map(fileButton)}</span> : null;
+  };
   return (
     <div className="basis-full grid gap-[6px] mt-2 p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] text-[14px] leading-[1.5] text-[#c9d0e0]">
       <div className="flex flex-wrap gap-[6px_16px]">
@@ -1712,28 +1633,41 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
         <p className="m-0">Reason: {activity.no_show_reason}</p>
       ) : (
         <>
-          <span>Actual time: {manilaDateTimeLabel(activity.actual_started_at)} · Handled by {activity.handler_name || '—'}{activity.tasted_brand_name ? ` · Brand tasted: ${activity.tasted_brand_name}` : ''}</span>
+          <span>Actual time: {manilaDateTimeLabel(activity.actual_started_at)} · Handled by {activity.handler_name || '—'}{!isTasting && activity.tasted_brand_name ? ` · Brand tasted: ${activity.tasted_brand_name}` : ''}</span>
+          {isTasting && (activity.selected_brand_name || inquiryBrandName) && (
+            <span>Inquired brand: <strong>{inquiryBrandName || '—'}</strong> · Selected brand: <strong>{activity.selected_brand_name || '—'}</strong></span>
+          )}
           <p className="m-0">Notes: {activity.result_notes}</p>
-          <span className="flex flex-wrap gap-2 items-center">
-            Proof:
-            {proofs.map((doc) => (
-              <button key={doc.id} type="button" disabled={busy} onClick={() => openActivityProof(activity.id, doc).catch((error) => onError(error.message))}>
-                {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
-              </button>
-            ))}
-          </span>
+          {newFlow ? (
+            <>
+              {group('Attendance proof', 'attendance_proof')}
+              {group('Brand selection document', 'brand_selection')}
+            </>
+          ) : group('Proof', null)}
         </>
       )}
       {activity.review_status === 'returned' && <span className="text-[#fbbf24]">Returned: {activity.return_reason}</span>}
-      {activity.reviewed_by?.full_name && activity.review_status !== 'submitted' && <span>Reviewed by {activity.reviewed_by.full_name} on {manilaDateTimeLabel(activity.reviewed_at)}</span>}
+      {activity.reviewed_by?.full_name && activity.review_status !== 'submitted' && <span>{activity.review_status === 'accepted' && newFlow ? 'Verified' : 'Reviewed'} by {activity.reviewed_by.full_name} on {manilaDateTimeLabel(activity.reviewed_at)}</span>}
+      {activity.review_status === 'accepted' && newFlow && <small className="text-[#8f9ab2]">Verified submissions are locked.</small>}
       {canReview && !returning && (
-        <span className="flex flex-wrap gap-2">
+        <span className="flex flex-wrap gap-2 items-center">
           {activity.status === 'completed' && (
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onAttended(activity)}>
-              Mark Attended
+            <button
+              type="button"
+              className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50"
+              disabled={busy || verifyBlocked}
+              title={ownSubmission ? 'You encoded this submission: another Admin must verify it.' : unviewed.length && newFlow ? `Open every file first: ${unviewed.map((doc) => doc.original_name).join(', ')}` : ''}
+              onClick={() => onAttended(activity)}
+            >
+              {newFlow ? 'Verify' : 'Mark Attended'}
             </button>
           )}
           <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
+          {newFlow && verifyBlocked && (
+            <small className="text-[#fbbf24]" role="status">
+              {ownSubmission ? 'You encoded this submission: another Admin must verify it.' : `Open every file before Verify (${current.length - unviewed.length} of ${current.length} viewed).`}
+            </small>
+          )}
         </span>
       )}
       {canReview && returning && (
@@ -1749,123 +1683,9 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
   );
 }
 
-/**
- * Brand Confirmation (after Product Tasting, before Training): the assigned Sales user submits the
- * final brand; Admin confirms it twice (it then locks) or returns it with a reason.
- */
-function BrandConfirmationCard({ editing, brands, isAdminRole, isAssignedSales, busy, onSubmit, onConfirm, onReturn }) {
-  const state = editing?.brand_confirmation;
-  const [form, setForm] = useState(null);
-  const [returning, setReturning] = useState(false);
-  const [reason, setReason] = useState('');
-  if (!state) return null;
-  const current = state.current;
-  const brandName = (id) => (brands || []).find((b) => Number(b.id) === Number(id))?.name || '—';
-  const tastedId = state.tasted_brand_id;
-  const startForm = () => setForm({
-    final_brand_id: String(tastedId || editing.preferred_brand_id || ''), confirmation_method: 'in_person', confirmed_on: localDateInputValue(), notes: '', change_reason: '',
-  });
-  const differs = form && Number(form.final_brand_id) !== Number(tastedId);
-  const formReady = form && form.final_brand_id && form.notes.trim().length >= 5 && (!differs || form.change_reason.trim().length >= 5);
-  return (
-    <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">Brand Confirmation</h3>
-        {state.locked && <small className="inline-flex items-center gap-[6px] text-[#45d991]"><FaLock aria-hidden="true" /> Brand locked</small>}
-      </div>
-      {state.legacy && <p className="m-[8px_0_0] text-[#fbbf24]">Legacy - brand confirmation not captured. The brand ({editing.preferred_brand?.name || brandName(editing.preferred_brand_id)}) is locked.</p>}
-      {state.confirmed && (
-        <p className="m-[8px_0_0]"><FaLock aria-hidden="true" /> <strong>{editing.preferred_brand?.name || brandName(editing.preferred_brand_id)}</strong> — confirmed by {state.locked_by || 'Admin'} on {manilaDateTimeLabel(state.locked_at)}.</p>
-      )}
-      {current && !state.confirmed && (
-        <dl className="grid grid-cols-[170px_minmax(0,_1fr)] gap-[6px_12px] m-[10px_0_0] [&_dt]:text-[#8f9bbd] [&_dd]:m-0">
-          <dt>Status</dt><dd>{{ submitted: 'Waiting for Admin', returned: 'Returned to Sales', confirmed: 'Confirmed' }[current.status]}</dd>
-          <dt>Final brand</dt><dd>{current.final_brand?.name || brandName(current.final_brand_id)}</dd>
-          <dt>Brand tasted</dt><dd>{current.tasted_brand?.name || brandName(current.tasted_brand_id)}</dd>
-          <dt>Confirmed by applicant</dt><dd>{BRAND_METHOD_LABELS[current.confirmation_method]} on {formatDate(current.confirmed_on)}</dd>
-          <dt>Notes</dt><dd>{current.notes}</dd>
-          {current.change_reason && <><dt>Reason for the change</dt><dd>{current.change_reason}</dd></>}
-          <dt>Submitted by</dt><dd>{current.submitted_by?.full_name || '—'} · {manilaDateTimeLabel(current.submitted_at)}</dd>
-          {current.status === 'returned' && <><dt>Return reason</dt><dd className="text-[#fbbf24]">{current.return_reason}</dd></>}
-        </dl>
-      )}
-      {state.retasting_required && (
-        <p className="m-[8px_0_0] text-[#fbbf24]">
-          {state.retasting_done
-            ? 'The new brand was tasted: Admin can confirm it now.'
-            : 'The final brand differs from the tasted one: Product Tasting must be done again for it (use Set Again) before Admin can confirm.'}
-        </p>
-      )}
-      {!state.locked && state.blocked_reason && !current && <p className="m-[8px_0_0] text-muted">{state.blocked_reason}</p>}
-
-      {isAssignedSales && state.can_submit && !form && (
-        <button type="button" className="mt-3" disabled={busy} onClick={startForm}>{current?.status === 'returned' ? 'Correct and resubmit' : 'Submit final brand'}</button>
-      )}
-      {isAssignedSales && form && (
-        <div className="grid gap-[10px] mt-3">
-          <Field label="Final brand" required full>
-            <select value={form.final_brand_id} onChange={(e) => setForm({ ...form, final_brand_id: e.target.value })}>
-              {(brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}{Number(b.id) === Number(tastedId) ? ' (tasted)' : ''}</option>)}
-            </select>
-          </Field>
-          <Field label="How the applicant confirmed" required>
-            <select value={form.confirmation_method} onChange={(e) => setForm({ ...form, confirmation_method: e.target.value })}>
-              {Object.entries(BRAND_METHOD_LABELS).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
-            </select>
-          </Field>
-          <Field label="Date confirmed" required>
-            <input type="date" max={localDateInputValue()} value={form.confirmed_on} onChange={(e) => setForm({ ...form, confirmed_on: e.target.value })} />
-          </Field>
-          <Field label="Notes (required)" required full>
-            <textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="What the applicant said and how it was confirmed" />
-          </Field>
-          {differs && (
-            <Field label="Reason for a brand other than the tasted one (required)" required full>
-              <textarea rows={2} value={form.change_reason} onChange={(e) => setForm({ ...form, change_reason: e.target.value })} placeholder="Product Tasting will be done again for the new brand." />
-            </Field>
-          )}
-          <span className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setForm(null)}>Cancel</button>
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !formReady} onClick={() => { onSubmit({ ...form, final_brand_id: Number(form.final_brand_id) }); setForm(null); }}>
-              Send to Admin
-            </button>
-          </span>
-        </div>
-      )}
-      {isAdminRole && current?.status === 'submitted' && !state.confirmed && !returning && (
-        <span className="flex flex-wrap gap-2 mt-3">
-          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || (state.retasting_required && !state.retasting_done)} title={state.retasting_required && !state.retasting_done ? 'Product Tasting must be done again for the new brand first.' : ''} onClick={() => onConfirm(current)}>
-            Confirm Brand
-          </button>
-          <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
-        </span>
-      )}
-      {isAdminRole && returning && (
-        <span className="grid gap-2 mt-3">
-          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
-          <span className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setReturning(false)}>Cancel</button>
-            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(reason.trim()); setReturning(false); }}>Return with reason</button>
-          </span>
-        </span>
-      )}
-      {(state.history || []).length > 1 && (
-        <details className="mt-3">
-          <summary>Earlier submissions ({state.history.length - 1})</summary>
-          <ul className="m-[6px_0_0] p-[0_0_0_18px]">
-            {state.history.slice(0, -1).map((row) => (
-              <li key={row.id}>{row.final_brand?.name || brandName(row.final_brand_id)} · {row.status} · {manilaDateTimeLabel(row.submitted_at)}{row.return_reason ? ` · Returned: ${row.return_reason}` : ''}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </section>
-  );
-}
-
 function ScheduleSection({
   editing, draft, isAdminRole, sectionRef, onPickChecked, onOpenCalendar, onView,
-  busy = false, onAttended = null, onReturn = null, onError = () => {},
+  busy = false, onAttended = null, onReturn = null, onError = () => {}, currentUserId = null,
 }) {
   const infoOf = (type) => editing?.activity_state?.[type] || {};
   // The Master Schedule session of each activity: the newest one the
@@ -1944,7 +1764,7 @@ function ScheduleSection({
                 </button>
               )}
               {onAttended && (
-                <ActivitySubmission activity={latest} isAdminRole={isAdminRole} busy={busy} onAttended={onAttended} onReturn={onReturn} onError={onError} />
+                <ActivitySubmission key={`${latest?.id}-${latest?.completion_submitted_at}`} activity={latest} isAdminRole={isAdminRole} busy={busy} onAttended={onAttended} onReturn={onReturn} onError={onError} currentUserId={currentUserId} inquiryBrandName={editing?.inquiry_brand_name} />
               )}
             </li>
           );
@@ -1953,7 +1773,7 @@ function ScheduleSection({
       {isAdminRole && (
         <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
           {doneCount === TRACKED_ACTIVITIES.length
-            ? 'All three activities are Done — Scheduled is checked.'
+            ? 'Both activities are Done — Scheduled is checked.'
             : 'Attended is recorded only when you click Save Applicant.'}
         </p>
       )}
@@ -2777,16 +2597,8 @@ export default function Applicants() {
   const returnRequirement = (key, reason) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/return`, { reason }), 'Requirement returned to Sales.');
   const [loiReturn, setLoiReturn] = useState(null);
   const returnLoi = (reason) => runRequest(async () => { const result = await api.post(`/applicants/${editing.id}/loi/return`, { reason }); setLoiReturn(null); return result; }, 'LOI returned to Sales.');
-  const markActivityAttended = (activity) => runRequest(() => api.post(`/activities/${activity.id}/attended`, {}), 'Marked Attended.');
+  const markActivityAttended = (activity) => runRequest(() => api.post(`/activities/${activity.id}/attended`, {}), activity.activity_type === 'orientation' ? 'Orientation/Tasting verified.' : 'Marked Attended.');
   const returnActivity = (activity, reason) => runRequest(() => api.post(`/activities/${activity.id}/return`, { reason }), 'Returned to Sales.');
-  const submitBrand = (form) => runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation`, form), 'Brand Confirmation sent to Admin.');
-  const returnBrand = (reason) => runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation/return`, { reason }), 'Brand Confirmation returned to Sales.');
-  // Confirm Brand asks twice: the second dialog names the brand and the applicant.
-  const [brandConfirmDialog, setBrandConfirmDialog] = useState(null);
-  const confirmBrand = async () => {
-    setBrandConfirmDialog(null);
-    await runRequest(() => api.post(`/applicants/${editing.id}/brand-confirmation/confirm`, { confirmed: true }), 'Brand confirmed and locked.');
-  };
 
   /* ---------- Assigned Sales user (Admin) ---------- */
   const openAssign = async () => {
@@ -2853,7 +2665,7 @@ export default function Applicants() {
           // Proceed button only: the API moves Qualified -> Scheduling and saves
           // it. No schedule or session is created; each activity is set next.
           await api.post(`/applicants/${editing.id}/set-schedule`, {});
-          setSuccess('Applicant moved to Scheduling — Schedule Activity is unlocked. Set Orientation, Product Tasting and Training one at a time.');
+          setSuccess('Applicant moved to Scheduling — Schedule Activity is unlocked. Set Orientation/Tasting first, then Training.');
           break;
         case 'loi':
           await api.patch(`/applicants/${editing.id}/status`, {
@@ -3286,15 +3098,13 @@ export default function Applicants() {
   const nextActivity = (() => {
     const state = editing?.activity_state;
     if (!state) return null;
-    // A brand other than the tasted one: Set Again books the new Product Tasting first.
-    const retasting = editing?.brand_confirmation?.retasting_required && !editing?.brand_confirmation?.retasting_done;
-    const index = retasting ? 1 : TRACKED_ACTIVITIES.findIndex((tracked) => !state?.[tracked.type]?.done);
-    if (index < 0) return null; // all three Done
+    const index = TRACKED_ACTIVITIES.findIndex((tracked) => !state?.[tracked.type]?.done);
+    if (index < 0) return null; // both Done
     const noShowFirst = (editing?.schedules || []).some((row) => row.activity_type === TRACKED_ACTIVITIES[0].type && row.status === 'no_show');
     if (index === 0 && !noShowFirst) return null; // nothing Done yet: Set Schedule instead
     const tracked = TRACKED_ACTIVITIES[index];
-    // Training waits for the Brand Confirmation (the card above explains what is missing).
-    if (tracked.type === 'training' && !editing?.brand_confirmation?.locked) return null;
+    // Training waits for Orientation/Tasting verified by Admin (which also locks the brand).
+    if (tracked.type === 'training' && !state?.orientation?.done) return null;
     const pendingAnywhere = TRACKED_ACTIVITIES.some((item) => state?.[item.type]?.state === 'pending_admin');
     if (state?.[tracked.type]?.active || pendingAnywhere || editing?.has_pending_schedule_update) return null;
     return tracked;
@@ -3370,10 +3180,10 @@ export default function Applicants() {
                 onView={viewInActivities}
                 busy={acting}
                 onAttended={markActivityAttended}
+                currentUserId={user?.id}
                 onReturn={returnActivity}
                 onError={setActionError}
               />
-              <BrandConfirmationCard editing={editing} brands={remote.data?.brands} isAdminRole={false} isAssignedSales={false} busy onSubmit={() => {}} onConfirm={() => {}} onReturn={() => {}} />
             </DoneSection>
           );
         }
@@ -3445,10 +3255,11 @@ export default function Applicants() {
     return { key: stageName, label: stageLabelFor(stageName, state), state };
   }) : [];
 
-  // Scheduling connector: admin-attended activities out of the three tracked ones.
-  // Sales completing an activity does not move it; only the Attended mark does.
-  const scheduleAttendedProgress = editing?.activity_state
-    ? TRACKED_ACTIVITIES.filter((tracked) => editing.activity_state?.[tracked.type]?.attended).length / TRACKED_ACTIVITIES.length
+  // Scheduling connector: two halves, Orientation/Tasting and Training, each green once Admin
+  // verified it. Sales completing an activity does not move it.
+  const scheduleAttendedProgress = null;
+  const scheduleHalves = editing?.activity_state
+    ? { left: Boolean(editing.activity_state.orientation?.attended), right: Boolean(editing.activity_state.training?.attended) }
     : null;
 
   // Qualification requirements progress (accepted / total) drives the first tracker connector.
@@ -3922,7 +3733,7 @@ export default function Applicants() {
                 </p>
               )}
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
-              <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} />
+              <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} scheduleHalves={scheduleHalves} />
 
               <div className="ap-actions flex flex-wrap items-center gap-[10px] mt-[14px]">
                 {primary && (
@@ -3960,7 +3771,7 @@ export default function Applicants() {
                   </button>
                 )}
                 {/* Set Again is an applicant-level action in the Scheduled stage
-                    action area — never inside Orientation / Product Tasting / Training. */}
+                    action area — never inside Orientation/Tasting or Training. */}
                 {stage === 'scheduled' && firstActivity && isAdminRole && (
                   <button
                     type="button"
@@ -3969,7 +3780,7 @@ export default function Applicants() {
                     title={`Schedule ${firstActivity.label} for this applicant`}
                     onClick={() => goSchedule(firstActivity.type)}
                   >
-                    Set Schedule · {firstActivity.label}
+                    Set schedule – {firstActivity.label}
                   </button>
                 )}
                 {stage === 'scheduled' && nextActivity && (
@@ -3980,7 +3791,7 @@ export default function Applicants() {
                     title={`Schedule the next step: ${nextActivity.label}`}
                     onClick={() => goSchedule(nextActivity.type)}
                   >
-                    Set Again · {nextActivity.label}
+                    Set again – {nextActivity.label}
                   </button>
                 )}
               </div>
@@ -4054,18 +3865,9 @@ export default function Applicants() {
                 onView={viewInActivities}
                 busy={acting}
                 onAttended={markActivityAttended}
+                currentUserId={user?.id}
                 onReturn={returnActivity}
                 onError={setActionError}
-              />
-              <BrandConfirmationCard
-                editing={editing}
-                brands={remote.data?.brands}
-                isAdminRole={isAdminRole}
-                isAssignedSales={isAssignedSales}
-                busy={acting}
-                onSubmit={submitBrand}
-                onConfirm={(current) => setBrandConfirmDialog(current)}
-                onReturn={returnBrand}
               />
               </>
             )}
@@ -4581,33 +4383,6 @@ export default function Applicants() {
 
       {/* Application Detail: read-only Full Applicant Information report. */}
       {report && <ApplicationDetailReport report={report} onClose={() => setReport(null)} />}
-
-      {/* Confirm Brand, second step: the lock is permanent. */}
-      {brandConfirmDialog && editing && (
-        <Dialog
-          title="Lock the brand?"
-          onClose={() => setBrandConfirmDialog(null)}
-          size="small"
-          zIndex={2147482500}
-          footer={(
-            <>
-              <button type="button" onClick={() => setBrandConfirmDialog(null)}>Cancel</button>
-              <button
-                type="button"
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
-                disabled={acting}
-                onClick={() => void confirmBrand()}
-              >
-                {acting ? 'Saving…' : 'Continue'}
-              </button>
-            </>
-          )}
-        >
-          <p className="m-0 text-[14px] leading-[1.6]">
-            This locks <strong>{brandConfirmDialog.final_brand?.name || 'this brand'}</strong> for <strong>{editing.full_name}</strong>. The brand cannot be changed after this. Continue?
-          </p>
-        </Dialog>
-      )}
 
       {/* Undo LOI needs a reason (at least 5 characters). */}
       {undoLoiForm && editing && (

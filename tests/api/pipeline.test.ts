@@ -132,20 +132,23 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   // Attended requires Sales' Complete, in order.
   const attended = await call('PATCH', `${path}/milestones`, { token: admin, body: { milestones: { orientation_attended: true } } });
   assert.match(attended.json.errors.milestones[0], /Sales must mark it Complete first/);
-  for (const type of ['orientation', 'product_tasting', 'training']) {
+  for (const type of ['orientation', 'training']) {
     await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, completed_at, approval_status, scheduled_by_user_id) values ($1, $2, $3, now() - interval '2 days', now() - interval '2 days', 'completed', now(), 'approved', $4)`, [applicantId, type, type, salesUser.id]);
   }
   const skipOrder = await call('PATCH', `${path}/milestones`, { token: admin, body: { milestones: { training_completed: true } } });
   assert.match(skipOrder.json.errors.milestones[0], /must be Done before/);
+  // Orientation/Tasting is verified only from its review card (files opened); here it is set as Verify would.
+  assert.match((await call('PATCH', `${path}/milestones`, { token: admin, body: { milestones: { orientation_attended: true } } })).json.errors.milestones[0], /verified from its review card/);
+  await q(`update applicants set milestones = milestones || '{"orientation_attended": true}'::jsonb where id = $1`, [applicantId]);
   const all = await call('PATCH', `${path}/milestones`, {
     token: admin,
-    body: { milestones: { orientation_attended: true, product_tasting_attended: true, training_completed: true }, milestone_details: { orientation_attended: { on: '2026-11-01' } } },
+    body: { milestones: { orientation_attended: true, training_completed: true }, milestone_details: { training_completed: { on: '2026-11-01' } } },
   });
-  assert.equal(all.status, 200);
+  assert.equal(all.status, 200, JSON.stringify(all.json));
   assert.equal(all.json.data.schedule_complete, true);
   assert.equal(all.json.data.activity_state.training.done, true);
-  assert.equal(all.json.data.milestone_details.orientation_attended.on, '2026-11-01T00:00');
-  assert.match(all.json.data.milestone_details.orientation_attended.by, /\(Admin\)$/);
+  assert.equal(all.json.data.milestone_details.training_completed.on, '2026-11-01T00:00');
+  assert.match(all.json.data.milestone_details.training_completed.by, /\(Admin\)$/);
   // A saved Attended can never be cleared.
   const cleared = await call('PATCH', `${path}/milestones`, { token: admin, body: { milestones: {} } });
   assert.equal(cleared.json.data.milestones.training_completed, true);

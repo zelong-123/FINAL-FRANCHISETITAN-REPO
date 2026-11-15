@@ -2,7 +2,6 @@
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, manilaToday, ValidationError } from '../lib/http.ts';
 import { REASON_MIN } from './accountability.ts';
-import { assertBrandConfirmedForTraining, retastingSince } from './brandConfirmation.ts';
 import { PIPELINE } from '../config/roles.ts';
 import { MILESTONES, QUALIFICATION_KEYS, REQUIRED_MILESTONES } from './applicantModel.ts';
 import { requiredPaymentsBlocker } from './requiredPayments.ts';
@@ -26,14 +25,15 @@ const EDGE_RULES: Record<string, { requires?: string; remarks_required?: boolean
 
 export const TRACKED_ACTIVITY_MILESTONES: Record<string, string> = {
   orientation: 'orientation_attended',
-  product_tasting: 'product_tasting_attended',
   training: 'training_completed',
 };
 export const ACTIVITY_ORDER = Object.keys(TRACKED_ACTIVITY_MILESTONES);
 
 export const isSchedulable = (a: Row) => !a.archived_at && a.status === 'scheduled';
 export const stageLabel = (stage: string | null) => STAGES[stage ?? '']?.label || String(stage ?? '').replace(/_/g, ' ');
-export const activityLabel = (type: string) => type.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+/** Orientation and Product Tasting are one activity: Orientation/Tasting (stored key 'orientation'). */
+export const activityLabel = (type: string) => (type === 'orientation' || type === 'product_tasting' ? 'Orientation/Tasting'
+  : type.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' '));
 export const nextActivityType = (type: string) => {
   const i = ACTIVITY_ORDER.indexOf(type);
   return i < 0 ? null : ACTIVITY_ORDER[i + 1] ?? null;
@@ -97,8 +97,6 @@ export async function assertPreviousActivityDone(db: Db, a: Row, type: string) {
   if (!(await activityDone(db, a, previous))) {
     fail('activity_type', `${activityLabel(type)} comes after ${activityLabel(previous)}. Sales must mark ${activityLabel(previous)} Complete and Admin must mark it Attended and Save Applicant first.`);
   }
-  // Brand Confirmation sits between Product Tasting and Training.
-  if (type === 'training') await assertBrandConfirmedForTraining(db, a);
 }
 
 const latestOfType = async (db: Db, a: Row, type: string) => (await db.query(
@@ -108,10 +106,8 @@ const latestOfType = async (db: Db, a: Row, type: string) => (await db.query(
 export async function setAgainTarget(db: Db, a: Row): Promise<string> {
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be scheduled.');
   if (!isSchedulable(a)) fail('applicant_id', NOT_SCHEDULABLE);
-  // A brand that differs from the tasted one needs a new Product Tasting first.
-  if (await retastingSince(db, a.id)) return 'product_tasting';
   const target = await currentActivityType(db, a);
-  if (target === null) fail('activity_type', 'All three activities are Done — there is no next step to schedule. Use [Completed] at the Scheduling stage to move to LOI Submission.');
+  if (target === null) fail('activity_type', 'Both activities are Done — there is no next step to schedule. Use [Completed] at the Scheduling stage to move to LOI Submission.');
   // After a No Show, Set Again reschedules the same activity (Orientation included).
   const noShow = (await latestOfType(db, a, target!))?.status === 'no_show';
   if (target === ACTIVITY_ORDER[0] && !noShow) fail('activity_type', `No activity is Done yet — schedule ${activityLabel(target!)} with Set Schedule instead of Set Again.`);

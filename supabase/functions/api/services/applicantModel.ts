@@ -11,8 +11,7 @@ export const MILESTONES: Record<string, string> = {
   qualification_initial_interview_completed: 'Initial interview completed',
   qualification_preferred_location_evaluated: 'Preferred location evaluated',
   qualification_investment_understood: 'Applicant understands franchise investment',
-  orientation_attended: 'Orientation attended',
-  product_tasting_attended: 'Product tasting attended',
+  orientation_attended: 'Orientation/Tasting attended',
   training_completed: 'Training completed',
 };
 export const QUALIFICATION_KEYS = Object.keys(MILESTONES).filter((k) => k.startsWith('qualification_'));

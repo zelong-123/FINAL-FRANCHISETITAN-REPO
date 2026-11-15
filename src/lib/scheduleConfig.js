@@ -14,7 +14,7 @@ export const DEFAULT_SCHEDULE_CONFIG = {
   working_days: [1, 2, 3, 4, 5],
   days_label: 'Monday to Friday',
   step_minutes: 30,
-  default_duration_minutes: { orientation: 120, product_tasting: 120, training: 180 },
+  default_duration_minutes: { orientation: 120, training: 180 },
 };
 
 let current = DEFAULT_SCHEDULE_CONFIG;

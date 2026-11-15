@@ -16,8 +16,6 @@ function liveKey(a: Row): string | null {
   // A No Show gives up its slot (Set Again reschedules it), like a cancellation.
   if (a.approval_status === 'rejected' || ['cancelled', 'no_show'].includes(a.status)) return null;
   if (!TRACKED_TYPES.includes(a.activity_type)) return null;
-  // A completed Product Tasting keeps its own key, so a re-tasting for a newly chosen brand can be booked.
-  if (a.activity_type === 'product_tasting' && a.status === 'completed' && a.id) return `${a.applicant_id}:product_tasting:completed:${a.id}`;
   return `${a.applicant_id}:${a.activity_type}`;
 }
 

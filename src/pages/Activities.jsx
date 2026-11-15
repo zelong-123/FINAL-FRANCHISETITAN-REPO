@@ -23,7 +23,9 @@ import { FaXmark } from 'react-icons/fa6';
 import { initialsOf } from '../lib/initials';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
-import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase } from '../lib/format';
+import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase as baseTitleCase } from '../lib/format';
+import RequirementFileDrop from '../components/RequirementFileDrop';
+import { occupancyLabel } from '../lib/scheduleSessions';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, ProgressBar, StatusBadge } from '../components/ApiUi';
 import ScheduleWindowFields from '../components/ScheduleActivityFields';
 import {
@@ -40,16 +42,21 @@ import useScheduleConfig from '../lib/useScheduleConfig';
 import MasterSchedule from './MasterSchedule';
 import { activitiesView } from '../lib/navigation';
 
-// Phase 1: "Others" is gone — only the three tracked activities can be scheduled.
-const activityTypes = ['orientation', 'product_tasting', 'training'];
-// The three tracked milestones get their own progress chart in the read panel.
-const trackedTypes = ['orientation', 'product_tasting', 'training'];
+// Orientation and Product Tasting are one activity: Orientation/Tasting (stored key 'orientation').
+const activityTypes = ['orientation', 'training'];
+// The two tracked milestones get their own progress chart in the read panel.
+const trackedTypes = ['orientation', 'training'];
+/** Activity names: 'orientation' (and older 'product_tasting' rows) read as Orientation/Tasting. */
+const titleCase = (value) => (value === 'orientation' || value === 'product_tasting' ? 'Orientation/Tasting' : baseTitleCase(value));
+// Orientation/Tasting completion files: the same types and size as the requirement uploads.
+const PROOF_ACCEPT = '.pdf,.jpg,.jpeg,.png';
+const proofProblem = (file) => (!/\.(pdf|jpe?g|png)$/i.test(file.name) ? `${file.name}: PDF, JPG or PNG only.`
+  : file.size > 10 * 1024 * 1024 ? `${file.name} is larger than 10 MB.` : '');
 
 // The applicant milestone that proves each tracked activity is DONE (Sales
 // Complete AND Admin Attended saved). The fixed order drives every gate.
 const ACTIVITY_MILESTONE = {
   orientation: 'orientation_attended',
-  product_tasting: 'product_tasting_attended',
   training: 'training_completed',
 };
 
@@ -107,7 +114,7 @@ function parseAttendees(raw, fallback) {
   return fallback ? [fallback] : [];
 }
 
-/** True once the person has completed every tracked milestone (orientation, product tasting, training). */
+/** True once the person has completed every tracked milestone (Orientation/Tasting, Training). */
 /** A tracked activity is DONE only when Sales completed it AND Admin saved Attended. */
 function activityDone(group, type) {
   if (!ACTIVITY_MILESTONE[type]) return false;
@@ -178,7 +185,7 @@ function currentActivity(group) {
   return activities[activities.length - 1] || null;
 }
 
-/** Tracks status per milestone category, e.g. "Orientation done, Training —, Product tasting —". */
+/** Tracks status per milestone category, e.g. "Orientation/Tasting done, Training —". */
 function typeProgress(activities) {
   return trackedTypes.map((type) => {
     const held = activities.filter((item) => item.activity_type === type && item.status !== 'cancelled');
@@ -579,7 +586,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
 
   return (
     <>
-      <Field label="Activity" required full hint="Activities go in order: Orientation, then Product Tasting, then Training.">
+      <Field label="Activity" required full hint="Activities go in order: Orientation/Tasting, then Training (after Admin verifies Orientation/Tasting).">
         <select
           required
           disabled={Boolean(lockedApplicantId)}
@@ -708,7 +715,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
           ) : (
             <span className="muted-note text-muted text-[8px] leading-[1.6]">No applicants selected yet.</span>
           )}
-          <p className="font-[700] text-[#39ffb0]" role="status">{selectedMany.length}/{CAPACITY[form.activity_type] || 0}</p>
+          <p className="font-[700] text-[#39ffb0]" role="status">{occupancyLabel(selectedMany.length, CAPACITY[form.activity_type] || 0)}</p>
         </Field>
       )}
     </>
@@ -799,15 +806,16 @@ export default function Activities() {
   const preselectHandled = useRef(false);
 
   const remote = useRemote(async () => {
-    const [groups, table, applicants] = await Promise.all([
+    const [groups, table, applicants, brands] = await Promise.all([
       // Full history: the read panel, calendar and deep links still need people
       // who already finished all three tracked activities.
       api.get('/activities/grouped', { include_completed: 1 }),
       // Data panel list: the backend already excludes completed applicants.
       api.get('/activities/grouped'),
       ['admin', 'sales'].includes(role) ? api.get('/applicants', { per_page: 100 }) : Promise.resolve({ data: [] }),
+      role === 'sales' ? api.get('/brands').catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
     ]);
-    return { groups: groups.data, tableGroups: table.data, applicants: applicants.data };
+    return { groups: groups.data, tableGroups: table.data, applicants: applicants.data, brands: brands.data || [] };
   }, [role]);
 
   const groups = useMemo(() => remote.data?.groups || [], [remote.data?.groups]);
@@ -1161,7 +1169,12 @@ export default function Activities() {
         body.append('actual_started_at', fromManilaInput(completeForm.actual_started_at));
         body.append('handler_name', completeForm.handler_name.trim());
         body.append('result_notes', completeForm.result_notes.trim());
-        if (completeForm.proof) body.append('proof', completeForm.proof);
+        if (completing.activity_type === 'orientation') {
+          completeForm.attendance.forEach((file) => body.append('attendance', file));
+          completeForm.brand_docs.forEach((file) => body.append('brand_document', file));
+          body.append('selected_brand_id', completeForm.selected_brand_id);
+          body.append('keep_document_ids', completeForm.saved.map((doc) => doc.id).join(','));
+        } else if (completeForm.proof) body.append('proof', completeForm.proof);
       } else {
         body.append('no_show_reason', completeForm.no_show_reason.trim());
       }
@@ -1478,10 +1491,10 @@ export default function Activities() {
                                       onClick={() => setAgain(group, setAgainType)}
                                       title={`Schedule the next step: ${titleCase(setAgainType)}`}
                                     >
-                                      <FaRotateRight aria-hidden="true" /> Set Again · {titleCase(setAgainType)}
+                                      <FaRotateRight aria-hidden="true" /> Set again – {titleCase(setAgainType)}
                                     </button>
                                   ) : finishedAll ? (
-                                    // Orientation, Product tasting and Training are all done:
+                                    // Orientation/Tasting and Training are both done:
                                     // no more scheduling, go back to the applicant pipeline.
                                     <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.activities-page_.row-actions_&]:inline-flex [.activities-page_.row-actions_&]:items-center [.activities-page_.row-actions_&]:gap-2 [.activities-page_.row-actions_&]:whitespace-nowrap" onClick={() => navigate(APPLICANTS_ROUTE)}>
                                       <FaArrowLeft aria-hidden="true" /> Back to Status
@@ -1509,7 +1522,18 @@ export default function Activities() {
                                             result_notes: '',
                                             no_show_reason: '',
                                             proof: null,
+                                            attendance: [],
+                                            brand_docs: [],
+                                            saved: [],
+                                            selected_brand_id: '',
                                           });
+                                          // A returned Orientation/Tasting: the files already sent can be kept.
+                                          if (activity.activity_type === 'orientation' && activity.review_status === 'returned') {
+                                            api.get(`/activities/${activity.id}`).then((res) => {
+                                              const current = (res.data?.proof_documents || []).filter((doc) => !doc.replaced_at);
+                                              setCompleteForm((f) => (f ? { ...f, saved: current, selected_brand_id: res.data?.selected_brand_id ? String(res.data.selected_brand_id) : f.selected_brand_id } : f));
+                                            }).catch(() => {});
+                                          }
                                         }}
                                       >
                                         Complete
@@ -1699,9 +1723,48 @@ export default function Activities() {
                 <Field label="Notes" full required hint="At least 10 characters: attendance, feedback, next steps.">
                   <textarea required minLength="10" value={completeForm.result_notes} onChange={(e) => setCompleteForm({ ...completeForm, result_notes: e.target.value })} placeholder="What happened during the activity." />
                 </Field>
-                <Field label="Attendance proof" full required hint="Sign-in sheet or photo (PDF, JPG or PNG).">
-                  <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setCompleteForm({ ...completeForm, proof: e.target.files?.[0] || null })} />
-                </Field>
+                {completing.activity_type === 'orientation' ? (
+                  <>
+                    <RequirementFileDrop
+                      label="Attendance proof (1–10 files)"
+                      required
+                      multiple
+                      replaceable
+                      max={10}
+                      accept={PROOF_ACCEPT}
+                      validate={proofProblem}
+                      hint="Sign-in sheet or photos of the session. PDF, JPG or PNG, up to 10 MB each."
+                      files={completeForm.attendance}
+                      onChange={(files) => setCompleteForm((f) => ({ ...f, attendance: files }))}
+                      saved={completeForm.saved.filter((doc) => doc.type === 'attendance_proof')}
+                      onSavedChange={(kept) => setCompleteForm((f) => ({ ...f, saved: [...f.saved.filter((doc) => doc.type !== 'attendance_proof'), ...kept] }))}
+                    />
+                    <RequirementFileDrop
+                      label="Brand selection document (1–2 files)"
+                      required
+                      multiple
+                      replaceable
+                      max={2}
+                      accept={PROOF_ACCEPT}
+                      validate={proofProblem}
+                      hint="The signed brand selection form. PDF, JPG or PNG, up to 10 MB each."
+                      files={completeForm.brand_docs}
+                      onChange={(files) => setCompleteForm((f) => ({ ...f, brand_docs: files }))}
+                      saved={completeForm.saved.filter((doc) => doc.type === 'brand_selection')}
+                      onSavedChange={(kept) => setCompleteForm((f) => ({ ...f, saved: [...f.saved.filter((doc) => doc.type !== 'brand_selection'), ...kept] }))}
+                    />
+                    <Field label="Selected brand" full required hint="Admin sets the applicant's brand to this one when verifying.">
+                      <select required value={completeForm.selected_brand_id} onChange={(e) => setCompleteForm({ ...completeForm, selected_brand_id: e.target.value })}>
+                        <option value="">Choose the brand…</option>
+                        {(remote.data?.brands || []).map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                      </select>
+                    </Field>
+                  </>
+                ) : (
+                  <Field label="Attendance proof" full required hint="Sign-in sheet or photo (PDF, JPG or PNG).">
+                    <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setCompleteForm({ ...completeForm, proof: e.target.files?.[0] || null })} />
+                  </Field>
+                )}
               </>
             ) : (
               <Field label="No Show reason" full required hint="At least 5 characters. Use Set Again afterwards to reschedule this activity.">

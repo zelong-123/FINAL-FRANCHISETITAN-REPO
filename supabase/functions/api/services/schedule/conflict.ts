@@ -1,17 +1,19 @@
 // App\Services\Scheduling\ScheduleConflictService: plain if-then rules that never change data.
 // Overlap: new_start < end AND new_end > start. Only pending and confirmed sessions count.
-//  HARD  H1 applicant twice, H2 handler twice, H3 tastings of different brands, H4 trainings, H5 capacity, H6 brand match
-//  MERGE M1 orientation with seats, M2 tasting of the same brand with seats (Admin only, never automatic)
-//  WARN  W1 same handler closer than the near-conflict gap
+//  HARD  H1 applicant twice, H2 the same Sales user (handler) needs a 1-hour gap between sessions on a day
+//        (overlap included), H4 trainings never overlap, H5 capacity (Orientation/Tasting 5), H6 brand match
+//        (Training), H7 the handler must be every applicant's assigned Sales user
+//  MERGE M1 Orientation/Tasting of the SAME Sales user with seats (Admin only, never automatic)
+//  Different Sales users may run Orientation/Tasting sessions at the same time.
 import type { Db, Row } from '../../lib/db.ts';
 import { fail, ValidationError } from '../../lib/http.ts';
 import { activityLabel, isSchedulable, NOT_SCHEDULABLE } from '../pipeline.ts';
 import {
-  addMinutes, assertNoOtherActiveSchedule, assertNotPreviouslyCompleted, assertPrerequisiteDone, assertSlotFree, atLocal, DEFAULT_DURATION, formatRange,
-  iso8601, isoDay, localDay, MINUTE, monthDay, NEAR_GAP_MINUTES, parseLocal, resolveWindow, scheduleWindow, sessionCapacity, weekdayMonthDay,
+  addMinutes, assertNoOtherActiveSchedule, assertNotPreviouslyCompleted, assertPrerequisiteDone, assertSlotFree, atLocal, capacityOf, DEFAULT_DURATION, formatRange,
+  HANDLER_BUFFER_MINUTES, iso8601, isoDay, occupancyLabel, localDay, localMinutes, MINUTE, monthDay, parseLocal, resolveWindow, scheduleWindow, sessionCapacity, TRACKED_TYPES, weekdayMonthDay,
 } from './rules.ts';
 
-export const BRANDED_TYPES = ['product_tasting', 'training'];
+export const BRANDED_TYPES = ['training'];
 export const LIVE_STATUSES = ['pending', 'confirmed'];
 const NO_BRAND_PREFERENCE = 'Itakda muna ang brand preference ng applicant.';
 const SUGGESTION_LIMIT = 3;
@@ -25,7 +27,7 @@ const inactive = `('cancelled', 'removed')`;
 export const SESSION_RELATIONS = (alias: string) => `
   (select jsonb_build_object('id', b.id, 'name', b.name) from brands b where b.id = ${alias}.brand_id) as brand,
   (select jsonb_build_object('id', u.id, 'full_name', u.full_name) from users u where u.id = ${alias}.handler_id) as handler,
-  coalesce((select jsonb_agg(to_jsonb(p) || jsonb_build_object('applicant', (select jsonb_build_object('id', a.id, 'applicant_code', a.applicant_code, 'full_name', a.full_name, 'status', a.status, 'preferred_brand_id', a.preferred_brand_id,
+  coalesce((select jsonb_agg(to_jsonb(p) || jsonb_build_object('applicant', (select jsonb_build_object('id', a.id, 'applicant_code', a.applicant_code, 'full_name', a.full_name, 'status', a.status, 'preferred_brand_id', a.preferred_brand_id, 'assigned_sales_user_id', a.assigned_sales_user_id,
       'preferred_brand', (select jsonb_build_object('id', b2.id, 'name', b2.name) from brands b2 where b2.id = a.preferred_brand_id)) from applicants a where a.id = p.applicant_id)) order by p.id)
     from schedule_session_participants p where p.session_id = ${alias}.id and p.attendance_status not in ${inactive}), '[]'::jsonb) as active_participants`;
 
@@ -43,6 +45,51 @@ const endOf = (s: Row) => new Date(s.end_at);
 export const overlaps = (start: Date, end: Date, s: Row) => start < endOf(s) && end > startOf(s);
 export const timeRange = (s: Row) => `${monthDay(startOf(s))} ${formatRange(startOf(s), endOf(s))}`;
 export const describe = (s: Row) => `${activityLabel(s.activity_type)}${s.brand?.name ? ` (${s.brand.name})` : ''} at ${timeRange(s)}`;
+
+/** "the next allowed start is 1:00 PM" — one hour after the session ends. */
+export function nextAllowed(session: Row): string {
+  const next = addMinutes(endOf(session), HANDLER_BUFFER_MINUTES);
+  const minutes = localMinutes(next);
+  const h = Math.trunc(minutes / 60);
+  return `the next allowed start after it is ${h % 12 === 0 ? 12 : h % 12}:${String(minutes % 60).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}.`;
+}
+
+/** H2: the same Sales user, the same day, less than the buffer apart (not overlapping). */
+function bufferReason(p: Row, session: Row): string | null {
+  if (p.handler_id === null || Number(session.handler_id ?? 0) !== p.handler_id) return null;
+  if (localDay(startOf(session)) !== localDay(p.start_at)) return null;
+  const gap = endOf(session) <= p.start_at ? (p.start_at.getTime() - endOf(session).getTime()) / MINUTE : (startOf(session).getTime() - p.end_at.getTime()) / MINUTE;
+  if (gap >= HANDLER_BUFFER_MINUTES) return null;
+  const before = endOf(session) <= p.start_at;
+  return `${session.handler?.full_name ?? 'This Sales user'} has ${describe(session)} — only ${Math.trunc(gap)} min apart. The same Sales user needs ${HANDLER_BUFFER_MINUTES / 60} hour between sessions${before ? `: ${nextAllowed(session)}` : ', so this session must end at least 1 hour before that one starts.'}`;
+}
+
+/** The one assigned Sales user shared by every applicant (null when any is unassigned or they differ). */
+export function commonSalesUser(type: string, applicants: Row[]): number | null {
+  if (!TRACKED_TYPES.includes(type) || !applicants.length || applicants.some((a) => !a.assigned_sales_user_id)) return null;
+  const owners = new Set(applicants.map((a) => Number(a.assigned_sales_user_id)));
+  return owners.size === 1 ? [...owners][0] : null;
+}
+
+/** The default handler for these applicants (see commonSalesUser). */
+export async function defaultHandlerId(db: Db, type: string, applicantIds: number[]): Promise<number | null> {
+  if (!applicantIds.length) return null;
+  const rows = await db.query(`select id, assigned_sales_user_id from applicants where id = any($1::bigint[])`, [`{${[...new Set(applicantIds.map(Number))].join(',')}}`]);
+  return rows.length === new Set(applicantIds.map(Number)).size ? commonSalesUser(type, rows) : null;
+}
+
+/** H7: a session belongs to one Sales user, and only that user's applicants can be in it. */
+export function handlerReasons(type: string, handlerId: number | null, applicants: Row[]): string[] {
+  if (!TRACKED_TYPES.includes(type)) return [];
+  const reasons: string[] = [];
+  for (const a of applicants) {
+    if (!a.assigned_sales_user_id) reasons.push(`${a.full_name} has no assigned Sales user. Assign one before scheduling.`);
+    else if (handlerId !== null && Number(a.assigned_sales_user_id) !== handlerId) {
+      reasons.push(`${a.full_name} is assigned to another Sales user. A session belongs to the applicant's assigned Sales user: reassign the applicant first (Reassign) to use this one.`);
+    }
+  }
+  return reasons;
+}
 
 export function brandReasons(type: string, brandId: number | null, applicants: Row[]): string[] {
   if (!BRANDED_TYPES.includes(type)) return [];
@@ -70,7 +117,8 @@ function normalize(p: Row) {
     handler_id: p.handler_id ? Number(p.handler_id) : null,
     venue: p.venue ?? null,
     applicant_ids: [...new Set<number>((p.applicant_ids ?? []).map(Number))],
-    max_capacity: Number(p.max_capacity ?? sessionCapacity(type)),
+    // The current capacity rule wins over a larger stored capacity (older sessions).
+    max_capacity: Math.min(Number(p.max_capacity ?? sessionCapacity(type)), sessionCapacity(type) || Number(p.max_capacity ?? 0)),
     existing_count: Number(p.existing_count ?? 0),
     ignore_session_ids: (p.ignore_session_ids ?? []).map(Number) as number[],
     detach: p.detach ?? null,
@@ -114,10 +162,9 @@ async function gateReasons(db: Db, p: Proposal, applicants: Row[]): Promise<stri
 function isMergeCandidate(p: Proposal, session: Row, participants: Row[], applicants: Row[]): boolean {
   if (session.activity_type !== p.activity_type || !p.applicant_ids.length) return false;
   if (p.activity_type === 'training') return false;
-  if (p.activity_type === 'product_tasting') {
-    if (Number(session.brand_id ?? 0) !== Number(p.brand_id ?? 0) || brandReasons('product_tasting', session.brand_id, applicants).length) return false;
-  }
-  return session.max_capacity - participants.length >= p.applicant_ids.length;
+  if (p.handler_id !== null && Number(session.handler_id ?? 0) !== p.handler_id) return false;
+  if (applicants.some((a) => Number(a.assigned_sales_user_id ?? 0) !== Number(session.handler_id ?? -1))) return false;
+  return capacityOf(session) - participants.length >= p.applicant_ids.length;
 }
 
 function checkAgainst(p: Proposal, applicants: Row[], sessions: Row[]) {
@@ -131,33 +178,26 @@ function checkAgainst(p: Proposal, applicants: Row[], sessions: Row[]) {
     if (p.detach && p.detach.session_id === session.id) participants = participants.filter((r) => r.applicant_id !== p.detach.applicant_id);
 
     if (!overlaps(p.start_at, p.end_at, session)) {
-      if (p.handler_id !== null && session.handler_id === p.handler_id) {
-        const gap = endOf(session) <= p.start_at ? (p.start_at.getTime() - endOf(session).getTime()) / MINUTE : (startOf(session).getTime() - p.end_at.getTime()) / MINUTE;
-        if (gap < NEAR_GAP_MINUTES) {
-          warnings.push(`Near conflict: handler ${session.handler?.full_name ?? `#${session.handler_id}`} has ${describe(session)} — only ${Math.trunc(gap)} min apart (minimum ${NEAR_GAP_MINUTES} min).`);
-        }
-      }
+      const gapHard = bufferReason(p, session);
+      if (gapHard) hard.push(gapHard);
       continue;
     }
     const sessionHard: string[] = [];
     for (const clash of participants.filter((r) => p.applicant_ids.includes(r.applicant_id))) {
       sessionHard.push(`${clash.applicant?.full_name ?? 'Applicant'} already has ${describe(session)}.`);
     }
-    if (p.activity_type === 'product_tasting' && session.activity_type === 'product_tasting' && Number(session.brand_id ?? 0) !== Number(p.brand_id ?? 0)) {
-      sessionHard.push(`Overlaps with ${describe(session)}; ibang brand.`);
-    }
     if (p.activity_type === 'training' && session.activity_type === 'training') {
       sessionHard.push(`Overlaps with ${describe(session)} — Training sessions cannot overlap.`);
     }
     const mergeable = !sessionHard.length && isMergeCandidate(p, session, participants, applicants);
     const sameHandler = p.handler_id !== null && session.handler_id === p.handler_id;
-    const handlerMessage = `Handler ${session.handler?.full_name ?? `#${session.handler_id}`} is already booked at ${timeRange(session)} (${activityLabel(session.activity_type)}).`;
+    const handlerMessage = `${session.handler?.full_name ?? `Sales user #${session.handler_id}`} already has ${describe(session)}. The same Sales user needs ${HANDLER_BUFFER_MINUTES / 60} hour between sessions: ${nextAllowed(session)}`;
     if (mergeable) {
       targets.push({
         session_id: session.id, activity_type: session.activity_type, start_at: iso8601(session.start_at), end_at: iso8601(session.end_at), time: timeRange(session),
         brand: session.brand?.name ?? null, handler: session.handler?.full_name ?? null, venue: session.venue, status: session.status,
-        occupancy: `${participants.length}/${session.max_capacity} applicants`,
-        why: `${session.activity_type === 'orientation' ? 'Orientation (any brand)' : 'Parehong brand'}, may ${session.max_capacity - participants.length} slot(s) pa`,
+        occupancy: occupancyLabel(participants.length, capacityOf(session)),
+        why: `Same Sales user, ${capacityOf(session) - participants.length} seat(s) left`,
       });
       if (sameHandler) separateBlockers.push(`${handlerMessage} Merge into that session or pick another handler.`);
       else if (session.handler_id === p.handler_id && String(session.venue ?? '') === String(p.venue ?? '')) {
@@ -206,15 +246,19 @@ export const applicantsWithBrand = async (db: Db, ids: number[]): Promise<Row[]>
 export async function evaluate(db: Db, proposal: Row, actor: Row | null, withSuggestions = true) {
   const p = normalize(proposal);
   const applicants = await applicantsWithBrand(db, p.applicant_ids);
+  // No handler given: the applicants' assigned Sales user is the handler, so the capacity, the
+  // 1-hour buffer and the handler rules always apply (and the write saves this handler).
+  if (p.handler_id === null) p.handler_id = commonSalesUser(p.activity_type, applicants);
   const fixed: string[] = [];
   if (p.check_window) fixed.push(...windowReasons(p));
   fixed.push(...brandReasons(p.activity_type, p.brand_id, applicants));
+  fixed.push(...handlerReasons(p.activity_type, p.handler_id, applicants));
   const total = p.existing_count + p.applicant_ids.length;
   if (p.max_capacity < 1) fixed.push('Capacity must be at least 1.');
-  else if (total > p.max_capacity) fixed.push(`Lalampas sa max capacity (${total}/${p.max_capacity} applicants).`);
+  else if (total > p.max_capacity) fixed.push(`Session full: ${activityLabel(p.activity_type)} allows ${p.max_capacity} applicants (${total}/${p.max_capacity}).`);
   if (p.check_applicant_gates) fixed.push(...(await gateReasons(db, p, applicants)));
 
-  const sessions = await liveSessions(db, addMinutes(p.start_at, -NEAR_GAP_MINUTES), addMinutes(p.end_at, NEAR_GAP_MINUTES));
+  const sessions = await liveSessions(db, addMinutes(p.start_at, -HANDLER_BUFFER_MINUTES), addMinutes(p.end_at, HANDLER_BUFFER_MINUTES));
   const timed = checkAgainst(p, applicants, sessions);
   const hard = [...fixed, ...timed.hard];
   const status = hard.length ? 'blocked' : timed.merge_targets.length ? 'mergeable' : timed.warnings.length ? 'warning' : 'ok';
@@ -241,12 +285,11 @@ export async function mergeReasons(db: Db, source: Row, target: Row, context?: R
   if (target.activity_type === 'training') return ['Training sessions are never merged.'];
   const reasons: string[] = [];
   const moving: Row[] = source.active_participants.map((r: Row) => r.applicant).filter(Boolean);
-  if (target.activity_type === 'product_tasting') {
-    if (Number(source.brand_id ?? 0) !== Number(target.brand_id ?? 0)) reasons.push(`Ibang brand (${source.brand?.name ?? 'walang brand'} vs ${target.brand?.name ?? 'walang brand'}) — hindi puwedeng pagsamahin.`);
-    reasons.push(...brandReasons('product_tasting', target.brand_id, moving));
-  }
+  if (Number(source.handler_id ?? 0) !== Number(target.handler_id ?? -1)) reasons.push('Different Sales users: a session belongs to one Sales user. Reassign the applicants first.');
+  reasons.push(...handlerReasons(target.activity_type, target.handler_id === null || target.handler_id === undefined ? null : Number(target.handler_id), moving));
   const taken = target.active_participants.length;
-  if (moving.length > target.max_capacity - taken) reasons.push(`Puno na ang session (${taken}/${target.max_capacity} applicants) — ${moving.length} applicant(s) ang ililipat.`);
+  const capacity = capacityOf(target);
+  if (moving.length > capacity - taken) reasons.push(`Session full (${taken}/${capacity} applicants) — ${moving.length} applicant(s) would move.`);
   const movingIds = moving.map((a) => a.id);
   for (const r of target.active_participants.filter((x: Row) => movingIds.includes(x.applicant_id))) {
     reasons.push(`${moving.find((a) => a.id === r.applicant_id)?.full_name ?? 'Applicant'} is already in this session.`);

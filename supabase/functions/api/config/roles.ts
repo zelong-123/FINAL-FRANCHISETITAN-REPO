@@ -95,8 +95,9 @@ export const PIPELINE = {
     active_franchisee: { label: 'Active Franchisee' },
   },
   first_stage: 'converted',
-  tracked_activities: ['orientation', 'product_tasting', 'training'],
-  tracked_milestones: ['orientation_attended', 'product_tasting_attended', 'training_completed'],
+  // Product Tasting is part of Orientation/Tasting (stored key 'orientation').
+  tracked_activities: ['orientation', 'training'],
+  tracked_milestones: ['orientation_attended', 'training_completed'],
   transitions: [
     { from: 'converted', to: 'qualified', roles: ['admin'], action: 'Mark as Qualified', generic: true },
     { from: 'qualified', to: 'scheduled', roles: ['admin'], action: 'Set Schedule', generic: false },

@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, SALES, setup } from '../support/harness.ts';
+import { createStaff } from '../support/accounts.ts';
+import { orientationForm, viewAll } from '../support/orientation.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -35,17 +37,8 @@ async function schedulable(brandId = brandA.id) {
   );
   return a.id as number;
 }
-/** A Complete form: attended, actual time one hour ago, handler, notes, a proof file. */
-function completion(overrides: Record<string, string> = {}) {
-  const f = new FormData();
-  f.set('attended', 'yes');
-  f.set('actual_started_at', new Date(Date.now() - 3600_000).toISOString());
-  f.set('handler_name', 'Sales User');
-  f.set('result_notes', 'Attended the whole session and asked questions.');
-  f.set('proof', new File([new Uint8Array([7, 7, 7])], 'sign-in.png', { type: 'image/png' }));
-  for (const [k, v] of Object.entries(overrides)) f.set(k, v);
-  return f;
-}
+/** An Orientation/Tasting Complete form: attended, actual time one hour ago, notes, the files and the brand. */
+const completion = (overrides: Record<string, string> = {}) => orientationForm({ brandId: brandA.id, overrides });
 const session = (applicantIds: number[], start: string, extra: any = {}) => ({
   activity_type: 'orientation', start_at: start, end_at: start.replace(/T(\d{2})/, (_m, h) => `T${String(Number(h) + 1).padStart(2, '0')}`), applicant_ids: applicantIds, ...extra,
 });
@@ -71,11 +64,11 @@ test('window rules: grid, working hours, weekends and the past', async () => {
 
 test('Admin session is confirmed, mirrored to activity_schedules and logged', async () => {
   const id = await schedulable();
-  const created = await call('POST', '/schedule-sessions', { token: admin, body: session([id], slot(11, '09:00'), { handler_id: adminUser.id }) });
+  const created = await call('POST', '/schedule-sessions', { token: admin, body: session([id], slot(11, '09:00'), { handler_id: salesUser.id }) });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   const s = created.json.data.session;
   assert.equal(s.status, 'confirmed');
-  assert.equal(s.occupancy, '1/30 applicants');
+  assert.equal(s.occupancy, '1/5');
   assert.match(s.start_at, /\+08:00$/);
   const [mirror] = await q(`select * from activity_schedules where applicant_id = $1`, [id]);
   assert.equal(mirror.session_key, `session-${s.id}`);
@@ -91,52 +84,94 @@ test('Admin session is confirmed, mirrored to activity_schedules and logged', as
   assert.equal(shown.json.data.activity_state.orientation.state, 'scheduled');
 });
 
-test('H1 applicant twice and H2 handler twice are hard blocks, with suggested times', async () => {
+test('H1 applicant twice and H2 the same Sales user needs a 1-hour gap, with suggested times', async () => {
   const a = await schedulable();
   const b = await schedulable();
   const start = slot(12, '10:00');
-  await call('POST', '/schedule-sessions', { token: admin, body: session([a], start, { handler_id: adminUser.id, venue: 'Virtual' }) });
-  const same = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([b], start, { handler_id: adminUser.id }) });
-  assert.equal(same.json.data.status, 'mergeable', 'an orientation with seats is a merge candidate');
-  assert.equal(same.json.data.separate_allowed, false, 'same handler cannot run a separate session');
+  await call('POST', '/schedule-sessions', { token: admin, body: session([a], start, { handler_id: salesUser.id, venue: 'Virtual' }) });
+  const same = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([b], start, { handler_id: salesUser.id }) });
+  assert.equal(same.json.data.status, 'mergeable', 'an Orientation/Tasting of the same Sales user with seats is a merge candidate');
+  assert.equal(same.json.data.separate_allowed, false, 'the same Sales user cannot run a separate session at the same time');
   assert.equal(same.json.data.suggested_times.length, 3);
 
-  const refused = await call('POST', '/schedule-sessions', { token: admin, body: session([b], start, { handler_id: adminUser.id }) });
+  const refused = await call('POST', '/schedule-sessions', { token: admin, body: session([b], start, { handler_id: salesUser.id }) });
   assert.equal(refused.status, 422);
   assert.ok(refused.json.evaluation, 'the refusal carries the evaluation');
   assert.match(refused.json.message, /overlapping session can take these applicants/);
 
-  // Warning: only Admin may override, and only with remarks.
-  const near = session([b], slot(12, '11:00'), { handler_id: adminUser.id });
-  assert.match((await call('POST', '/schedule-sessions', { token: sales, body: near })).json.message, /Near conflict/);
-  assert.match((await call('POST', '/schedule-sessions', { token: admin, body: near })).json.message, /Remarks are required/);
-  const overridden = await call('POST', '/schedule-sessions', { token: admin, body: { ...near, override_remarks: 'Handler agreed' } });
-  assert.equal(overridden.status, 201, JSON.stringify(overridden.json));
-  assert.ok(overridden.json.data.session);
+  // Right after the session (gap 0 min): a hard block that names the next allowed start, even for Admin.
+  const near = session([b], slot(12, '11:00'), { handler_id: salesUser.id });
+  const nearEval = (await call('POST', '/schedule-sessions/evaluate', { token: admin, body: near })).json.data;
+  assert.equal(nearEval.status, 'blocked');
+  assert.match(nearEval.reasons.join(), /needs 1 hour between sessions: the next allowed start after it is 12:00 PM/);
+  assert.equal((await call('POST', '/schedule-sessions', { token: admin, body: { ...near, override_remarks: 'Handler agreed' } })).status, 422, 'the buffer cannot be overridden');
+  // One hour after the end is allowed.
+  const later = await call('POST', '/schedule-sessions', { token: admin, body: session([b], slot(12, '12:00'), { handler_id: salesUser.id }) });
+  assert.equal(later.status, 201, JSON.stringify(later.json));
 });
 
-test('H6 brand match, H3 tastings and H5 capacity', async () => {
-  // Product tasting needs orientation done first, so the gate reasons appear with brand reasons.
+test('H7 the handler is the assigned Sales user; different Sales users may overlap for Orientation/Tasting only', async () => {
+  const other = await createStaff(call, admin, { full_name: 'Schedule Sales Two', email: 'schedule.sales2@example.test', phone: '09179990017', role: 'sales' });
+  const [otherUser] = await q(`select id from users where email = 'schedule.sales2@example.test'`);
+  const mine = await schedulable();
+  const theirs = await schedulable();
+  await q(`update applicants set assigned_sales_user_id = $1 where id = $2`, [otherUser.id, theirs]);
+  const start = slot(17, '10:00');
+
+  const mixed = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([mine, theirs], start, { handler_id: salesUser.id }) });
+  assert.match(mixed.json.data.reasons.join(), /assigned to another Sales user.*reassign the applicant first/);
+  const unassigned = await schedulable();
+  await q(`update applicants set assigned_sales_user_id = null where id = $1`, [unassigned]);
+  assert.match((await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([unassigned], start, { handler_id: salesUser.id }) })).json.data.reasons.join(), /no assigned Sales user/);
+
+  const first = await call('POST', '/schedule-sessions', { token: admin, body: session([mine], start, { handler_id: salesUser.id }) });
+  assert.equal(first.status, 201, JSON.stringify(first.json));
+  const parallel = await call('POST', '/schedule-sessions', { token: other, body: session([theirs], start, { handler_id: otherUser.id }) });
+  assert.equal(parallel.status, 201, `another Sales user may run Orientation/Tasting at the same time: ${JSON.stringify(parallel.json)}`);
+  const cross = await call('POST', `/schedule-sessions/${parallel.json.data.session.id}/merge`, { token: admin, body: { target_session_id: first.json.data.session.id } });
+  assert.equal(cross.status, 422);
+  assert.match(JSON.stringify(cross.json), /Different Sales users/);
+
+  // Activities API: the handler defaults to the assigned Sales user; another handler is refused.
+  const viaActivity = await schedulable();
+  const wrongHandler = await call('POST', '/activities', { token: admin, body: { applicant_id: viaActivity, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: slot(18, '09:00'), duration_minutes: 60, venue: 'Virtual', assigned_to_user_id: otherUser.id } });
+  assert.equal(wrongHandler.status, 422);
+  assert.match(JSON.stringify(wrongHandler.json), /assigned to another Sales user/);
+  const defaulted = await call('POST', '/activities', { token: admin, body: { applicant_id: viaActivity, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: slot(18, '09:00'), duration_minutes: 60, venue: 'Virtual' } });
+  assert.equal(defaulted.status, 201, JSON.stringify(defaulted.json));
+  assert.equal(Number(defaulted.json.data.assigned_to_user_id), salesUser.id);
+});
+
+test('H6 brand match and H5 capacity (Orientation/Tasting 5)', async () => {
   const a = await schedulable(brandA.id);
   const start = slot(13, '09:00');
-  const wrong = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'product_tasting', brand_id: brandB.id }) });
+  const wrong = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'training', brand_id: brandB.id, handler_id: salesUser.id }) });
   assert.match(wrong.json.data.reasons.join(), /hindi tugma sa brand/);
-  const none = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'product_tasting' }) });
+  const none = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'training', handler_id: salesUser.id }) });
   assert.match(none.json.data.reasons.join(), /Brand is required/);
-  const cap = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a, await schedulable()], start, { max_capacity: 1 }) });
-  assert.match(cap.json.data.reasons.join(), /Lalampas sa max capacity \(2\/1/);
+  const cap = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a, await schedulable()], start, { max_capacity: 1, handler_id: salesUser.id }) });
+  assert.match(cap.json.data.reasons.join(), /Session full: Orientation\/Tasting allows 1 applicants \(2\/1\)/);
+  const six = [a];
+  for (let i = 0; i < 5; i += 1) six.push(await schedulable());
+  const tooMany = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session(six, start, { max_capacity: 30, handler_id: salesUser.id }) });
+  assert.match(tooMany.json.data.reasons.join(), /Session full: Orientation\/Tasting allows 5 applicants \(6\/5\)/, 'a larger requested capacity is capped at 5');
+  const five = await call('POST', '/schedule-sessions', { token: admin, body: session(six.slice(0, 5), start, { handler_id: salesUser.id }) });
+  assert.equal(five.status, 201, JSON.stringify(five.json));
+  assert.equal(five.json.data.session.occupancy, '5/5 · Full');
+  assert.equal(five.json.data.session.is_full, true);
+  const sixth = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([six[5]], start, { handler_id: salesUser.id }) });
+  assert.notEqual(sixth.json.data.status, 'mergeable', 'a full session takes no one');
 });
 
 test('Sales sessions wait for Admin; merge, confirm, cancel and Set Again', async () => {
   const a = await schedulable();
   const b = await schedulable();
   const start = slot(14, '09:00');
-  const first = (await call('POST', '/schedule-sessions', { token: admin, body: session([a], start, { handler_id: adminUser.id, venue: 'Virtual' }) })).json.data.session;
-  const pending = await call('POST', '/schedule-sessions', { token: sales, body: session([b], start, { handler_id: salesUser.id, venue: 'Main Office (In-person)', create_separate: true }) });
+  const first = (await call('POST', '/schedule-sessions', { token: admin, body: session([a], start, { handler_id: salesUser.id, venue: 'Virtual' }) })).json.data.session;
+  const pending = await call('POST', '/schedule-sessions', { token: sales, body: session([b], slot(14, '11:00'), { handler_id: salesUser.id, venue: 'Main Office (In-person)' }) });
   assert.equal(pending.status, 201, JSON.stringify(pending.json));
   const second = pending.json.data.session;
   assert.equal(second.status, 'pending');
-  assert.equal(second.merge_suggested, true);
   assert.equal((await q(`select approval_status from activity_schedules where applicant_id = $1`, [b]))[0].approval_status, 'pending_admin');
 
   assert.equal((await call('POST', `/schedule-sessions/${second.id}/merge`, { token: sales, body: { target_session_id: first.id } })).status, 403);
@@ -173,7 +208,7 @@ test('Sales sessions wait for Admin; merge, confirm, cancel and Set Again', asyn
 
 test('Activities API: Sales booking waits for approval, the Complete and Attended halves, and order', async () => {
   const id = await schedulable();
-  const body = (hour: string, days = 15) => ({ applicant_id: id, activity_type: 'orientation', title: 'Orientation', starts_at: slot(days, hour), duration_minutes: 60, venue: 'Virtual' });
+  const body = (hour: string, days = 15) => ({ applicant_id: id, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: slot(days, hour), duration_minutes: 60, venue: 'Virtual' });
   const created = await call('POST', '/activities', { token: sales, body: body('09:00') });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   const activity = created.json.data;
@@ -184,7 +219,7 @@ test('Activities API: Sales booking waits for approval, the Complete and Attende
   const second = await call('POST', '/activities', { token: sales, body: { ...body('13:00'), title: 'Again' } });
   assert.match(second.json.errors.activity_type[0], /already has a confirmed record/);
   const skip = await call('POST', '/activities', { token: admin, body: { ...body('13:00'), activity_type: 'training', title: 'Training' } });
-  assert.match(skip.json.errors.activity_type[0], /comes after Product Tasting/);
+  assert.match(skip.json.errors.activity_type[0], /comes after Orientation\/Tasting/);
 
   assert.match((await call('POST', `/activities/${activity.id}/complete`, { token: sales, body: { result_notes: 'x', confirm_early: true } })).json.errors.status[0], /cannot be completed until it is approved/);
   assert.equal((await call('POST', `/activities/${activity.id}/approve`, { token: sales })).status, 403);
@@ -217,9 +252,11 @@ test('Activities API: Sales booking waits for approval, the Complete and Attende
 
   // The scheduled start passes (simulated by moving the row into the past).
   await q(`update activity_schedules set starts_at = now() - interval '2 hours', ends_at = now() - interval '1 hour' where id = $1`, [activity.id]);
-  const noProof = completion();
-  noProof.delete('proof');
-  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: noProof })).json.errors.proof, 'proof file required');
+  const form = (o: any = {}) => orientationForm({ brandId: brandA.id, ...o });
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: form({ attendance: 0 }) })).json.errors.attendance, 'attendance proof required');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: form({ brandDocs: 0 }) })).json.errors.brand_document, 'brand document required');
+  assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: form({ brandId: null }) })).json.errors.selected_brand_id, 'selected brand required');
+
   assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ result_notes: 'short' }) })).json.errors.result_notes, 'notes of 10+ characters');
   assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ actual_started_at: new Date(Date.now() - 5 * 3600_000).toISOString() }) })).json.errors.actual_started_at, 'not before the scheduled start');
   assert.ok((await call('POST', `/activities/${activity.id}/complete`, { token: sales, form: completion({ actual_started_at: new Date(Date.now() + 3600_000).toISOString() }) })).json.errors.actual_started_at, 'not in the future');
@@ -227,21 +264,23 @@ test('Activities API: Sales booking waits for approval, the Complete and Attende
   assert.equal(done.status, 200, JSON.stringify(done.json));
   assert.equal(done.json.data.status, 'completed');
   assert.equal(done.json.data.review_status, 'submitted');
-  assert.equal(done.json.data.proof_documents.length, 1);
+  assert.equal(done.json.data.proof_documents.length, 2);
   assert.equal((await q(`select attendance_status from schedule_session_participants where activity_schedule_id = $1`, [activity.id]))[0].attendance_status, 'completed');
   assert.equal((await call('GET', '/applicants', { token: admin })).json.data.find((a: any) => a.id === id).has_activity_update, true, 'blue dot for Admin');
 
-  const attended = await call('PATCH', `/applicants/${id}/milestones`, { token: admin, body: { milestones: { orientation_attended: true } } });
-  assert.equal(attended.json.data.activity_state.orientation.done, true);
+  assert.match((await call('PATCH', `/applicants/${id}/milestones`, { token: admin, body: { milestones: { orientation_attended: true } } })).json.errors.milestones[0], /verified from its review card/);
+  await viewAll(call, admin, activity.id, done.json.data.proof_documents);
+  assert.equal((await call('POST', `/activities/${activity.id}/attended`, { token: admin })).status, 200);
+  assert.equal((await call('GET', `/applicants/${id}`, { token: admin })).json.data.activity_state.orientation.done, true);
   assert.equal((await q(`select attendance_status from schedule_session_participants where activity_schedule_id = $1`, [activity.id]))[0].attendance_status, 'attended', 'Attended reaches the Master Schedule');
 
   // Now Set Again targets the next step, never the same one.
   const next = await call('POST', `/applicants/${id}/activities/set-again`, { token: admin, body: { starts_at: slot(16, '09:00'), duration_minutes: 60 } });
   assert.equal(next.status, 201, JSON.stringify(next.json));
-  assert.equal(next.json.data.activity_type, 'product_tasting');
+  assert.equal(next.json.data.activity_type, 'training');
   const groupedDone = await call('DELETE', `/activities/${next.json.data.id}`, { token: admin });
   assert.equal(groupedDone.status, 200);
   assert.equal((await q(`select status from activity_schedules where id = $1`, [next.json.data.id]))[0].status, 'cancelled');
   const preview = await call('GET', `/activities/session-preview?activity_type=orientation&starts_at=${encodeURIComponent(slot(15, '09:00'))}`, { token: admin });
-  assert.equal(preview.json.data.capacity, 30);
+  assert.equal(preview.json.data.capacity, 5);
 });

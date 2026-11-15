@@ -9,7 +9,7 @@ import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { PERMISSIONS } from '../config/roles.ts';
 import { activityLabel } from '../services/pipeline.ts';
 import { evaluate, evaluateDrag, isAdmin, loadSession, SESSION_RELATIONS } from '../services/schedule/conflict.ts';
-import { iso8601, parseLocal, scheduleWindow, TRACKED_TYPES, VENUE_OPTIONS } from '../services/schedule/rules.ts';
+import { capacityOf, iso8601, occupancyLabel, parseLocal, scheduleWindow, TRACKED_TYPES, VENUE_OPTIONS } from '../services/schedule/rules.ts';
 import * as service from '../services/schedule/sessions.ts';
 
 export const sessionRoutes = new Hono<AppEnv>();
@@ -37,8 +37,8 @@ function present(s: Row, extra: Row = {}): Row {
   return {
     id: s.id, activity_type: s.activity_type, activity_label: activityLabel(s.activity_type), brand_id: s.brand_id, brand: s.brand ?? null,
     start_at: iso8601(s.start_at), end_at: iso8601(s.end_at), handler_id: s.handler_id, handler: s.handler ?? null, venue: s.venue, meeting_link: s.meeting_link, status: s.status,
-    merged_into_session_id: s.merged_into_session_id, merge_suggested: Boolean(s.merge_suggested), max_capacity: s.max_capacity, remarks: s.remarks,
-    participant_count: active.length, occupancy: `${active.length}/${s.max_capacity} applicants`, active_participants: active.map(participantJson),
+    merged_into_session_id: s.merged_into_session_id, merge_suggested: Boolean(s.merge_suggested), max_capacity: capacityOf(s), remarks: s.remarks,
+    participant_count: active.length, occupancy: occupancyLabel(active.length, capacityOf(s)), is_full: active.length >= capacityOf(s), active_participants: active.map(participantJson),
     created_by: s.created_by, created_at: iso8601(s.created_at), updated_at: iso8601(s.updated_at), ...extra,
   };
 }
