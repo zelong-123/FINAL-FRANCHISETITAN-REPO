@@ -6,6 +6,7 @@ import MessengerWidget from '../components/Messenger/MessengerWidget';
 import { getRouteTitle } from '../lib/routes';
 import { api } from '../lib/api';
 import { notificationPath } from '../lib/notificationRoutes';
+import { useAuth } from '../context/AuthContext';
 
 const SIDEBAR_KEY = 'herald_sidebar_collapsed';
 
@@ -16,6 +17,9 @@ export default function AppShell() {
   // Blue dots: Sales marked an activity Complete (Admin's Applicants nav).
   const [blueByPath, setBlueByPath] = useState({});
   const location = useLocation();
+  const { role } = useAuth();
+  // New stock alerts (Low + Critical) on the Branches item: same source as the Branches cards.
+  const [countByPath, setCountByPath] = useState({});
 
   // Red dots on module tabs: unread notifications grouped by the page they open.
   // The same effect also listens for the Header bell's instant
@@ -37,18 +41,29 @@ export default function AppShell() {
       } catch {
         // Keep the last known dots when the poll fails.
       }
+      if (['admin', 'logistics'].includes(role)) {
+        try {
+          const alerts = await api.get('/branches/stock-alerts');
+          const fresh = alerts.data?.new_counts || {};
+          setCountByPath({ '/branches': Number(fresh.low || 0) + Number(fresh.critical || 0) });
+        } catch {
+          // Keep the last known badge.
+        }
+      }
     };
     const refresh = () => void loadUnread();
     window.addEventListener('herald:notifications-updated', refresh);
+    window.addEventListener('herald:stock-alerts-updated', refresh);
     void refresh();
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh();
     }, 30000);
     return () => {
       window.removeEventListener('herald:notifications-updated', refresh);
+      window.removeEventListener('herald:stock-alerts-updated', refresh);
       window.clearInterval(interval);
     };
-  }, [location.pathname]);
+  }, [location.pathname, role]);
 
   const updateCollapsed = (value) => {
     setCollapsed(value);
@@ -90,6 +105,7 @@ export default function AppShell() {
         onNavigate={() => setMobileOpen(false)}
         unreadByPath={unreadByPath}
         blueByPath={blueByPath}
+        countByPath={countByPath}
       />
       <button
         className="hidden max-[861px]:fixed max-[861px]:inset-0 max-[861px]:z-45 max-[861px]:later:block max-[861px]:[visibility:hidden] max-[861px]:opacity-[0] max-[861px]:border-0 max-[861px]:[background:rgba(3,_6,_14,_.56)] max-[861px]:[backdrop-filter:blur(4px)] max-[861px]:[transition:opacity_.24s_ease,_visibility_.24s_ease] max-[861px]:[.mobile-sidebar-open_&]:[visibility:visible] max-[861px]:[.mobile-sidebar-open_&]:opacity-[1]"

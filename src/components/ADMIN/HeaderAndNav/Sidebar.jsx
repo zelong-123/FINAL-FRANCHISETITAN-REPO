@@ -11,7 +11,7 @@ import { Modal } from '../../ApiUi';
    shared with the dashboard renderer, so no stray nav item can appear for a
    role that does not own the module. */
 
-export default function Sidebar({ isCollapsed, setIsCollapsed, onNavigate, unreadByPath = {}, blueByPath = {} }) {
+export default function Sidebar({ isCollapsed, setIsCollapsed, onNavigate, unreadByPath = {}, blueByPath = {}, countByPath = {} }) {
   const { role, logout } = useAuth();
   const navigate = useNavigate();
   // A section with no items is never rendered (no empty header).
@@ -50,6 +50,9 @@ export default function Sidebar({ isCollapsed, setIsCollapsed, onNavigate, unrea
                 >
                   <span className="side-link-icon w-[34px] h-[34px] grid place-items-center flex-[0_0_auto] rounded-[11px] text-text-secondary [background:var(--surface-subtle)] [transition:color_.2s_ease,_background_.2s_ease,_transform_.2s_ease] [.side-link:hover_&]:[transform:scale(1.04)] [.side-link.active_&]:text-[#fff] [.side-link.active_&]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [.side-link.active_&]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_20%,_transparent)]"><Icon aria-hidden="true" /></span>
                   <span className="side-link-copy min-w-0 flex flex-col gap-[3px] [&_strong]:overflow-hidden [&_strong]:text-[color:inherit] later:[&_strong]:text-[11px] later:[&_strong]:font-[720] [&_strong]:text-ellipsis [&_small]:overflow-hidden [&_small]:text-muted [&_small]:text-[8px] [&_small]:text-ellipsis"><strong>{label}</strong><small>{description}</small></span>
+                  {(countByPath[path] || 0) > 0 && (
+                    <span className="flex-[0_0_auto] min-w-[20px] h-[20px] ml-auto p-[0_6px] inline-grid place-items-center rounded-[999px] text-[#fff] [background:#e5484d] text-[10px] font-[800]" aria-label={`${countByPath[path]} new stock alerts`}>{countByPath[path]}</span>
+                  )}
                   {(unreadByPath[path] || 0) > 0
                     ? <span className="flex-[0_0_auto] w-[7px] h-[7px] ml-auto rounded-[50%] [background:#e5484d] [box-shadow:0_0_0_3px_rgba(229,_72,_77,_.14)] [&.is-blue]:[background:#3b82f6] [&.is-blue]:[box-shadow:0_0_0_3px_rgba(59,_130,_246,_.18)]" aria-label={`${unreadByPath[path]} unread`} />
                     : (blueByPath[path] || 0) > 0 && <span className="flex-[0_0_auto] w-[7px] h-[7px] ml-auto rounded-[50%] [background:#e5484d] [box-shadow:0_0_0_3px_rgba(229,_72,_77,_.14)] [&.is-blue]:[background:#3b82f6] [&.is-blue]:[box-shadow:0_0_0_3px_rgba(59,_130,_246,_.18)] is-blue" aria-label={`${blueByPath[path]} activity update(s)`} />}

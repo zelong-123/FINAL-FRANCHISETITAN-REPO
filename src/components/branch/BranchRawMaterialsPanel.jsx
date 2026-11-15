@@ -1,13 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, downloadFile, firstValidationMessage } from '../../lib/api';
 import { EmptyState, Field, LoadingState, Modal, Notice } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
 import useCosting from '../../lib/useCosting';
+import {
+  lastCountLabel, sortWorstFirst, STOCK_STATUS_LABELS, STOCK_TEXT_CLASS, stockStatusOf, toMilli, varianceText,
+} from '../../lib/stockView';
 
 const money = (value) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
 const newKey = () => globalThis.crypto?.randomUUID?.() || `mat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const qty = (value, unit) => `${formatNumber(Number(value || 0), 3)} ${unit || ''}`.trim();
 
-/** Branch Inventory: raw materials with receipts, CSV import and no physical count. */
+const GHOST = 'ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]';
+const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] disabled:opacity-50 disabled:cursor-not-allowed';
+const CARD = 'metric-card relative min-h-[112px] flex flex-col justify-between overflow-hidden p-[16px_18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [&>span]:text-muted [&>span]:text-[11px] [&>span]:font-[680] [&_strong]:block [&_strong]:text-[clamp(22px,_2.4vw,_30px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.03em] [&>small]:text-muted [&>small]:text-[11px]';
+const PANEL = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]';
+const HEADING = 'branch-panel-heading flex items-start justify-between gap-[14px] mb-[14px] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_p]:m-[5px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.6]';
+
+/** Branch Inventory: raw materials with status against the levels Logistics set, receipts, CSV import and physical counts. */
 export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = false }) {
   const costing = useCosting();
   const [materials, setMaterials] = useState([]);
@@ -18,6 +28,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const [addOpen, setAddOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [countOpen, setCountOpen] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -39,29 +50,53 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   useEffect(() => { void load(); }, [load]);
 
   const readOnly = preview;
+  const sorted = useMemo(() => sortWorstFirst(materials.filter((m) => m.is_active !== false)), [materials]);
+  const tally = (...statuses) => sorted.filter((m) => statuses.includes(m.status)).length;
+  const lastCount = sorted.map((m) => m.last_counted_at).filter(Boolean).sort().pop() || null;
+  const open = (setter) => () => { setNotice(''); setter(true); };
 
   return (
     <div className="branch-raw-materials">
       <Notice type="success">{notice}</Notice>
       <Notice type="error">{error}</Notice>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-        <div className="branch-panel-heading flex items-start justify-between gap-[14px] mb-[14px] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_p]:m-[5px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.6]">
+      {sorted.length > 0 && (
+        <section className="grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-3 mb-4" aria-label="Raw materials status">
+          <article className={`${CARD} ${tally('critical', 'out') ? 'border-[color:color-mix(in_srgb,var(--danger-text)_45%,var(--border))]' : ''}`}>
+            <span>Critical / no stock</span><strong className={tally('critical', 'out') ? 'text-danger-text' : 'text-text'}>{tally('critical', 'out')}</strong><small>Request supply now</small>
+          </article>
+          <article className={`${CARD} ${tally('low') ? 'border-[color:color-mix(in_srgb,var(--warning-text)_45%,var(--border))]' : ''}`}>
+            <span>Low stock</span><strong className={tally('low') ? 'text-[color:var(--warning-text)]' : 'text-text'}>{tally('low')}</strong><small>Plan your next request</small>
+          </article>
+          <article className={CARD}><span>Normal</span><strong className="text-success-text">{tally('ok')}</strong><small>Above the low level</small></article>
+          <article className={CARD}><span>Last physical count</span><strong className="text-text">{lastCountLabel(lastCount).replace(/^Today, .*/, 'Today')}</strong><small>Count milk, cups and lids daily</small></article>
+        </section>
+      )}
+
+      {countOpen && !readOnly && (
+        <PhysicalCountSheet
+          materials={sorted}
+          onClose={() => setCountOpen(false)}
+          onSaved={async (message) => {
+            setCountOpen(false);
+            setNotice(message);
+            await load(true);
+          }}
+        />
+      )}
+
+      <section className={`${PANEL} p-[18px]`}>
+        <div className={HEADING}>
           <div>
             <h2>Raw materials</h2>
-            <p>{costing ? 'Branch stock of ingredients and packaging, valued at weighted-average cost.' : 'Branch stock of ingredients and packaging.'}</p>
+            <p>{costing ? 'Branch stock of ingredients and packaging, valued at weighted-average cost.' : 'Branch stock of ingredients and packaging.'} Levels are set by Logistics.</p>
           </div>
           {!readOnly && (
-            <div className="flex flex-wrap gap-2 justify-end [.branch-portal-page_&_.ghost-button]:min-h-[36px] [.branch-portal-page_&_.ghost-button]:p-[0_13px] [.branch-portal-page_&_.ghost-button]:text-[9px] [.branch-portal-page_&_.primary-button]:min-h-[36px] [.branch-portal-page_&_.primary-button]:p-[0_13px] [.branch-portal-page_&_.primary-button]:text-[9px]">
-              <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" onClick={() => { setNotice(''); setImportOpen(true); }}>
-                Import Raw Materials CSV
-              </button>
-              <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" onClick={() => { setNotice(''); setReceiveOpen(true); }}>
-                Receive Stock
-              </button>
-              <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => { setNotice(''); setAddOpen(true); }}>
-                Add Material
-              </button>
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button type="button" className={GHOST} onClick={open(setImportOpen)}>Import Raw Materials CSV</button>
+              <button type="button" className={GHOST} onClick={open(setReceiveOpen)}>Receive Stock</button>
+              <button type="button" className={GHOST} onClick={open(setAddOpen)}>Add Material</button>
+              <button type="button" className={PRIMARY} disabled={!sorted.length || countOpen} onClick={open(setCountOpen)}>Physical count</button>
             </div>
           )}
         </div>
@@ -69,29 +104,35 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
         {loading && !materials.length ? <LoadingState label="Loading raw materials…" /> : materials.length === 0 ? (
           <EmptyState label="No raw materials yet." detail="Add a material, receive a delivered supply request, or import a raw-materials CSV." />
         ) : (
-          <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
+          <div className="table-wrap overflow-x-auto">
             <table>
               <thead>
                 <tr>
                   <th>Material</th>
                   <th>Source</th>
-                  <th>Unit</th>
                   <th>On hand</th>
+                  <th>Low / Critical</th>
+                  <th>Status</th>
+                  <th>Last count</th>
                   {costing && <th>Unit cost</th>}
                   {costing && <th>Stock value</th>}
                 </tr>
               </thead>
               <tbody>
-                {materials.map((material) => {
+                {sorted.map((material) => {
                   const balance = material.balance || {};
-                  const quantity = Number(balance.quantity_milli || 0) / 1000;
                   const unitCost = balance.unit_cost_micropesos == null ? null : Number(balance.unit_cost_micropesos) / 1_000_000;
                   return (
                     <tr key={material.id}>
                       <td><strong>{material.name}</strong>{material.variant ? <small>{material.variant}</small> : null}</td>
-                      <td><span className="inline-flex p-[3px_8px] rounded-[999px] text-text-secondary [background:var(--surface-subtle)] border border-line text-[8.5px] font-[750]">{material.source || 'Manual'}</span></td>
-                      <td>{material.unit}</td>
-                      <td><strong>{formatNumber(quantity, 3)}</strong></td>
+                      <td><span className="inline-flex p-[3px_8px] rounded-[999px] text-text-secondary [background:var(--surface-subtle)] border border-line text-[10px] font-[750]">{material.source || 'Manual'}</span></td>
+                      <td><strong>{qty(material.on_hand ?? Number(balance.quantity_milli || 0) / 1000, material.unit)}</strong></td>
+                      <td>
+                        {formatNumber(material.low_level, 3)} / {formatNumber(material.critical_level, 3)} {material.unit}
+                        {material.levels_source === 'default' && <small className="block text-muted">Default levels</small>}
+                      </td>
+                      <td><b className={`${STOCK_TEXT_CLASS} is-${material.status}`}>{material.status_label || STOCK_STATUS_LABELS[material.status] || '—'}</b></td>
+                      <td className={material.last_counted_at ? '' : 'text-muted'}>{lastCountLabel(material.last_counted_at)}</td>
                       {costing && <td>{unitCost == null ? '—' : money(unitCost)}</td>}
                       {costing && <td>{balance.value_cents == null ? '—' : money(Number(balance.value_cents) / 100)}</td>}
                     </tr>
@@ -140,6 +181,137 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
         />
       )}
     </div>
+  );
+}
+
+const COUNT_REASONS = [
+  ['spoiled', 'Spoiled or expired'], ['damaged', 'Damaged'], ['spilled', 'Spilled or wasted'],
+  ['unrecorded_use', 'Used but not recorded'], ['encoding_error', 'Encoding error'], ['other', 'Other'],
+];
+const INPUT = 'min-h-[38px] w-full max-w-[150px] p-[6px_10px] border border-input-line rounded-[10px] text-text [background-color:var(--input-bg)] text-[13px] focus:[outline:0] focus:border-accent';
+
+/**
+ * The count sheet: one row per active material. Blank rows are skipped (a partial daily count is
+ * fine); a row equal to the system is saved as a count with no adjustment. A reason is required
+ * when the count differs, and a note for "Other". Everything is saved in one request.
+ */
+function PhysicalCountSheet({ materials, onClose, onSaved }) {
+  const [rows, setRows] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [key] = useState(newKey);
+  const update = (id, patch) => setRows((current) => ({ ...current, [id]: { ...(current[id] || {}), ...patch } }));
+
+  const lines = materials.map((m) => {
+    const row = rows[m.id] || {};
+    const raw = String(row.actual ?? '').trim();
+    const filled = raw !== '' && Number.isFinite(Number(raw)) && Number(raw) >= 0;
+    const invalid = raw !== '' && !filled;
+    const differs = filled && toMilli(raw) !== toMilli(m.on_hand);
+    const needsNote = differs && row.reason === 'other' && String(row.note || '').trim().length < 3;
+    const missingReason = differs && (!row.reason || needsNote);
+    const after = filled ? stockStatusOf(Number(raw), m.low_level, m.critical_level) : null;
+    return { m, row, raw, filled, invalid, differs, missingReason, needsNote, after };
+  });
+  const counted = lines.filter((l) => l.filled).length;
+  const missing = lines.filter((l) => l.missingReason).length;
+  const invalid = lines.some((l) => l.invalid);
+  const ready = counted > 0 && missing === 0 && !invalid && !saving;
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const items = lines.filter((l) => l.filled).map((l) => ({
+        material_id: l.m.id, counted_quantity_milli: toMilli(l.raw),
+        ...(l.differs ? { reason_code: l.row.reason, ...(l.row.reason === 'other' ? { note: String(l.row.note || '').trim() } : {}) } : {}),
+      }));
+      const response = await api.post('/branch/workspace/physical-count', { idempotency_key: key, items });
+      await onSaved(response.message || `${response.data?.counted} counted, ${response.data?.adjusted} adjusted.`);
+    } catch (caught) {
+      setError(firstValidationMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className={`${PANEL} p-[18px]`} aria-labelledby="physical-count-title">
+      <div className={HEADING}>
+        <div>
+          <h2 id="physical-count-title">Physical count</h2>
+          <p>Enter what you actually counted. Leave a row blank to skip it. A reason is required when the count differs from the system.</p>
+        </div>
+        <button type="button" className={GHOST} aria-label="Close the physical count" onClick={onClose} disabled={saving}>×</button>
+      </div>
+      <Notice type="error">{error}</Notice>
+      <div className="table-wrap overflow-x-auto">
+        <table>
+          <thead>
+            <tr><th>Material</th><th>System</th><th>Actual count</th><th>Variance</th><th>Reason</th><th>Status after</th></tr>
+          </thead>
+          <tbody>
+            {lines.map(({ m, row, filled, invalid: bad, differs, missingReason, needsNote, after }) => {
+              const variance = varianceText(row.actual ?? '', m.on_hand, m.unit);
+              return (
+                <tr key={m.id} className={filled ? '[background:var(--surface-subtle)]' : ''}>
+                  <td><strong>{m.name}</strong>{m.variant ? <small>{m.variant}</small> : null}</td>
+                  <td>{qty(m.on_hand, m.unit)}</td>
+                  <td>
+                    <span className="inline-flex items-center gap-2">
+                      <input
+                        className={INPUT}
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        placeholder="—"
+                        aria-label={`Actual count of ${m.name} in ${m.unit}`}
+                        aria-invalid={bad}
+                        value={row.actual ?? ''}
+                        onChange={(e) => update(m.id, { actual: e.target.value })}
+                      />
+                      <small className="text-muted">{m.unit}</small>
+                    </span>
+                    {bad && <small className="block text-danger-text">Enter 0 or more.</small>}
+                  </td>
+                  <td className={variance.tone === 'down' ? 'text-danger-text font-[650]' : variance.tone === 'up' ? 'text-success-text font-[650]' : 'text-muted'}>{variance.text}</td>
+                  <td>
+                    {differs ? (
+                      <div className="grid gap-1 min-w-[180px]">
+                        <select className={INPUT.replace('max-w-[150px]', 'max-w-[220px]')} aria-label={`Reason for ${m.name}`} aria-invalid={missingReason && !row.reason} value={row.reason || ''} onChange={(e) => update(m.id, { reason: e.target.value })}>
+                          <option value="">Choose a reason</option>
+                          {COUNT_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                        {row.reason === 'other' && (
+                          <input className={INPUT.replace('max-w-[150px]', 'max-w-[220px]')} placeholder="Short note" aria-label={`Note for ${m.name}`} value={row.note || ''} onChange={(e) => update(m.id, { note: e.target.value })} />
+                        )}
+                        {missingReason && <small className="text-danger-text">{needsNote ? 'Add a short note' : 'Required'}</small>}
+                      </div>
+                    ) : <span className="text-muted">—</span>}
+                  </td>
+                  <td>
+                    {after ? (
+                      <>
+                        <b className={`${STOCK_TEXT_CLASS} is-${after}`}>{STOCK_STATUS_LABELS[after]}</b>
+                        {after !== m.status && <small className="block text-muted">(was {STOCK_STATUS_LABELS[m.status] || m.status})</small>}
+                      </>
+                    ) : <span className="text-muted">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
+        <small className="text-muted" aria-live="polite">{counted} of {materials.length} counted · {missing} reason{missing === 1 ? '' : 's'} missing</small>
+        <span className="flex gap-2">
+          <button type="button" className={GHOST} onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="button" className={PRIMARY} disabled={!ready} onClick={() => void save()}>{saving ? 'Saving…' : 'Save count'}</button>
+        </span>
+      </div>
+    </section>
   );
 }
 
