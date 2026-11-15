@@ -10,6 +10,8 @@ import { mergeProductTasting } from '../../supabase/scripts/merge_product_tastin
 import { fillMissingHandlers } from '../../supabase/scripts/fill_missing_handlers.ts';
 import { alignSessionToActivity } from '../../supabase/scripts/align_session_to_activity.ts';
 import { normalizeSessionCapacity } from '../../supabase/scripts/normalize_session_capacity.ts';
+import { backfillLegacyProof } from '../../supabase/scripts/backfill_legacy_activity_proof.ts';
+import { fillMissingRecords } from '../../supabase/scripts/fill_missing_records.ts';
 
 const { pg, db, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -363,18 +365,70 @@ test('capacity: an older stored 30 shows as N/5 everywhere; the script sets 5 an
   assert.equal((await q(`select count(*)::int n from audit_logs where action = 'schedule.capacity_normalized' and auditable_id = $1`, [s.id]))[0].n, 1);
 });
 
-test('History reads a value an older script stored as a JSON string as JSON', async () => {
-  const id = await applicant();
+/** A legacy pair (old flow): Orientation and Training completed BEFORE their scheduled start, no proof. */
+async function legacyPair(status = 'active_franchisee') {
+  const id = await applicant(status);
+  await q(`update applicants set milestones = '{"orientation_attended": true, "training_completed": true}', inquiry_brand_id = $2 where id = $1`, [id, brandA.id]);
+  const ids: number[] = [];
+  const plan = [['orientation', '20 days', '5 days'], ['training', '19 days', '3 days']];
+  for (const [type, completedAgo, startAgo] of plan) {
+    const [s] = await q(
+      `insert into schedule_sessions (activity_type, start_at, end_at, status, max_capacity, brand_id) values ($1, now() - $2::interval, now() - $2::interval + interval '1 hour', 'completed', 5, $3) returning id`,
+      [type, startAgo, type === 'training' ? brandA.id : null],
+    );
+    const [a] = await q(
+      `insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, completed_at, approval_status, scheduled_by_user_id, selected_brand_id, session_key)
+       values ($1, $2, $2, now() - $3::interval, now() - $3::interval + interval '1 hour', 'completed', now() - $4::interval, 'immediate', $5, $6, $7) returning id`,
+      [id, type, startAgo, completedAgo, adminUser.id, type === 'orientation' ? brandA.id : null, `session-${s.id}`],
+    );
+    await q(
+      `insert into schedule_session_participants (session_id, applicant_id, activity_schedule_id, attendance_status, sales_completed_at, admin_attended_at) values ($1, $2, $3, 'attended', now() - $4::interval, now() - $4::interval)`,
+      [s.id, id, a.id, completedAgo],
+    );
+    ids.push(Number(a.id));
+  }
+  return { id, orientation: ids[0], training: ids[1] };
+}
+
+test('legacy proof backfill: copies sample images, verifies, moves slots before completion, logs; dry-run changes nothing', async () => {
+  const legacy = await legacyPair();
   await q(
-    `insert into applicant_stage_histories (applicant_id, from_stage, to_stage, changed_at, event, step, old_values, new_values, actor_role)
-     values ($1, 'scheduled', 'scheduled', now(), 'orientation_tasting_merged', 'orientation', to_jsonb($2::text), to_jsonb($3::text), 'system')`,
-    [id, JSON.stringify({ orientation: { id: 1, status: 'completed' } }), JSON.stringify({ orientation: { id: 1, status: 'confirmed' } })],
+    `insert into documents (documentable_type, documentable_id, type, original_name, stored_name, disk, path, mime_type, size_bytes, uploaded_by_user_id)
+     values ('App\\Models\\Applicant', $1, 'loi', 'sample.png', 'sample.png', 'private', 'samples/sample.png', 'image/png', 10, $2)`,
+    [legacy.id, salesUser.id],
   );
-  const body = (await call('GET', `/applicants/${id}/history`, { token: admin })).json;
-  const list = Array.isArray(body.data) ? body.data : body.data?.items ?? [];
-  const row = list.find((h: any) => h.event === 'orientation_tasting_merged');
-  assert.equal(row.old_values.orientation.status, 'completed');
-  assert.equal(row.new_values.orientation.status, 'confirmed');
+  const copies: string[][] = [];
+  const store = { copy: async (from: string, to: string) => { copies.push([from, to]); }, remove: async () => {} };
+  const actors = { salesId: salesUser.id, salesName: 'Sales User', adminId: adminUser.id, adminName: 'System Administrator' };
+  const before = (await call('GET', `/applicants/${legacy.id}`, { token: admin })).json.data.schedules.find((s: any) => s.id === legacy.orientation);
+  assert.equal(before.completed_before_schedule, true);
+
+  const dry = await backfillLegacyProof(db, [legacy.id], actors, false);
+  assert.equal(dry[0].refused, undefined);
+  assert.equal(copies.length, 0);
+  assert.equal((await q(`select review_status from activity_schedules where id = $1`, [legacy.orientation]))[0].review_status, null, 'the dry-run changes nothing');
+
+  await backfillLegacyProof(db, [legacy.id], actors, true, store);
+  assert.equal(copies.length, 4, '2 attendance + 1 brand document + 1 training proof');
+  assert.equal(new Set(copies.map((c) => c[1])).size, 4, 'every copy is its own storage object');
+  assert.ok(copies.every(([, to]) => to.startsWith(`activities/${legacy.orientation}/`) || to.startsWith(`activities/${legacy.training}/`)), 'copies live under the activity proof path');
+  const after = (await call('GET', `/applicants/${legacy.id}`, { token: admin })).json.data.schedules.filter((s: any) => [legacy.orientation, legacy.training].includes(s.id));
+  for (const row of after) {
+    assert.equal(row.completed_before_schedule, false, `#${row.id} no longer completed before schedule`);
+    assert.equal(row.review_status, 'accepted');
+    assert.ok(new Date(row.ends_at).getTime() <= new Date(row.completed_at).getTime() - 30 * 60000, 'the slot ends 30+ minutes before completion');
+    assert.equal(row.proof_documents.every((d: any) => d.viewed_by_me), true, 'Admin viewed every file');
+  }
+  const o = after.find((r: any) => r.id === legacy.orientation);
+  const t = after.find((r: any) => r.id === legacy.training);
+  assert.ok(new Date(o.ends_at).getTime() + 60 * 60000 <= new Date(t.starts_at).getTime(), 'Orientation/Tasting ends an hour before Training starts');
+  assert.deepEqual(o.proof_documents.map((d: any) => d.type).sort(), ['attendance_proof', 'attendance_proof', 'brand_selection']);
+  assert.equal(o.selected_brand_name, brandA.name);
+  const [session] = await q(`select s.start_at from schedule_sessions s join schedule_session_participants p on p.session_id = s.id where p.activity_schedule_id = $1`, [legacy.orientation]);
+  assert.equal(new Date(session.start_at).getTime(), new Date(o.starts_at).getTime(), 'the session moved with the activity');
+  const [logs] = await q(`select count(*)::int n from audit_logs where action = 'schedule.legacy_proof_backfilled' and auditable_id = any($1::bigint[]) and new_values->>'note' ilike '%sample/test%'`, [`{${legacy.orientation},${legacy.training},${legacy.id}}`]);
+  assert.equal(logs.n, 3, 'one row per activity + one for the applicant, noting sample/test data');
+  assert.match((await backfillLegacyProof(db, [legacy.id], actors, false))[0].refused!, /already submitted/, 'a second run refuses');
 });
 
 test('Activities & Schedules table: fully done people leave it; include_completed (Show completed) brings them back', async () => {
@@ -404,4 +458,84 @@ test('Activities & Schedules table: fully done people leave it; include_complete
   const c = await call('POST', '/activities', { token: admin, body: { applicant_id: cancelled, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' } });
   assert.equal((await call('DELETE', `/activities/${c.json.data.id}`, { token: admin })).status, 200);
   assert.equal((await call('GET', '/activities/grouped?include_completed=1', { token: admin })).json.data.some((g: any) => g.applicant_id === cancelled), false);
+});
+
+test('History reads a value an older script stored as a JSON string as JSON', async () => {
+  const id = await applicant();
+  await q(
+    `insert into applicant_stage_histories (applicant_id, from_stage, to_stage, changed_at, event, step, old_values, new_values, actor_role)
+     values ($1, 'scheduled', 'scheduled', now(), 'orientation_tasting_merged', 'orientation', to_jsonb($2::text), to_jsonb($3::text), 'system')`,
+    [id, JSON.stringify({ orientation: { id: 1, status: 'completed' } }), JSON.stringify({ orientation: { id: 1, status: 'confirmed' } })],
+  );
+  const body = (await call('GET', `/applicants/${id}/history`, { token: admin })).json;
+  const list = Array.isArray(body.data) ? body.data : body.data?.items ?? [];
+  const row = list.find((h: any) => h.event === 'orientation_tasting_merged');
+  assert.equal(row.old_values.orientation.status, 'completed');
+  assert.equal(row.new_values.orientation.status, 'confirmed');
+});
+
+test('fill missing records: everything lands inside its stage window; no stage or activity time changes; refuses what cannot fit', async () => {
+  // A compressed legacy pipeline: Converted 10 min, Scheduling 30 min, LOI 10 min, Payment 20 min.
+  const legacy = await legacyPair('active_franchisee');
+  const id = legacy.id;
+  const base = Date.now() - 30 * 86400e3;
+  const at = (min: number) => new Date(base + min * 60e3).toISOString();
+  const moves: [string | null, string, number][] = [[null, 'converted', 0], ['converted', 'qualified', 10], ['qualified', 'scheduled', 11], ['scheduled', 'loi_submitted', 41], ['loi_submitted', 'payment_submitted', 51], ['payment_submitted', 'for_approval', 71], ['for_approval', 'approved', 80], ['approved', 'active_franchisee', 90]];
+  for (const [from, to, min] of moves) await q(`insert into applicant_status_histories (applicant_id, from_status, to_status, created_at) values ($1, $2, $3, $4)`, [id, from, to, at(min)]);
+  // Activities completed inside Scheduling; verified payment entries inside Payment Record.
+  await q(`update activity_schedules set completed_at = $2 where id = $1`, [legacy.orientation, at(15)]);
+  await q(`update activity_schedules set completed_at = $2 where id = $1`, [legacy.training, at(30)]);
+  await q(`update schedule_session_participants set admin_attended_at = $2::timestamptz where activity_schedule_id = $1`, [legacy.orientation, at(15)]);
+  await q(`update schedule_session_participants set admin_attended_at = $2::timestamptz where activity_schedule_id = $1`, [legacy.training, at(30)]);
+  for (const [type, min] of [['downpayment', 60], ['initial_franchise_fee', 65]] as const) {
+    await q(`insert into payments (applicant_id, payment_type, amount, payment_date, status, recorded_by_user_id, verified_by_user_id, verified_at, created_at) values ($1, $2, 1000, $3::date, 'verified', $4, $5, $6::timestamptz, $6::timestamptz)`,
+      [id, type, at(min).slice(0, 10), salesUser.id, adminUser.id, at(min)]);
+  }
+  await q(`insert into documents (documentable_type, documentable_id, type, original_name, stored_name, disk, path, mime_type, size_bytes, uploaded_by_user_id) values ('App\\Models\\Applicant', $1, 'id_copy', 'img.png', 'img.png', 'private', 'samples/img.png', 'image/png', 10, $2)`, [id, salesUser.id]);
+  const before = await q(`select id, starts_at, ends_at, completed_at from activity_schedules where applicant_id = $1 order by id`, [id]);
+  const histBefore = (await q(`select count(*)::int n from applicant_status_histories where applicant_id = $1`, [id]))[0].n;
+  const actors = { salesId: salesUser.id, salesName: 'Sales User', adminId: adminUser.id, adminName: 'System Administrator' };
+
+  const dry = await fillMissingRecords(db, [id], actors, false);
+  assert.equal(dry[0].items.every((i) => i.fits), true, JSON.stringify(dry[0].items));
+  assert.equal((await q(`select count(*)::int n from applicant_requirements where applicant_id = $1`, [id]))[0].n, 0, 'the dry-run changes nothing');
+
+  const copies: string[] = [];
+  await fillMissingRecords(db, [id], actors, true, { copy: async (_from, to) => { copies.push(to); }, remove: async () => {} });
+  assert.equal(new Set(copies).size, copies.length, 'every file is its own storage object');
+  const windows = { qualification: [at(0), at(10)], loi: [at(41), at(51)] };
+  const reqs = await q(`select requirement_key, stage, status, submitted_at, reviewed_at from applicant_requirements where applicant_id = $1`, [id]);
+  assert.deepEqual(reqs.map((r) => r.requirement_key).sort(), ['application_form', 'franchise_agreement', 'government_id', 'initial_interview', 'proof_of_funds', 'proposed_site']);
+  for (const r of reqs) {
+    const [from, to] = r.stage === 'loi' ? windows.loi : r.stage === 'activation' ? [at(80), at(90)] : windows.qualification;
+    assert.equal(r.status, 'accepted');
+    assert.ok(new Date(r.submitted_at) > new Date(from) && new Date(r.reviewed_at) < new Date(to) && new Date(r.submitted_at) < new Date(r.reviewed_at), `${r.requirement_key} inside its window`);
+  }
+  assert.equal((await q(`select count(*)::int n from documents where documentable_type = 'App\\Models\\Applicant' and documentable_id = $1 and type = 'loi'`, [id]))[0].n, 1, 'the LOI file is added');
+  const [loi] = await q(`select loi_status, loi_completed_at from applicants where id = $1`, [id]);
+  assert.equal(loi.loi_status, 'complete');
+  assert.ok(new Date(loi.loi_completed_at) > new Date(at(41)) && new Date(loi.loi_completed_at) < new Date(at(51)), 'LOI completed inside the LOI window');
+  assert.equal((await q(`select payment_plan_preset from applicant_payment_plans where applicant_id = $1`, [id]))[0].payment_plan_preset, 'downpayment_balance');
+  assert.deepEqual((await q(`select r.name from payments p join applicant_required_payments r on r.id = p.required_payment_id where p.applicant_id = $1 order by p.created_at`, [id])).map((x) => x.name), ['Downpayment', 'Balance'], 'linked in time order');
+  const pays = await q(`select or_number, payment_method, required_payment_id, amount from payments where applicant_id = $1 order by id`, [id]);
+  assert.equal(pays.every((p) => p.or_number && p.payment_method === 'cash' && p.required_payment_id && Number(p.amount) === 1000), true, 'OR, method and required payment; amounts unchanged');
+  assert.equal((await q(`select count(*)::int n from documents d join payments p on p.id = d.documentable_id where d.documentable_type = 'App\\Models\\Payment' and p.applicant_id = $1`, [id]))[0].n, 2, 'a receipt per entry');
+  const after = await q(`select id, starts_at, ends_at, completed_at, review_status, completion_submitted_at from activity_schedules where applicant_id = $1 order by id`, [id]);
+  for (const [i, r] of after.entries()) {
+    assert.deepEqual([r.starts_at, r.ends_at, r.completed_at].map(String), [before[i].starts_at, before[i].ends_at, before[i].completed_at].map(String), 'activity times unchanged');
+    assert.equal(r.review_status, 'accepted');
+  }
+  assert.equal((await q(`select count(*)::int n from applicant_status_histories where applicant_id = $1`, [id]))[0].n, histBefore, 'no history rows touched');
+  const shown = (await call('GET', `/applicants/${id}`, { token: admin })).json.data.schedules.find((s: any) => s.id === legacy.orientation);
+  assert.equal(shown.completed_before_schedule, true, 'the accurate legacy label stays');
+  assert.equal(shown.proof_documents.length, 3);
+  assert.ok((await q(`select count(*)::int n from audit_logs where action = 'data.sample_records_backfilled' and new_values->>'applicant_id' = $1::text and new_values->>'note' ilike '%sample/test%'`, [id]))[0].n >= 9);
+
+  // A window too short to hold the records is refused, not guessed.
+  const tight = await legacyPair('active_franchisee');
+  const t0 = Date.now() - 20 * 86400e3;
+  for (const [from, to, ms] of [[null, 'converted', 0], ['converted', 'qualified', 1500]] as const) await q(`insert into applicant_status_histories (applicant_id, from_status, to_status, created_at) values ($1, $2, $3, $4)`, [tight.id, from, to, new Date(t0 + ms).toISOString()]);
+  const refused = await fillMissingRecords(db, [tight.id], actors, false);
+  assert.match(refused[0].items.find((i) => i.stage === 'Converted')!.why!, /too short/);
+  await assert.rejects(fillMissingRecords(db, [tight.id], actors, true, { copy: async () => {}, remove: async () => {} }), /nothing applied/);
 });
