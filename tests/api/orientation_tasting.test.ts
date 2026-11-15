@@ -12,6 +12,7 @@ import { alignSessionToActivity } from '../../supabase/scripts/align_session_to_
 import { normalizeSessionCapacity } from '../../supabase/scripts/normalize_session_capacity.ts';
 import { backfillLegacyProof } from '../../supabase/scripts/backfill_legacy_activity_proof.ts';
 import { fillMissingRecords } from '../../supabase/scripts/fill_missing_records.ts';
+import { retimeActivities } from '../../supabase/scripts/retime_activities.ts';
 
 const { pg, db, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -538,4 +539,42 @@ test('fill missing records: everything lands inside its stage window; no stage o
   const refused = await fillMissingRecords(db, [tight.id], actors, false);
   assert.match(refused[0].items.find((i) => i.stage === 'Converted')!.why!, /too short/);
   await assert.rejects(fillMissingRecords(db, [tight.id], actors, true, { copy: async () => {}, remove: async () => {} }), /nothing applied/);
+});
+
+test('retime activities: slots, Sales/Admin times, files, views, sessions and brand lock move inside the Scheduling window; refused outside it', async () => {
+  const legacy = await legacyPair('active_franchisee');
+  const day = new Date(Date.now() - 40 * 86400e3 + 8 * 3600e3).toISOString().slice(0, 10);
+  const local = (hm: string) => new Date(`${day}T${hm}:00+08:00`).toISOString();
+  for (const [from, to, hm] of [[null, 'converted', '01:00'], ['converted', 'qualified', '02:00'], ['qualified', 'scheduled', '03:00'], ['scheduled', 'loi_submitted', '11:00']] as const) {
+    await q(`insert into applicant_status_histories (applicant_id, from_status, to_status, created_at) values ($1, $2, $3, $4)`, [legacy.id, from, to, local(hm)]);
+  }
+  // Proof files and an Admin view on the Orientation/Tasting, as a verified submission has.
+  const [doc] = await q(`insert into documents (documentable_type, documentable_id, type, original_name, stored_name, disk, path, mime_type, size_bytes, uploaded_by_user_id) values ('App\\Models\\ActivitySchedule', $1, 'attendance_proof', 'a.png', 'a.png', 'private', 'p/a.png', 'image/png', 1, $2) returning id`, [legacy.orientation, salesUser.id]);
+  await q(`insert into activity_document_views (document_id, user_id) values ($1, $2)`, [doc.id, adminUser.id]);
+  await q(`update activity_schedules set completion_submitted_at = completed_at, review_status = 'accepted', reviewed_at = completed_at where applicant_id = $1`, [legacy.id]);
+  const actors = { salesId: salesUser.id, salesName: 'Sales User', adminId: adminUser.id, adminName: 'System Administrator' };
+  const specs = [
+    { activityId: legacy.orientation, day, start: '03:30', end: '06:30', sales: '07:00', admin: '07:30' },
+    { activityId: legacy.training, day, start: '08:30', end: '09:30', sales: '09:45', admin: '10:00' },
+  ];
+  // Outside the window: refused.
+  const outside = await retimeActivities(db, legacy.id, [{ ...specs[1], admin: '11:30' }], actors, false);
+  assert.match(outside[0].problems.join(), /outside the Scheduling window/);
+  await assert.rejects(retimeActivities(db, legacy.id, [{ ...specs[1], admin: '11:30' }], actors, true), /nothing applied/);
+
+  const dry = await retimeActivities(db, legacy.id, specs, actors, false);
+  assert.deepEqual(dry.map((p) => p.problems), [[], []], JSON.stringify(dry.map((p) => p.problems)));
+  await retimeActivities(db, legacy.id, specs, actors, true);
+  const rows = (await call('GET', `/applicants/${legacy.id}`, { token: admin })).json.data.schedules.filter((s: any) => [legacy.orientation, legacy.training].includes(s.id));
+  for (const r of rows) assert.equal(r.completed_before_schedule, false, `#${r.id}: the label is gone`);
+  const o = rows.find((r: any) => r.id === legacy.orientation);
+  assert.equal(new Date(o.starts_at).toISOString(), local('03:30'));
+  assert.equal(new Date(o.reviewed_at).toISOString(), local('07:30'));
+  const [session] = await q(`select s.start_at, s.handler_id from schedule_sessions s join schedule_session_participants p on p.session_id = s.id where p.activity_schedule_id = $1`, [legacy.orientation]);
+  assert.equal(new Date(session.start_at).toISOString(), local('03:30'));
+  assert.equal(Number(session.handler_id), salesUser.id);
+  assert.equal(new Date((await q(`select created_at from documents where id = $1`, [doc.id]))[0].created_at).toISOString(), local('07:00'), 'the file was submitted at Sales completed');
+  assert.equal(new Date((await q(`select last_viewed_at from activity_document_views where document_id = $1`, [doc.id]))[0].last_viewed_at).toISOString(), local('07:29'), 'viewed just before verify');
+  assert.equal(new Date((await q(`select brand_locked_at from applicants where id = $1`, [legacy.id]))[0].brand_locked_at).toISOString(), local('07:30'));
+  assert.equal((await q(`select count(*)::int n from audit_logs where action = 'schedule.activity_retimed' and new_values->>'note' ilike '%sample/test%'`))[0].n >= 5, true);
 });
