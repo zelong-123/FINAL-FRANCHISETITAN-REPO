@@ -29,6 +29,22 @@ export function locationText(loc, legacy, noneMarked = false) {
   return formatLocation(loc) ?? clean(legacy);
 }
 
+/**
+ * What to show for a location: ONLY the structured value ("No preferred location yet" when marked).
+ * The old free text is used only when there is no structured value at all, flagged `legacy`.
+ */
+export function locationShown(loc, legacyText, noneMarked = false) {
+  if (noneMarked || loc?.city_code || loc?.province) return { text: locationText(loc, null, noneMarked), legacy: false };
+  const old = clean(legacyText);
+  return old ? { text: old, legacy: true } : { text: null, legacy: false };
+}
+
+/** The same as plain text (exports): the legacy fallback is marked "(legacy)". */
+export function locationPlain(loc, legacyText, noneMarked = false) {
+  const { text, legacy } = locationShown(loc, legacyText, noneMarked);
+  return text ? `${text}${legacy ? ' (legacy)' : ''}` : '';
+}
+
 /** Rank: 0 name starts with the query, 1 a word starts with it, 2 contains it; null = no match. */
 function rank(name, query) {
   const n = normalize(name);

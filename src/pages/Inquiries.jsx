@@ -14,7 +14,8 @@ import RecordCode from '../components/RecordCode';
 import FollowUpLog from '../components/FollowUpLog';
 import { downloadCsv, downloadPdf } from '../lib/export';
 import LocationPicker from '../components/LocationPicker';
-import { locationInput, locationText } from '../lib/locations';
+import { locationInput, locationPlain } from '../lib/locations';
+import LocationValue from '../components/LocationValue';
 
 const initialForm = {
   first_name: '',
@@ -573,7 +574,7 @@ export default function Inquiries() {
     return (
       <ul className="absolute top-[calc(100%_+_4px)] left-0 right-0 z-20 m-0 p-1 [list-style:none] max-h-[232px] overflow-y-auto [background:#0d1220] border border-[#1f2842] rounded-[10px]" role="listbox" aria-label="Existing contacts">
         {suggestions.map((row, index) => {
-          const details = [row.phone, row.email, locationText(row.residence_location, row.current_city)].filter(Boolean).join(' · ');
+          const details = [row.phone, row.email, locationPlain(row.residence_location, row.current_city)].filter(Boolean).join(' · ');
           return (
             <li
               key={row.id}
@@ -645,7 +646,7 @@ export default function Inquiries() {
       const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Current residence', 'Preferred franchise location', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
       const rows = all.map((r) => [
         r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '',
-        locationText(r.residence_location, r.current_city) || '', locationText(r.preferred_location, r.preferred_franchise_location, r.no_preferred_location) || '', titleCase(r.source || ''),
+        locationPlain(r.residence_location, r.current_city), locationPlain(r.preferred_location, r.preferred_franchise_location, r.no_preferred_location), titleCase(r.source || ''),
         r.inquiry_date ? formatDate(r.inquiry_date) : '', titleCase(r.status || ''), r.days_in_status ?? '', r.overdue ? 'Yes' : 'No',
         r.follow_up_count ?? 0, r.next_follow_up_at ? formatDate(r.next_follow_up_at, true) : '',
       ]);
@@ -1298,11 +1299,8 @@ export default function Inquiries() {
                       <h3>Franchise interest</h3>
                       <dl>
                         <DetailRow label="Concept">{shownConcept ? <BrandText name={shownConcept} /> : null}</DetailRow>
-                        <DetailRow label="Current residence">{locationText(shown.residence_location, shown.current_city)}</DetailRow>
-                        <DetailRow label="Preferred franchise location">{locationText(shown.preferred_location, shown.preferred_franchise_location, shown.no_preferred_location)}</DetailRow>
-                        {shown.residence_location?.city_code && shown.current_city && <DetailRow label="Residence (typed earlier)">{shown.current_city}</DetailRow>}
-                        {(shown.preferred_location?.city_code || shown.no_preferred_location) && shown.preferred_franchise_location && <DetailRow label="Preferred location (typed earlier)">{shown.preferred_franchise_location}</DetailRow>}
-                        {shown.address && <DetailRow label="Address (previous record)">{shown.address}</DetailRow>}
+                        <DetailRow label="Current residence"><LocationValue loc={shown.residence_location} legacy={shown.current_city || shown.address} /></DetailRow>
+                        <DetailRow label="Preferred franchise location"><LocationValue loc={shown.preferred_location} legacy={shown.preferred_franchise_location} noneMarked={shown.no_preferred_location} /></DetailRow>
                       </dl>
                     </section>
                   </>

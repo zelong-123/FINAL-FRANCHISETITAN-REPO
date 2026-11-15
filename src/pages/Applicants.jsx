@@ -8,7 +8,8 @@ import {
 } from 'react-icons/fa6';
 import RequirementFileDrop from '../components/RequirementFileDrop';
 import LocationPicker from '../components/LocationPicker';
-import { differentFromPreferred, formatLocation, locationInput, locationText, suggestBranchName } from '../lib/locations';
+import { differentFromPreferred, formatLocation, locationInput, locationPlain, suggestBranchName } from '../lib/locations';
+import LocationValue from '../components/LocationValue';
 import {
   API_BASE_URL, api, authToken, firstValidationMessage,
 } from '../lib/api';
@@ -1240,15 +1241,13 @@ function RequirementStatus({ status }) {
 /** Current residence (from the inquiry) and the preferred franchise location, which Sales or Admin may add later. */
 function ApplicantLocations({ editing, canEdit, busy, onSave }) {
   const [draft, setDraft] = useState(null);
-  const residence = locationText(editing.residence_location, editing.address);
-  const preferred = locationText(editing.preferred_location, null, editing.no_preferred_location);
   return (
     <div className="col-span-full grid gap-[8px] p-[12px_14px] border border-[#2b344c] rounded-[11px] [background:#0c111d] text-[13px]">
-      <div className="flex justify-between gap-4 flex-wrap"><span className="text-[#8f9bbd]">Current residence</span><span className="text-right text-[#e6eaf5]">{residence || '—'}</span></div>
+      <div className="flex justify-between gap-4 flex-wrap"><span className="text-[#8f9bbd]">Current residence</span><span className="text-right text-[#e6eaf5]"><LocationValue loc={editing.residence_location} legacy={editing.address} empty="—" /></span></div>
       <div className="flex justify-between gap-4 flex-wrap items-center">
         <span className="text-[#8f9bbd]">Preferred franchise location</span>
         <span className="inline-flex items-center gap-2 text-right text-[#e6eaf5]">
-          {preferred || '—'}
+          <LocationValue loc={editing.preferred_location} noneMarked={editing.no_preferred_location} empty="—" />
           {canEdit && !draft && (
             <button type="button" className="text-[12px] font-[600] text-[#8fb4ff] bg-transparent border-0 cursor-pointer hover:underline disabled:opacity-50" disabled={busy}
               onClick={() => setDraft({ ...(editing.preferred_location || {}) })}>{editing.preferred_location?.city_code ? 'Change' : 'Add'}</button>
@@ -1313,7 +1312,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
   const itemOf = (key) => req.items.find((item) => item.key === key) || { status: 'pending', data: {} };
   const optionLabel = (field, value) => field.options?.find((o) => o.value === value)?.label || value;
   const shownValue = (field, item) => (field.type === 'location'
-    ? (item.location_text || formatLocation(item.data?.[field.key]) || item.data?.address || null)
+    ? (item.data?.[field.key]?.city_code ? formatLocation(item.data[field.key]) : (locationPlain(null, item.data?.address) || null))
     : item.data?.[field.key] ? (field.type === 'date' ? formatDate(item.data[field.key]) : optionLabel(field, item.data[field.key])) : null);
   const startEdit = (def) => {
     const item = itemOf(def.key);
@@ -2991,7 +2990,7 @@ export default function Applicants() {
       business_name: existing?.business_name || editing?.full_name || '',
       'location.name': location?.name || suggestBranchName(editing?.preferred_brand?.name, siteLocation),
       'location.preferred_branch_type': location?.preferred_branch_type || editing?.preferred_brand?.name || '',
-      'location.address': location?.address || formatLocation(siteLocation) || editing?.address || '',
+      'location.address': location?.address || formatLocation(siteLocation) || '',
       'location.city': location?.city || siteLocation?.city || '',
       'location.province': location?.province || siteLocation?.province || '',
       'location.region': location?.region || '',
@@ -4018,7 +4017,6 @@ export default function Applicants() {
                   </Field>
                   <Field label="Email"><input type="email" value={draft.email} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field>
                   <Field label="Phone"><input value={draft.phone} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field>
-                  <Field label="Address"><input value={draft.address} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field>
                   <ApplicantLocations
                     editing={editing}
                     canEdit={(isAdminRole || isAssignedSales) && !editing.archived_at && !['active_franchisee', 'rejected'].includes(editing.status)}

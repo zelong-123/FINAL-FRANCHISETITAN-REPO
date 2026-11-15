@@ -69,3 +69,15 @@ test('branch name suggestion', () => {
   assert.equal(suggestBranchName('Daily Dash', { city: 'Quezon City' }), 'Daily Dash Quezon City');
   assert.equal(suggestBranchName('Daily Dash', null), '');
 });
+
+test('only structured values are shown; the old typed text only when none exists, flagged legacy', async () => {
+  const { locationShown, locationPlain } = await import('./locations.js');
+  const loc = { barangay: 'Talon Uno', city_code: '1380200000', city: 'Las Piñas City', province: 'Metro Manila (NCR)' };
+  assert.deepEqual(locationShown(loc, 'talon uno'), { text: 'Talon Uno, Las Piñas City, Metro Manila (NCR)', legacy: false }, 'the typed text is not shown next to it');
+  assert.deepEqual(locationShown(null, 'talon uno', true), { text: 'No preferred location yet', legacy: false });
+  assert.deepEqual(locationShown(null, '  talon uno '), { text: 'talon uno', legacy: true });
+  assert.deepEqual(locationShown(null, ''), { text: null, legacy: false });
+  assert.equal(locationPlain(null, 'talon uno'), 'talon uno (legacy)');
+  assert.equal(locationPlain(loc, 'talon uno'), 'Talon Uno, Las Piñas City, Metro Manila (NCR)');
+  assert.equal(locationPlain(null, null), '');
+});
