@@ -40,16 +40,13 @@ export async function normalizeSessionCapacity(db: Db, apply: boolean): Promise<
 // ---- CLI ----
 const isMain = Boolean(process.argv[1]?.split('\\').join('/').endsWith('supabase/scripts/normalize_session_capacity.ts'));
 if (isMain) {
-  const { readFileSync } = await import('node:fs');
   const apply = process.argv.includes('--apply');
   if (apply === process.argv.includes('--dry-run')) { console.error('Usage: exactly one of --dry-run or --apply'); process.exit(2); }
-  const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]));
-  const { default: postgres } = await import('postgres');
-  const sql = postgres(env.SUPABASE_DB_URL, { ssl: 'require', max: 1 });
-  const wrap = (runner: any): Db => ({ query: async (text: string, params: unknown[] = []) => (await runner.unsafe(text, params)) as any, tx: (fn) => sql.begin((t: any) => fn(wrap(t))) as any });
+  const { openScriptDb, readOnly } = await import('./lib/scriptDb.ts');
+  const db = await openScriptDb();
   const local = (d: string) => new Date(new Date(d).getTime() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ');
   try {
-    const plans = apply ? await normalizeSessionCapacity(wrap(sql), true) : await sql.begin('read only', (t: any) => normalizeSessionCapacity(wrap(t), false));
+    const plans = apply ? await normalizeSessionCapacity(db, true) : await readOnly(db, (tx) => normalizeSessionCapacity(tx, false));
     console.log(apply ? '== APPLIED' : '== DRY RUN (nothing changed)');
     console.table(plans.map((p) => ({
       session: p.id, status: p.status, start: local(p.start_at), handler: p.handler ?? '—', stored_capacity: p.capacity, participants: p.participants,
@@ -58,6 +55,6 @@ if (isMain) {
     })));
     console.log(`${plans.filter((p) => p.action === 'set').length} to set, ${plans.filter((p) => p.action === 'report').length} report only`);
   } finally {
-    await sql.end();
+    await db.close();
   }
 }

@@ -49,6 +49,12 @@ const STAGE_NAMES: Record<string, string> = {
   approved: 'Approved', active_franchisee: 'Active Franchisee', rejected: 'Rejected',
 };
 
+/** History rows are append-only: a value an older data script stored as a JSON string is read as JSON. */
+export function asJson(value: unknown): unknown {
+  if (typeof value !== 'string' || !/^\s*[[{]/.test(value)) return value;
+  try { return JSON.parse(value); } catch { return value; }
+}
+
 /** A plain-English name for the action. */
 export function actionLabel(row: Row): string {
   if (row.event && NICE[row.event]) return NICE[row.event];
@@ -72,7 +78,7 @@ export async function applicantHistory(db: Db, applicantId: number, showFiles: b
     .map((h) => ({
       id: h.id, at: h.changed_at ?? h.created_at, by: h.by_name ?? (h.actor_role === 'system' ? 'System' : null), by_user_id: h.changed_by_user_id, role: h.actor_role,
       page: pageOf(h), action: actionLabel(h), event: h.event, step: h.step, stage: h.to_stage, from_stage: h.from_stage,
-      reason: h.remarks, old_values: withoutMoney(h.old_values), new_values: withoutMoney(h.new_values),
+      reason: h.remarks, old_values: withoutMoney(asJson(h.old_values)), new_values: withoutMoney(asJson(h.new_values)),
       attachments: showFiles ? (h.attachments ?? []) : (h.attachments ?? []).map(() => ({ hidden: true })),
     }))
     .filter((h) => !page || page === 'history' || h.page === page);

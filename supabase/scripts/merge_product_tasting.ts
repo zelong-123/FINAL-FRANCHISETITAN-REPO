@@ -138,18 +138,15 @@ export async function mergeProductTasting(db: Db, ids: number[], apply: boolean)
 // ---- CLI ----
 const isMain = Boolean(process.argv[1]?.split('\\').join('/').endsWith('supabase/scripts/merge_product_tasting.ts'));
 if (isMain) {
-  const { readFileSync } = await import('node:fs');
   const arg = (name: string) => process.argv.find((x) => x.startsWith(`--${name}=`))?.split('=')[1];
   const ids = String(arg('ids') ?? '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
   const apply = process.argv.includes('--apply');
   if (!ids.length || apply === process.argv.includes('--dry-run')) { console.error('Usage: --ids=6,8,… and exactly one of --dry-run or --apply'); process.exit(2); }
-  const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]));
-  const { default: postgres } = await import('postgres');
-  const sql = postgres(env.SUPABASE_DB_URL, { ssl: 'require', max: 1 });
-  const wrap = (runner: any): Db => ({ query: async (text: string, params: unknown[] = []) => (await runner.unsafe(text, params)) as any, tx: (fn) => sql.begin((t: any) => fn(wrap(t))) as any });
+  const { openScriptDb, readOnly } = await import('./lib/scriptDb.ts');
+  const db = await openScriptDb();
   const t = (d: unknown) => (d ? new Date(new Date(d as string).getTime() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') : '');
   try {
-    const plans = await mergeProductTasting(wrap(sql), ids, apply);
+    const plans = apply ? await mergeProductTasting(db, ids, true) : await readOnly(db, (tx) => mergeProductTasting(tx, ids, false));
     console.log(apply ? '== APPLIED' : '== DRY RUN (nothing changed)');
     console.table(plans.map((p) => ({
       id: p.id, code: p.code, name: p.name, stage: p.stage, action: p.action + (p.reason ? `: ${p.reason}` : ''),
@@ -168,6 +165,6 @@ if (isMain) {
       for (const n of p.notes) console.log(`  ${p.code} note: ${n}`);
     }
   } finally {
-    await sql.end();
+    await db.close();
   }
 }

@@ -91,7 +91,6 @@ export async function removeEarlyProposedSite(db: Db, files: Files, ids: number[
 // ---- CLI ----
 const isMain = Boolean(process.argv[1]?.split('\\').join('/').endsWith('supabase/scripts/remove_early_proposed_site.ts'));
 if (isMain) {
-  const { readFileSync } = await import('node:fs');
   const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
   const ids = String(arg('ids') ?? '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
   const apply = process.argv.includes('--apply');
@@ -100,15 +99,10 @@ if (isMain) {
     console.error('Usage: --ids=22,24,25 and exactly one of --dry-run or --apply');
     process.exit(2);
   }
-  const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l))
-    .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]));
-  const { default: postgres } = await import('postgres');
+  const { openScriptDb, readEnv } = await import('./lib/scriptDb.ts');
+  const env = await readEnv();
   const { createClient } = await import('@supabase/supabase-js');
-  const sql = postgres(env.SUPABASE_DB_URL, { ssl: 'require', max: 1 });
-  const wrap = (runner: any): Db => ({
-    query: async (text: string, params: unknown[] = []) => (await runner.unsafe(text, params)) as any,
-    tx: (fn) => sql.begin((t: any) => fn(wrap(t))) as any,
-  });
+  const db = await openScriptDb();
   const storage = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }).storage;
   const files: Files = {
     async remove(disk, paths) {
@@ -118,7 +112,7 @@ if (isMain) {
     },
   };
   try {
-    const plans = await removeEarlyProposedSite(wrap(sql), files, ids, apply);
+    const plans = await removeEarlyProposedSite(db, files, ids, apply);
     console.log(apply ? '== APPLIED' : '== DRY RUN (nothing changed)');
     console.table(plans.map((p) => ({
       id: p.id, code: p.code, name: p.name, stage: p.stage, action: p.action, reason: p.reason ?? '',
@@ -127,6 +121,6 @@ if (isMain) {
     })));
     for (const p of plans.filter((x) => x.documents?.length)) console.log(`  ${p.code} files:`, p.documents!.map((d) => `${d.disk}/${d.path} (${d.original_name})`).join(', '));
   } finally {
-    await sql.end();
+    await db.close();
   }
 }

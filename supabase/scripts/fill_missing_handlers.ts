@@ -74,17 +74,14 @@ function decide(kind: 'session' | 'activity', row: Row, startsAt: unknown, peopl
 // ---- CLI ----
 const isMain = Boolean(process.argv[1]?.split('\\').join('/').endsWith('supabase/scripts/fill_missing_handlers.ts'));
 if (isMain) {
-  const { readFileSync } = await import('node:fs');
   const apply = process.argv.includes('--apply');
   if (apply === process.argv.includes('--dry-run')) { console.error('Usage: exactly one of --dry-run or --apply'); process.exit(2); }
-  const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]));
-  const { default: postgres } = await import('postgres');
-  const sql = postgres(env.SUPABASE_DB_URL, { ssl: 'require', max: 1 });
-  const wrap = (runner: any): Db => ({ query: async (text: string, params: unknown[] = []) => (await runner.unsafe(text, params)) as any, tx: (fn) => sql.begin((t: any) => fn(wrap(t))) as any });
+  const { openScriptDb, readOnly } = await import('./lib/scriptDb.ts');
+  const db = await openScriptDb();
   const local = (d: string | null) => (d ? new Date(new Date(d).getTime() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') : '—');
   try {
     // The dry-run reads inside a READ ONLY transaction.
-    const plans = apply ? await fillMissingHandlers(wrap(sql), true) : await sql.begin('read only', (t: any) => fillMissingHandlers(wrap(t), false));
+    const plans = apply ? await fillMissingHandlers(db, true) : await readOnly(db, (tx) => fillMissingHandlers(tx, false));
     console.log(apply ? '== APPLIED' : '== DRY RUN (nothing changed)');
     console.table(plans.map((p) => ({
       kind: p.kind, id: p.id, type: p.activity_type, status: p.status, starts: local(p.starts_at), applicants: p.applicants,
@@ -92,6 +89,6 @@ if (isMain) {
     })));
     console.log(`${plans.filter((p) => p.action === 'set').length} to set, ${plans.filter((p) => p.action === 'report').length} report only`);
   } finally {
-    await sql.end();
+    await db.close();
   }
 }

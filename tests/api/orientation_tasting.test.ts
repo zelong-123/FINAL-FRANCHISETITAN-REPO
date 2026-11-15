@@ -362,3 +362,17 @@ test('capacity: an older stored 30 shows as N/5 everywhere; the script sets 5 an
   assert.equal((await q(`select max_capacity from schedule_sessions where id = $1`, [big.id]))[0].max_capacity, 30, 'over 5: left as it is');
   assert.equal((await q(`select count(*)::int n from audit_logs where action = 'schedule.capacity_normalized' and auditable_id = $1`, [s.id]))[0].n, 1);
 });
+
+test('History reads a value an older script stored as a JSON string as JSON', async () => {
+  const id = await applicant();
+  await q(
+    `insert into applicant_stage_histories (applicant_id, from_stage, to_stage, changed_at, event, step, old_values, new_values, actor_role)
+     values ($1, 'scheduled', 'scheduled', now(), 'orientation_tasting_merged', 'orientation', to_jsonb($2::text), to_jsonb($3::text), 'system')`,
+    [id, JSON.stringify({ orientation: { id: 1, status: 'completed' } }), JSON.stringify({ orientation: { id: 1, status: 'confirmed' } })],
+  );
+  const body = (await call('GET', `/applicants/${id}/history`, { token: admin })).json;
+  const list = Array.isArray(body.data) ? body.data : body.data?.items ?? [];
+  const row = list.find((h: any) => h.event === 'orientation_tasting_merged');
+  assert.equal(row.old_values.orientation.status, 'completed');
+  assert.equal(row.new_values.orientation.status, 'confirmed');
+});

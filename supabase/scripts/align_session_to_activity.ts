@@ -58,25 +58,22 @@ export async function alignSessionToActivity(db: Db, sessionId: number, activity
 // ---- CLI ----
 const isMain = Boolean(process.argv[1]?.split('\\').join('/').endsWith('supabase/scripts/align_session_to_activity.ts'));
 if (isMain) {
-  const { readFileSync } = await import('node:fs');
   const arg = (name: string) => Number(process.argv.find((x) => x.startsWith(`--${name}=`))?.split('=')[1]);
   const apply = process.argv.includes('--apply');
   const sessionId = arg('session');
   const activityId = arg('activity');
   if (!sessionId || !activityId || apply === process.argv.includes('--dry-run')) { console.error('Usage: --session=N --activity=N and exactly one of --dry-run or --apply'); process.exit(2); }
-  const env = Object.fromEntries(readFileSync('.env', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]));
-  const { default: postgres } = await import('postgres');
-  const sql = postgres(env.SUPABASE_DB_URL, { ssl: 'require', max: 1 });
-  const wrap = (runner: any): Db => ({ query: async (text: string, params: unknown[] = []) => (await runner.unsafe(text, params)) as any, tx: (fn) => sql.begin((t: any) => fn(wrap(t))) as any });
+  const { openScriptDb, readOnly } = await import('./lib/scriptDb.ts');
+  const db = await openScriptDb();
   const local = (d: unknown) => (d ? new Date(new Date(d as string).getTime() + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') : '—');
   try {
-    const plan = apply ? await alignSessionToActivity(wrap(sql), sessionId, activityId, true)
-      : await sql.begin('read only', (t: any) => alignSessionToActivity(wrap(t), sessionId, activityId, false));
+    const plan = apply ? await alignSessionToActivity(db, sessionId, activityId, true)
+      : await readOnly(db, (tx) => alignSessionToActivity(tx, sessionId, activityId, false));
     console.log(plan.ok ? (apply ? '== APPLIED' : '== DRY RUN (nothing changed)') : `== REFUSED: ${plan.refused}`);
     const show = (r: Row) => ({ status: r.status, start: local(r.start_at), end: local(r.end_at), handler_id: r.handler_id, participant: r.participant_status });
     console.table({ [`session #${sessionId} before`]: show(plan.before), [`session #${sessionId} after`]: show(plan.after) });
     console.log(`activity #${activityId}: ${plan.activity?.status} ${local(plan.activity?.starts_at)}–${local(plan.activity?.ends_at)}, handler #${plan.activity?.assigned_to_user_id}; other applicants in the session: ${plan.others_in_session}; buffer clashes: ${plan.buffer_clashes.length}`);
   } finally {
-    await sql.end();
+    await db.close();
   }
 }
