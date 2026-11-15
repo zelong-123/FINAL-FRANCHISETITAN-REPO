@@ -15,13 +15,13 @@ test('end time follows the default duration', () => {
   assert.equal(minutesBetween('10:00', '13:00'), 180);
 });
 
-test('brand check names who is missing or different (tasting/training only)', () => {
+test('brand check names who is missing or different (Training only)', () => {
   const ana = { id: 1, full_name: 'Ana', preferred_brand_id: 1 };
   const ben = { id: 2, full_name: 'Ben', preferred_brand_id: 2 };
   const dee = { id: 3, full_name: 'Dee', preferred_brand_id: null };
 
   assert.deepEqual(brandCheck('orientation', null, [ana, ben, dee]).missing, []);
-  const tasting = brandCheck('product_tasting', null, [ana, ben, dee]);
+  const tasting = brandCheck('training', null, [ana, ben, dee]);
   assert.deepEqual(tasting.missing.map((a) => a.id), [3]);
   assert.deepEqual(tasting.mismatched.map((a) => a.id), [1, 2]);
   assert.equal(brandCheck('training', null, [ana]).commonBrandId, 1);

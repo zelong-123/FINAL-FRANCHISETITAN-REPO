@@ -1,6 +1,7 @@
 // App\Services\ProfitTrackBranchAccess + BranchProvisioner: resolve the one branch of an
 // active franchisee, creating it at first sign-in from the applicant's own preferences.
 import type { Db, Row } from '../lib/db.ts';
+import { formatLocation, suggestBranchName } from './psgc.ts';
 
 const LOCATION_NOT_SET = 'Location not set';
 const ACTIVE_FRANCHISEE = 'active_franchisee';
@@ -33,7 +34,12 @@ const randomCode = () => {
   return Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => alphabet[b % alphabet.length]).join('');
 };
 
-export async function provisionBranch(db: Db, franchiseeId: number): Promise<Row | null> {
+/**
+ * Creates the franchisee's branch once. A NEW branch is named from the verified Proposed site:
+ * "<Brand> <City/Municipality> – <Barangay/St>" (or "<Brand> <City/Municipality>"), unless Admin typed
+ * another name at activation. Existing branches are never renamed here.
+ */
+export async function provisionBranch(db: Db, franchiseeId: number, options: { name?: string | null } = {}): Promise<Row | null> {
   return db.tx(async (tx) => {
     const [franchisee] = await tx.query(`select * from franchisees where id = $1 for update`, [franchiseeId]);
     if (!franchisee) return null;
@@ -49,6 +55,10 @@ export async function provisionBranch(db: Db, franchiseeId: number): Promise<Row
       ? await tx.query(`select preferred_franchise_location from franchise_inquiries where id = $1`, [applicant.inquiry_id])
       : [];
     const place = cleanPlace(inquiry?.preferred_franchise_location);
+    const [site] = await tx.query(`select data from applicant_requirements where applicant_id = $1 and requirement_key = 'proposed_site' and status = 'accepted'`, [applicant.id]);
+    const siteLocation = site?.data?.location?.city_code ? site.data.location : null;
+    const name = cleanPlace(options.name) ?? suggestBranchName(brand.name, siteLocation) ?? `${brand.name} · ${place ?? LOCATION_NOT_SET}`;
+    const address = formatLocation(siteLocation) ?? place ?? LOCATION_NOT_SET;
 
     let code: string;
     do {
@@ -56,9 +66,9 @@ export async function provisionBranch(db: Db, franchiseeId: number): Promise<Row
     } while ((await tx.query(`select 1 from franchise_locations where branch_code = $1`, [code])).length);
 
     const [location] = await tx.query(
-      `insert into franchise_locations (franchisee_id, brand_id, preferred_branch_type, name, branch_code, type, address, city, contact_number, is_active)
-       values ($1, $2, $3, $4, $5, 'franchise', $6, $7, $8, true) returning *`,
-      [franchiseeId, brand.id, brand.name, `${brand.name} · ${place ?? LOCATION_NOT_SET}`, code, place ?? LOCATION_NOT_SET, place, applicant.phone],
+      `insert into franchise_locations (franchisee_id, brand_id, preferred_branch_type, name, branch_code, type, address, city, province, contact_number, is_active)
+       values ($1, $2, $3, $4, $5, 'franchise', $6, $7, $8, $9, true) returning *`,
+      [franchiseeId, brand.id, brand.name, name, code, address, siteLocation?.city ?? place, siteLocation?.province ?? null, applicant.phone],
     );
     return location;
   });

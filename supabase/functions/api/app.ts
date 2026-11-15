@@ -24,6 +24,7 @@ import { branchRoutes } from './routes/branches.ts';
 import { profitTrackRoutes } from './routes/profittrack.ts';
 import { forecastRoutes } from './routes/estimatedRequirement.ts';
 import { analyticsRoutes } from './routes/analytics.ts';
+import { locationReference } from './services/psgc.ts';
 
 export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   const app = new Hono<AppEnv>().basePath('/api/v1');
@@ -101,6 +102,12 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   for (const path of ['/estimated-requirement', '/estimated-requirement/*', '/analytics/*']) app.use(path, authenticate);
   app.route('/', forecastRoutes);
   app.route('/', analyticsRoutes);
+
+  // Built-in PSGC reference list (provinces + cities/municipalities) for the location picker. Read-only.
+  app.get('/ph-locations', authenticate, async (c) => {
+    c.header('Cache-Control', 'private, max-age=86400');
+    return ok(c, await locationReference(deps.db));
+  });
 
   app.get('/pipeline-config', authenticate, (c) => ok(c, {
     ...PIPELINE,

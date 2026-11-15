@@ -1,8 +1,10 @@
 // Phase 2: strict Complete (time, attendance, proof), No Show + Set Again, Admin Attended /
-// Return, the legacy early badge — and Addition A: Brand Confirmation and the brand lock.
+// Return, the legacy early badge, and the brand lock (now set when Admin verifies Orientation/Tasting;
+// the separate Brand Confirmation step is retired).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
+import { completeAndVerify, orientationForm, viewAll } from '../support/orientation.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -45,7 +47,7 @@ function completion(overrides: Record<string, string> = {}) {
   for (const [k, v] of Object.entries(overrides)) f.set(k, v);
   return f;
 }
-const label = (type: string) => ({ orientation: 'Orientation', product_tasting: 'Product Tasting', training: 'Training' } as any)[type];
+const label = (type: string) => ({ orientation: 'Orientation/Tasting', training: 'Training' } as any)[type];
 /** Admin books the activity, then its start time is moved into the past (time passes). */
 async function booked(applicantId: number, type: string) {
   const res = await call('POST', '/activities', { token: admin, body: { applicant_id: applicantId, activity_type: type, title: label(type), starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' } });
@@ -54,8 +56,12 @@ async function booked(applicantId: number, type: string) {
   return res.json.data.id as number;
 }
 /** Booked, completed by Sales with proof, marked Attended by Admin. */
-async function done(applicantId: number, type: string) {
+async function done(applicantId: number, type: string, brandId = brandA.id) {
   const id = await booked(applicantId, type);
+  if (type === 'orientation') {
+    await completeAndVerify(call, sales, admin, id, brandId);
+    return id;
+  }
   const completed = await call('POST', `/activities/${id}/complete`, { token: sales, form: completion() });
   assert.equal(completed.status, 200, JSON.stringify(completed.json));
   const attended = await call('POST', `/activities/${id}/attended`, { token: admin });
@@ -87,12 +93,14 @@ test('No Show needs a reason, frees the slot, and Set Again reschedules the same
 test('Admin sees the proof, then marks Attended or Returns it; Sales corrects and resubmits', async () => {
   const id = await scheduled();
   const activity = await booked(id, 'orientation');
-  await call('POST', `/activities/${activity}/complete`, { token: sales, form: completion() });
+  await call('POST', `/activities/${activity}/complete`, { token: sales, form: orientationForm({ brandId: brandA.id }) });
 
   const detail = (await call('GET', `/applicants/${id}`, { token: admin })).json.data;
   const row = detail.schedules.find((s: any) => s.id === activity);
-  assert.equal(row.proof_documents.length, 1, 'Admin can see the proof before deciding');
-  assert.equal(row.result_notes, 'Attended the whole session and asked questions.');
+  assert.equal(row.proof_documents.length, 2, 'Admin can see the attendance proof and the brand document before deciding');
+  assert.deepEqual(row.proof_documents.map((d: any) => d.type).sort(), ['attendance_proof', 'brand_selection']);
+  assert.equal(row.selected_brand_name, brandA.name);
+  assert.equal(row.result_notes, 'Attended the whole session and tasted every product.');
   assert.equal(row.handler_name, 'Sales User');
   const proofId = row.proof_documents[0].id;
   assert.equal((await call('GET', `/activities/${activity}/documents/${proofId}/download`, { token: admin })).status, 200);
@@ -105,12 +113,13 @@ test('Admin sees the proof, then marks Attended or Returns it; Sales corrects an
   assert.equal(returned.json.data.review_status, 'returned');
   assert.equal((await call('POST', `/activities/${activity}/attended`, { token: admin })).status, 422, 'nothing to accept until Sales resubmits');
 
-  const again = await call('POST', `/activities/${activity}/complete`, { token: sales, form: completion() });
+  const again = await call('POST', `/activities/${activity}/complete`, { token: sales, form: orientationForm({ brandId: brandA.id }) });
   assert.equal(again.json.data.review_status, 'submitted');
-  assert.equal(again.json.data.proof_documents.length, 2);
-  assert.ok(again.json.data.proof_documents[0].replaced_at, 'the first proof is kept, marked Replaced');
+  assert.equal(again.json.data.proof_documents.length, 4);
+  assert.equal(again.json.data.proof_documents.filter((d: any) => d.replaced_at).length, 2, 'the first files are kept, marked Replaced');
 
   assert.equal((await call('POST', `/activities/${activity}/attended`, { token: sales })).status, 403, 'Sales cannot accept its own completion');
+  await viewAll(call, admin, activity, again.json.data.proof_documents);
   const accepted = await call('POST', `/activities/${activity}/attended`, { token: admin });
   assert.equal(accepted.json.data.review_status, 'accepted');
   assert.equal((await q(`select milestones from applicants where id = $1`, [id]))[0].milestones.orientation_attended, true);
@@ -123,7 +132,7 @@ test('Admin sees the proof, then marks Attended or Returns it; Sales corrects an
   const completedLogs = await events(id, 'activity_completed');
   assert.equal(completedLogs.length, 2);
   assert.equal(completedLogs[1].new_values.resubmitted, true);
-  assert.equal(completedLogs[1].attachments.length, 2, 'new file + the replaced one');
+  assert.equal(completedLogs[1].attachments.length, 4, '2 new files + the 2 replaced ones');
 });
 
 test('legacy completions before the schedule are kept and flagged', async () => {
@@ -136,79 +145,51 @@ test('legacy completions before the schedule are kept and flagged', async () => 
   assert.equal(row.legacy_completion, true);
 });
 
-test('Brand Confirmation: only after tasting is Done, Sales submits, Admin confirms, Training gated', async () => {
+test('Brand Confirmation is retired; Training waits for Orientation/Tasting verified, which locks the brand', async () => {
   const id = await scheduled();
   const path = `/applicants/${id}`;
-  const submit = (token: string, extra: any = {}) => call('POST', `${path}/brand-confirmation`, {
-    token, body: { final_brand_id: brandA.id, confirmation_method: 'call', confirmed_on: '2026-11-01', notes: 'Confirmed by phone after the tasting.', ...extra },
-  });
-  await done(id, 'orientation');
-  assert.match((await submit(sales)).json.errors.brand_confirmation[0], /only after Product Tasting is Done/);
-  await done(id, 'product_tasting');
+  const retired = /no longer a separate step/;
+  assert.match((await call('POST', `${path}/brand-confirmation`, { token: sales, body: { final_brand_id: brandA.id, confirmation_method: 'call', confirmed_on: '2026-11-01', notes: 'Confirmed by phone.' } })).json.errors.brand_confirmation[0], retired);
+  assert.match((await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: { confirmed: true } })).json.errors.brand_confirmation[0], retired);
+  assert.match((await call('POST', `${path}/brand-confirmation/return`, { token: admin, body: { reason: 'Not needed any more.' } })).json.errors.brand_confirmation[0], retired);
 
-  // Training cannot be scheduled before Admin confirms the brand — through any path.
-  const early = await call('POST', '/activities', { token: admin, body: { applicant_id: id, activity_type: 'training', title: 'Training', starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' } });
-  assert.match(early.json.errors.activity_type[0], /Training can be scheduled only after Admin confirms the brand/);
-  assert.match((await call('POST', `${path}/activities/set-again`, { token: admin, body: { starts_at: nextSlot(), duration_minutes: 60 } })).json.errors.activity_type[0], /only after Admin confirms the brand/);
-  const sessionTry = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'training', brand_id: brandA.id, start_at: nextSlot('10:00'), end_at: nextSlot('11:00').replace(/T\d{2}/, 'T11'), applicant_ids: [id] } });
-  assert.match(sessionTry.json.data.reasons.join(), /only after Admin confirms the brand/, 'Master Schedule too');
+  // Training cannot be scheduled before Orientation/Tasting is verified.
+  const trainingBody = () => ({ applicant_id: id, activity_type: 'training', title: 'Training', starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' });
+  const early = await call('POST', '/activities', { token: admin, body: trainingBody() });
+  assert.match(early.json.errors.activity_type[0], /Training comes after Orientation\/Tasting/);
+  const orientation = await booked(id, 'orientation');
+  const completed = await call('POST', `/activities/${orientation}/complete`, { token: sales, form: orientationForm({ brandId: brandA.id }) });
+  assert.equal(completed.status, 200, JSON.stringify(completed.json));
+  const submittedOnly = await call('POST', '/activities', { token: admin, body: trainingBody() });
+  assert.match(submittedOnly.json.errors.activity_type[0], /Training comes after Orientation\/Tasting/, 'submitted is not enough: Admin must verify');
+  await viewAll(call, admin, orientation, completed.json.data.proof_documents);
+  assert.equal((await call('POST', `/activities/${orientation}/attended`, { token: admin })).status, 200);
 
-  assert.equal((await submit(admin)).status, 403, 'Admin cannot submit for Sales');
-  assert.ok((await submit(sales, { notes: '' })).json.errors.notes, 'notes are required');
-  const submitted = await submit(sales);
-  assert.equal(submitted.status, 201, JSON.stringify(submitted.json));
-  assert.equal((await submit(sales)).status, 422, 'one pending submission at a time');
-  assert.equal((await call('POST', `${path}/brand-confirmation/confirm`, { token: sales, body: { confirmed: true } })).status, 403, 'Sales cannot confirm for Admin');
-  assert.equal((await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: {} })).status, 422, 'the second confirmation is required');
-  const confirmed = await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: { confirmed: true } });
-  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.json));
-  assert.equal(confirmed.json.data.brand_confirmation.locked, true);
-  assert.equal(confirmed.json.data.brand_confirmation.locked_by, (await q(`select full_name from users where id = $1`, [adminUser.id]))[0].full_name);
-
-  // Locked: no path changes the brand.
+  const [locked] = await q(`select brand_locked_at, brand_locked_by_user_id from applicants where id = $1`, [id]);
+  assert.ok(locked.brand_locked_at, 'Verify locks the brand');
+  assert.equal(Number(locked.brand_locked_by_user_id), adminUser.id);
   assert.match((await call('PUT', path, { token: admin, body: { preferred_brand_id: brandB.id } })).json.errors.preferred_brand_id[0], /locked/);
   const otherBrandTraining = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'training', brand_id: brandB.id, start_at: nextSlot('10:00'), end_at: nextSlot('11:00').replace(/T\d{2}/, 'T11'), applicant_ids: [id] } });
   assert.match(otherBrandTraining.json.data.reasons.join(), /hindi tugma sa brand/, 'a session for another brand is refused');
-  assert.equal((await submit(sales)).status, 422, 'nothing to resubmit after the lock');
 
-  // Training is now allowed.
-  const training = await call('POST', '/activities', { token: admin, body: { applicant_id: id, activity_type: 'training', title: 'Training', starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' } });
+  const training = await call('POST', '/activities', { token: admin, body: trainingBody() });
   assert.equal(training.status, 201, JSON.stringify(training.json));
-
-  const [confirmedLog] = await events(id, 'brand_confirmed');
-  assert.equal(confirmedLog.actor_role, 'admin');
-  assert.equal(confirmedLog.new_values.brand_locked, true);
+  assert.equal(Number(training.json.data.assigned_to_user_id), salesUser.id, 'the handler defaults to the assigned Sales user');
 });
 
-test('a final brand other than the tasted one needs a reason and a new Product Tasting first; Return needs a reason', async () => {
+test('the selected brand replaces the applicant brand on Verify; the inquired brand is kept and the change logged', async () => {
   const id = await scheduled(brandA.id);
-  const path = `/applicants/${id}`;
-  await done(id, 'orientation');
-  await done(id, 'product_tasting');
-  const body = { final_brand_id: brandB.id, confirmation_method: 'written', confirmed_on: '2026-11-01', notes: 'Applicant wrote that they prefer the other concept.' };
-  assert.ok((await call('POST', `${path}/brand-confirmation`, { token: sales, body })).json.errors.change_reason, 'a reason is required for a different brand');
-  const first = await call('POST', `${path}/brand-confirmation`, { token: sales, body: { ...body, change_reason: 'Better fit for the location.' } });
-  assert.equal(first.status, 201);
-  assert.equal(first.json.data.retasting_required, true);
-
-  // Return path, then resubmit.
-  assert.ok((await call('POST', `${path}/brand-confirmation/return`, { token: admin, body: {} })).json.errors.reason);
-  assert.equal((await call('POST', `${path}/brand-confirmation/return`, { token: admin, body: { reason: 'Attach the written note first.' } })).status, 200);
-  const second = await call('POST', `${path}/brand-confirmation`, { token: sales, body: { ...body, change_reason: 'Better fit for the location.' } });
-  assert.equal(second.status, 201);
-
-  const blocked = await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: { confirmed: true } });
-  assert.match(blocked.json.errors.brand_confirmation[0], /was not tasted yet/);
-  // Set Again now targets a new Product Tasting for the chosen brand.
-  const retaste = await call('POST', `${path}/activities/set-again`, { token: admin, body: { starts_at: nextSlot(), duration_minutes: 60 } });
-  assert.equal(retaste.status, 201, JSON.stringify(retaste.json));
-  assert.equal(retaste.json.data.activity_type, 'product_tasting');
-  await q(`update activity_schedules set starts_at = now() - interval '2 hours', ends_at = now() - interval '1 hour' where id = $1`, [retaste.json.data.id]);
-  assert.equal((await call('POST', `/activities/${retaste.json.data.id}/complete`, { token: sales, form: completion() })).status, 200);
-  assert.equal((await call('POST', `/activities/${retaste.json.data.id}/attended`, { token: admin })).status, 200);
-  const confirmed = await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: { confirmed: true } });
-  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.json));
-  assert.equal(Number((await q(`select preferred_brand_id from applicants where id = $1`, [id]))[0].preferred_brand_id), brandB.id);
+  await done(id, 'orientation', brandB.id);
+  const [a] = await q(`select preferred_brand_id, inquiry_brand_id from applicants where id = $1`, [id]);
+  assert.equal(Number(a.preferred_brand_id), brandB.id);
+  assert.equal(Number(a.inquiry_brand_id), brandA.id, 'the inquired brand is kept');
+  const [log] = await events(id, 'brand_selected');
+  assert.equal(Number(log.old_values.preferred_brand_id), brandA.id);
+  assert.equal(Number(log.new_values.preferred_brand_id), brandB.id);
+  assert.match(log.remarks, new RegExp(`from ${brandA.name} to ${brandB.name}`));
+  const report = (await call('GET', `/applicants/${id}/report`, { token: admin })).json.data;
+  assert.equal(report.applicant.inquiry_brand, brandA.name);
+  assert.equal(report.applicant.selected_brand, brandB.name);
 });
 
 test('the inquiry edit cannot overwrite a locked brand; legacy applicants are locked and not blocked', async () => {
@@ -228,8 +209,8 @@ test('the inquiry edit cannot overwrite a locked brand; legacy applicants are lo
 
   // A legacy applicant with a Training already on record is not blocked from rescheduling it.
   const id = await scheduled();
-  await q(`update applicants set milestones = '{"orientation_attended": true, "product_tasting_attended": true}' where id = $1`, [id]);
-  for (const type of ['orientation', 'product_tasting']) {
+  await q(`update applicants set milestones = '{"orientation_attended": true}' where id = $1`, [id]);
+  for (const type of ['orientation']) {
     await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, completed_at, approval_status, scheduled_by_user_id) values ($1, $2, $3, now() - interval '9 days', now() - interval '9 days', 'completed', now() - interval '9 days', 'immediate', $4)`, [id, type, label(type), adminUser.id]);
   }
   await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, approval_status, scheduled_by_user_id, cancelled_at) values ($1, 'training', 'Training', now() - interval '3 days', now() - interval '3 days', 'no_show', 'immediate', $2, null)`, [id, adminUser.id]);

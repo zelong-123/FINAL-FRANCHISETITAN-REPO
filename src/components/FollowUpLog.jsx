@@ -29,24 +29,24 @@ export default function FollowUpLog({ items = [], canAdd = false, busy = false, 
     setOpen(false);
   };
   return (
-    <section className={`ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] ${surfaceClass} text-[14px] leading-[1.5] text-[#c9d0e0]`}>
+    <section className={`ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] ${surfaceClass} light:[background:var(--panel)] light:border-line text-[14px] leading-[1.5] text-[#c9d0e0] light:text-text-secondary`}>
       <div className="flex items-center justify-between gap-3">
-        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">{title}</h3>
-        <small className="text-[#9ba5bd]">{items.length} logged</small>
+        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa] light:text-text">{title}</h3>
+        <small className="text-[#9ba5bd] light:text-muted">{items.length} logged</small>
       </div>
       {!items.length && <p className="m-[8px_0_0] text-muted">No follow-up logged yet.</p>}
       {items.length > 0 && (
         <ul className="m-[10px_0_0] p-0 [list-style:none] grid gap-2">
           {items.map((item) => (
-            <li key={item.id} className="p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] grid gap-[3px]">
-              <span><strong className="text-[#edf0fa]">{FOLLOW_UP_OUTCOMES[item.outcome] || item.outcome}</strong> · {FOLLOW_UP_CHANNELS[item.channel] || item.channel} · {manilaDateTimeLabel(item.contacted_at)}</span>
+            <li key={item.id} className="p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] light:border-line light:[background:var(--panel-2)] grid gap-[3px]">
+              <span><strong className="text-[#edf0fa] light:text-text">{FOLLOW_UP_OUTCOMES[item.outcome] || item.outcome}</strong> · {FOLLOW_UP_CHANNELS[item.channel] || item.channel} · {manilaDateTimeLabel(item.contacted_at)}</span>
               <span>{item.notes}</span>
-              <small className="text-[#8f9bbd]">By {item.by_name || '—'}{item.next_follow_up_at ? ` · Next follow-up: ${manilaDateTimeLabel(item.next_follow_up_at)}` : ''}</small>
+              <small className="text-[#8f9bbd] light:text-muted">By {item.by_name || '—'}{item.next_follow_up_at ? ` · Next follow-up: ${manilaDateTimeLabel(item.next_follow_up_at)}` : ''}</small>
             </li>
           ))}
         </ul>
       )}
-      {canAdd && !open && <button type="button" className="mt-3 min-h-[32px] p-[0_16px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] disabled:opacity-50" disabled={busy} onClick={start}>Log follow-up</button>}
+      {canAdd && !open && <button type="button" className="mt-3 min-h-[32px] p-[0_16px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] light:bg-white light:text-text-secondary light:border-line-strong text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] light:hover:bg-[#f1f4fb] disabled:opacity-50" disabled={busy} onClick={start}>Log follow-up</button>}
       {canAdd && form && (
         <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`} aria-hidden={!open}>
         <div className="min-h-0 overflow-hidden">

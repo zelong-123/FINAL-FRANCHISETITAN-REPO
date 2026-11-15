@@ -13,8 +13,9 @@ import { notifyRoles } from '../services/notifications.ts';
 import { APPLICANT_MODEL } from '../services/applicantModel.ts';
 import { fileRef, logEvent } from '../services/applicantStage.ts';
 import { assertAssignedSales, notifyAssignedSales, requireReason } from '../services/accountability.ts';
+import { formatLocation, sameCity } from '../services/psgc.ts';
 import {
-  interviewerOptions, legacyStage, loadRequirementRows, loiRequirement, readFields, REQUIREMENT_MODEL, REQUIREMENT_STAGES, requirementDef, requirementsConfig, REQUIREMENTS,
+  interviewerOptions, legacyStage, readLocationFields, loadRequirementRows, loiRequirement, readFields, REQUIREMENT_MODEL, REQUIREMENT_STAGES, requirementDef, requirementsConfig, REQUIREMENTS,
 } from '../services/requirements.ts';
 
 export const requirementRoutes = new Hono<AppEnv>();
@@ -39,6 +40,22 @@ const loadDef = (c: Context<AppEnv>) => {
 export const canSeeRequirementFiles = (user: Row, a: Row) => user.role?.name === 'admin'
   || (user.role?.name === 'sales' && Number(a.assigned_sales_user_id) === Number(user.id));
 
+/**
+ * Proposed site: the formatted location, the prefill (the applicant's preferred franchise location,
+ * none when there is no preferred location yet) and the non-blocking "different from preferred" note.
+ */
+function siteLocation(a: Row, row: Row | undefined): Row {
+  const preferred = !a.no_preferred_location && a.preferred_location?.city_code ? a.preferred_location : null;
+  const site = row?.data?.location ?? null;
+  const different = Boolean(site?.city_code && preferred && !sameCity(site, preferred));
+  return {
+    location_text: formatLocation(site) ?? (row?.data?.address ? String(row.data.address) : null),
+    location_prefill: preferred ? { province_code: preferred.province_code, province: preferred.province, city_code: preferred.city_code, city: preferred.city } : null,
+    preferred_location_text: preferred ? formatLocation({ city: preferred.city, province: preferred.province }) : null,
+    location_note: different ? `Different from preferred location (${formatLocation({ city: preferred.city, province: preferred.province })})` : null,
+  };
+}
+
 /** The requirements block of the applicant payload: config, every item, legacy flags, LOI. */
 export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Row> {
   const rows = await db.query(
@@ -59,6 +76,7 @@ export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Ro
       reviewed_by: row?.reviewed_by ?? null, reviewed_at: row?.reviewed_at ?? null, return_reason: row?.return_reason ?? null,
       // Admin sees only the current files; Sales keeps the replaced ones as history, marked Replaced.
       files: showFiles ? files.filter((d) => row && Number(d.documentable_id) === Number(row.id) && (user.role?.name === 'sales' || !d.replaced_at)) : null,
+      ...(def.fields.some((f) => f.type === 'location') ? siteLocation(a, row) : {}),
     };
   });
   const summary: Row = {};
@@ -104,7 +122,7 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key', staff, async 
 
   const input = await readInput(c);
   const choices = def.key === 'initial_interview' ? { interviewer: await interviewerOptions(db) } : {};
-  const data = readFields(def, input, choices);
+  const data = { ...readFields(def, input, choices), ...(await readLocationFields(db, def, input)) };
   const uploads = Object.fromEntries(def.files.map((slot) => [slot.key, filesFor(input, slot)]));
   const existing = current ? await db.query(
     `select id, type, original_name from documents where documentable_type = $1 and documentable_id = $2 and replaced_at is null and removed_at is null`, [REQUIREMENT_MODEL, current.id],

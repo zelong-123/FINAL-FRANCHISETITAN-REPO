@@ -3,13 +3,14 @@
 import type { Db, Row } from '../../lib/db.ts';
 import { fail } from '../../lib/http.ts';
 import { activityLabel, assertPreviousActivityDone } from '../pipeline.ts';
-import { retastingSince } from '../brandConfirmation.ts';
 
 const OFFSET_MS = 8 * 3600_000;
 export const MINUTE = 60_000;
 export const VENUE_OPTIONS = ['Main Office (In-person)', 'Virtual'];
-export const TRACKED_TYPES = ['orientation', 'product_tasting', 'training'];
-export const DEFAULT_DURATION: Record<string, number> = { orientation: 120, product_tasting: 120, training: 180 };
+export const TRACKED_TYPES = ['orientation', 'training'];
+export const DEFAULT_DURATION: Record<string, number> = { orientation: 120, training: 180 };
+/** The same Sales user needs this many minutes between two sessions on the same day. */
+export const HANDLER_BUFFER_MINUTES = 60;
 export const NEAR_GAP_MINUTES = 30;
 const OPENS = 9 * 60;
 const CLOSES = 18 * 60;
@@ -104,7 +105,11 @@ export function resolveWindow(startsAt: Date, durationMinutes: number | null, en
   return { starts_at: startsAt, ends_at: end, duration_minutes: minutes };
 }
 
-export const sessionCapacity = (type: string) => ({ orientation: 30, product_tasting: 15, training: 10 } as Record<string, number>)[type] ?? 0;
+export const sessionCapacity = (type: string) => ({ orientation: 5, training: 10 } as Record<string, number>)[type] ?? 0;
+/** "2/5", or "5/5 · Full" when no seat is left. */
+export const occupancyLabel = (taken: number, capacity: number) => `${taken}/${capacity}${capacity > 0 && taken >= capacity ? ' · Full' : ''}`;
+/** An older session may carry a larger stored capacity: the current rule wins for new seats. */
+export const capacityOf = (session: Row) => Math.min(Number(session.max_capacity ?? 0) || sessionCapacity(session.activity_type), sessionCapacity(session.activity_type) || Number(session.max_capacity ?? 0));
 
 /** One lock per touched calendar day, sorted so two writers never deadlock. Needs a transaction. */
 export async function acquireDayLocks(tx: Db, moments: unknown[]) {
@@ -119,8 +124,7 @@ async function sessionRows(db: Db, type: string, startsAt: Date, brandId: number
   return db.query<{ n: number }>(
     `select count(*)::int as n from activity_schedules s
      where s.activity_type = $1 and s.starts_at = $2 and s.session_key = $3 and s.status <> 'cancelled' and s.approval_status <> 'rejected'
-       and ($4::bigint is null or s.id <> $4::bigint)
-       and ($1 <> 'product_tasting' or exists (select 1 from applicants a where a.id = s.applicant_id and a.preferred_brand_id = $5::bigint))`,
+       and ($4::bigint is null or s.id <> $4::bigint) and $5::bigint is not distinct from $5::bigint`,
     [type, startsAt, sessionKey, ignoreId, brandId],
   );
 }
@@ -135,7 +139,7 @@ export async function assertCapacity(db: Db, type: string, startsAt: Date, brand
   if (sessionCapacity(type) <= 0) return;
   const o = await sessionOccupancy(db, type, startsAt, brandId, ignoreId, sessionKey);
   if (!o.full) return;
-  fail('starts_at', `Session full: ${activityLabel(type)}${type === 'product_tasting' ? ' for this brand' : ''} on ${longDateTime(startsAt)} already has ${o.capacity}/${o.capacity} applicants.`);
+  fail('starts_at', `Session full: ${activityLabel(type)} on ${longDateTime(startsAt)} already has ${o.capacity}/${o.capacity} applicants.`);
 }
 
 export async function assertNoConflict(db: Db, applicantId: number, startsAt: Date, endsAt: Date, ignoreId: number | null = null) {
@@ -153,8 +157,8 @@ export async function assertNoConflict(db: Db, applicantId: number, startsAt: Da
 
 export async function assertSlotFree(db: Db, applicantId: number, type: string, ignoreId: number | null = null) {
   if (!TRACKED_TYPES.includes(type)) return;
-  // A No Show leaves the slot free for Set Again; a re-tasting for a new brand only looks at rows since it started.
-  const since = type === 'product_tasting' ? await retastingSince(db, applicantId) : null;
+  // A No Show leaves the slot free for Set Again.
+  const since = null;
   const [existing] = await db.query(
     `select status from activity_schedules where applicant_id = $1 and activity_type = $2 and status not in ('cancelled', 'no_show') and approval_status <> 'rejected'
      and ($3::bigint is null or id <> $3::bigint) and ($4::timestamptz is null or created_at >= $4::timestamptz) order by id desc limit 1`,
@@ -176,10 +180,8 @@ export async function assertNoPendingRequest(db: Db, applicantId: number) {
 }
 
 export async function assertNotPreviouslyCompleted(db: Db, applicantId: number, type: string, ignoreId: number | null = null) {
-  // A re-tasting for a newly chosen brand is the one allowed repeat of a completed activity.
-  if (type === 'product_tasting' && await retastingSince(db, applicantId)) return;
   const completed = await db.query(`select 1 from activity_schedules where applicant_id = $1 and activity_type = $2 and status = 'completed' and ($3::bigint is null or id <> $3::bigint) limit 1`, [applicantId, type, ignoreId]);
-  const key = ({ orientation: 'orientation_attended', product_tasting: 'product_tasting_attended', training: 'training_completed' } as Row)[type];
+  const key = ({ orientation: 'orientation_attended', training: 'training_completed' } as Row)[type];
   const [a] = await db.query(`select milestones from applicants where id = $1`, [applicantId]);
   if (completed.length || (key && a?.milestones?.[key])) fail('activity_type', 'This activity has already been completed and cannot be scheduled again.');
 }

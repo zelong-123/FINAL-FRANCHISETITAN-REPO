@@ -7,6 +7,7 @@ import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { requirementForm } from '../support/requirements.ts';
 import { requirementsOf } from '../../supabase/functions/api/services/requirements.ts';
 import { createStaff, firstSignIn } from '../support/accounts.ts';
+import { orientationForm, viewAll } from '../support/orientation.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -97,26 +98,21 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
 
   // ---- Scheduled Activities ----
   const book = async (type: string, title: string) => okay(`book ${type}`, await call('POST', '/activities', { token: admin, body: { applicant_id: id, activity_type: type, title, starts_at: slot(), duration_minutes: 60, venue: 'Virtual' } }), 201).data.id;
-  const orientation = await book('orientation', 'Orientation');
-  blocked('Complete before the scheduled start', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: completion() }));
+  const orientation = await book('orientation', 'Orientation/Tasting');
+  const tastingForm = (o: any = {}) => orientationForm({ brandId: brand.id, overrides: { handler_name: 'Walk Sales Two' }, ...o });
+  blocked('Complete before the scheduled start', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm() }));
   await past(orientation);
-  const noProof = completion();
-  noProof.delete('proof');
-  blocked('Complete without attendance proof', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: noProof }));
-  okay('Complete orientation', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: completion() }));
-  blocked('Sales marks its own completion Attended', await call('POST', `/activities/${orientation}/attended`, { token: sales }), 403);
-  okay('Attended orientation', await call('POST', `/activities/${orientation}/attended`, { token: admin }));
-  blocked('Brand Confirmation before Product Tasting is done', await call('POST', `${path}/brand-confirmation`, { token: sales, body: { final_brand_id: brand.id, confirmation_method: 'in_person', confirmed_on: '2026-11-01', notes: 'Too early.' } }));
-  const tasting = await book('product_tasting', 'Product Tasting');
-  await past(tasting);
-  okay('Complete tasting', await call('POST', `/activities/${tasting}/complete`, { token: sales, form: completion() }));
-  okay('Attended tasting', await call('POST', `/activities/${tasting}/attended`, { token: admin }));
-  blocked('Training before the brand is confirmed', await call('POST', '/activities', { token: admin, body: { applicant_id: id, activity_type: 'training', title: 'Training', starts_at: slot(), duration_minutes: 60, venue: 'Virtual' } }));
-  const brandBody = { final_brand_id: brand.id, confirmation_method: 'in_person', confirmed_on: new Date().toISOString().slice(0, 10), notes: 'Confirmed in person after the tasting.' };
-  blocked('Admin submits the Brand Confirmation for Sales', await call('POST', `${path}/brand-confirmation`, { token: admin, body: brandBody }), 403);
-  okay('Sales submits the final brand', await call('POST', `${path}/brand-confirmation`, { token: sales, body: brandBody }), 201);
-  blocked('Sales confirms the brand', await call('POST', `${path}/brand-confirmation/confirm`, { token: sales, body: { confirmed: true } }), 403);
-  okay('Admin confirms the brand', await call('POST', `${path}/brand-confirmation/confirm`, { token: admin, body: { confirmed: true } }));
+  blocked('Complete without attendance proof', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm({ attendance: 0 }) }));
+  blocked('Complete without the brand selection document', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm({ brandDocs: 0 }) }));
+  blocked('Complete without the selected brand', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm({ brandId: null }) }));
+  blocked('Complete with 11 attendance files', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm({ attendance: 11 }) }));
+  const submitted = okay('Complete Orientation/Tasting', await call('POST', `/activities/${orientation}/complete`, { token: sales, form: tastingForm({ attendance: 2 }) })).data;
+  blocked('Sales verifies its own completion', await call('POST', `/activities/${orientation}/attended`, { token: sales }), 403);
+  blocked('Verify before opening every file', await call('POST', `/activities/${orientation}/attended`, { token: admin }));
+  blocked('Training before Orientation/Tasting is verified', await call('POST', '/activities', { token: admin, body: { applicant_id: id, activity_type: 'training', title: 'Training', starts_at: slot(), duration_minutes: 60, venue: 'Virtual' } }));
+  blocked('the retired Brand Confirmation', await call('POST', `${path}/brand-confirmation`, { token: sales, body: { final_brand_id: brand.id, confirmation_method: 'in_person', confirmed_on: '2026-11-01', notes: 'Not a step any more.' } }));
+  await viewAll(call, admin, orientation, submitted.proof_documents);
+  okay('Verify Orientation/Tasting', await call('POST', `/activities/${orientation}/attended`, { token: admin }));
   blocked('change a locked brand', await call('PUT', path, { token: admin, body: { preferred_brand_id: brand.id + 1 } }));
   const training = await book('training', 'Training');
   await past(training);
@@ -137,33 +133,38 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   scan.set('submission_date', new Date().toISOString().slice(0, 10));
   okay('Sales uploads the scan', await call('POST', `${path}/loi`, { token: sales, form: scan }), 201);
   okay('Admin verifies', await call('POST', `${path}/loi`, { token: admin, form: verify() }));
+  blocked('Complete LOI before the Proposed site is verified', await call('POST', `${path}/loi/complete`, { token: admin, body: {} }));
+  blocked('Proposed site without photos', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi', { site_photos: null }) }));
+  okay('Sales submits the Proposed site', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi') }), 201);
+  okay('Admin verifies the Proposed site', await call('POST', `${path}/requirements/proposed_site/accept`, { token: admin, body: {} }));
   assert.equal(okay('Complete LOI', await call('POST', `${path}/loi/complete`, { token: admin, body: { remarks: 'LOI verified.' } })).data.status, 'payment_submitted');
 
-  // ---- Payment Record ----
-  const entry = (amount: number, or: string, withReceipt = true) => {
+  // ---- Payment Record (no amounts: required payments, verified by Admin) ----
+  const entry = (requiredId: number, or: string, withReceipt = true) => {
     const f = new FormData();
+    f.set('required_payment_id', String(requiredId));
     f.set('payment_date', new Date().toISOString().slice(0, 10));
-    f.set('amount', String(amount));
     f.set('payment_method', 'bank_transfer');
     f.set('or_number', or);
     f.set('reference_number', `BT-${or}`);
     if (withReceipt) f.set('receipt', pdf('sample-receipt.pdf'));
     return f;
   };
-  blocked('record a payment before the Agreed Package Amount', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(1000, 'OR-W-0') }));
-  okay('Agreed Package Amount', await call('PATCH', `${path}/payment-plan`, { token: admin, body: { agreed_amount: 50000, package_name: 'Kiosk package', source: 'Signed LOI' } }));
-  blocked('a payment without a receipt', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-W-1', false) }));
-  blocked('more than the Agreed Package Amount', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(60000, 'OR-W-1') }));
-  const first = okay('first payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-W-1') }), 201).data.entry;
-  blocked('the same OR number again', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(10000, 'OR-W-1') }));
-  blocked('Sales verifies its own payment', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: sales, body: {} }), 403);
-  okay('verify first', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: {} }));
-  blocked('COMPLETED before Fully Paid', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
-  blocked('edit a submitted payment', await call('PATCH', `${path}/payments/${first.id}`, { token: sales, body: { amount: 1 } }));
-  const second = okay('second payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(30000, 'OR-W-2') }), 201).data.entry;
-  okay('verify second', await call('POST', `${path}/payment-entries/${second.id}/verify`, { token: admin, body: {} }));
-  const paidAlerts = await q(`select user_id from system_notifications where type = 'payment_fully_paid' and (data->>'applicant_id')::bigint = $1`, [id]);
-  assert.ok(paidAlerts.some((r) => Number(r.user_id) === salesUser.id), 'Fully Paid reaches the (new) assigned Sales user');
+  blocked('COMPLETED before any required payment is set', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
+  blocked('Sales sets the required payments', await call('PUT', `${path}/required-payments`, { token: sales, body: { preset: 'reservation_full' } }), 403);
+  const required = okay('required payments', await call('PUT', `${path}/required-payments`, { token: admin, body: { preset: 'reservation_full', basis_note: 'Kiosk package, per signed LOI' } })).data.required;
+  const [reservationId, fullId] = required.map((r: any) => r.id);
+  blocked('a payment without a receipt', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-W-1', false) }));
+  const first = okay('first payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-W-1') }), 201).data.entry;
+  blocked('the same OR number again', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-1') }));
+  blocked('Sales verifies its own payment', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: sales, body: { revision: first.revision } }), 403);
+  okay('verify first', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: { revision: first.revision } }));
+  blocked('COMPLETED before every required payment is Verified', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
+  blocked('edit a payment through the old endpoint', await call('PATCH', `${path}/payments/${first.id}`, { token: sales, body: { amount: 1 } }));
+  const second = okay('second payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-2') }), 201).data.entry;
+  okay('verify second', await call('POST', `${path}/payment-entries/${second.id}/verify`, { token: admin, body: { revision: second.revision } }));
+  const verifiedAlerts = await q(`select user_id from system_notifications where type = 'payment_entry_verified' and (data->>'applicant_id')::bigint = $1`, [id]);
+  assert.ok(verifiedAlerts.some((r) => Number(r.user_id) === salesUser.id), 'the Sales user who encoded the entry is told it was verified');
   assert.equal(okay('COMPLETED', await call('POST', `${path}/payments/complete`, { token: admin, body: {} })).data.status, 'for_approval');
 
   // ---- Approval ----

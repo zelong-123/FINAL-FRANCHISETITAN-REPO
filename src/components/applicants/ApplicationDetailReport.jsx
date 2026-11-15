@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { FaChevronLeft, FaChevronRight, FaFileCsv, FaFileLines, FaFilePdf, FaImage, FaLock, FaPrint, FaXmark } from 'react-icons/fa6';
 import { API_BASE_URL, authToken } from '../../lib/api';
 import { downloadCsv, downloadPdf } from '../../lib/export';
+import { formatLocation, locationPlain } from '../../lib/locations';
+import LocationValue from '../LocationValue';
 import { formatDate, manilaDateTimeLabel, titleCase } from '../../lib/format';
 
 /*
@@ -21,7 +23,9 @@ const PAGES = [
 const STAGE_ORDER = ['converted', 'qualified', 'scheduled', 'loi_submitted', 'payment_submitted', 'for_approval', 'approved', 'active_franchisee'];
 // The applicant stage at which each page starts (Overview and History always apply).
 const PAGE_FROM = { qualification: 'converted', activities: 'scheduled', loi: 'loi_submitted', payment: 'payment_submitted', approval: 'for_approval' };
-const ACTIVITY_LABELS = { orientation: 'Orientation', product_tasting: 'Product Tasting', training: 'Training' };
+// Orientation and Product Tasting are one activity: Orientation/Tasting (older Product Tasting rows read the same).
+const ACTIVITY_LABELS = { orientation: 'Orientation/Tasting', product_tasting: 'Orientation/Tasting', training: 'Training' };
+const brandLine = (a) => `Inquired brand: ${a.inquiry_brand || '—'} · Selected brand: ${a.selected_brand || '—'}`;
 const REQ_STATUS = { pending: 'Pending', submitted: 'Submitted', accepted: 'Accepted', returned: 'Returned' };
 const TONE = {
   done: 'text-[#45d991] border-[rgba(69,_217,_145,_.45)]',
@@ -30,7 +34,6 @@ const TONE = {
   warn: 'text-[#fbbf24] border-[rgba(251,_191,_36,_.45)]',
   bad: 'text-[#ff888e] border-[rgba(255,_136,_142,_.5)]',
 };
-const peso = (v) => (v === null || v === undefined ? null : `₱${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const when = (v) => (v ? manilaDateTimeLabel(v) : null);
 const day = (v) => (v ? formatDate(v) : null);
 const nameOf = (person) => person?.full_name || null;
@@ -162,6 +165,9 @@ function changeText(entry) {
 export default function ApplicationDetailReport({ report, onClose }) {
   const data = report?.data;
   const [index, setIndex] = useState(0);
+  // Direction of the last Back/Next move: drives the slide-in of the section content.
+  const [slideDir, setSlideDir] = useState(1);
+  const goTo = (next) => { setSlideDir(next < index ? -1 : 1); setIndex(next); };
   const [historyPage, setHistoryPage] = useState('');
   const [printAll, setPrintAll] = useState(false);
 
@@ -220,7 +226,10 @@ export default function ApplicationDetailReport({ report, onClose }) {
         <Badge tone={{ accepted: 'done', submitted: 'current', returned: 'warn' }[item.status] || 'waiting'}>{REQ_STATUS[item.status] || item.status}</Badge>
       </div>
       <Pairs rows={[
-        ...def.fields.map((field) => [field.label, field.type === 'date' ? day(item.data?.[field.key]) : (field.options?.find((o) => o.value === item.data?.[field.key])?.label ?? item.data?.[field.key])]),
+        ...def.fields.map((field) => [field.label, field.type === 'location'
+          ? (item.data?.[field.key]?.city_code ? formatLocation(item.data[field.key]) : <LocationValue loc={null} legacy={item.data?.address} />)
+          : field.type === 'date' ? day(item.data?.[field.key]) : (field.options?.find((o) => o.value === item.data?.[field.key])?.label ?? item.data?.[field.key])]),
+        item.location_note && ['Note', item.location_note],
         ['Submitted by', item.submitted_at ? `${nameOf(item.submitted_by) || '—'} · ${when(item.submitted_at)}` : 'Not submitted yet'],
         item.reviewed_at && [item.status === 'returned' ? 'Returned by' : 'Accepted by', `${nameOf(item.reviewed_by) || '—'} · ${when(item.reviewed_at)}`],
         item.status === 'returned' && ['Return reason', item.return_reason],
@@ -229,16 +238,22 @@ export default function ApplicationDetailReport({ report, onClose }) {
     </Card>
   ));
 
+  // Only structured locations; the old typed text only when none exists (flagged "legacy").
+  const residenceValue = <LocationValue loc={a?.residence_location} legacy={a?.address_text ?? a?.address} />;
+  const preferredValue = <LocationValue loc={a?.preferred_location} legacy={a?.preferred_location_text} noneMarked={a?.no_preferred_location} />;
+
   const pages = {
     overview: () => (
       <>
         <Card title="Applicant">
           <Pairs rows={[
             ['Name', a.full_name], ['Applicant ID', a.applicant_code], ['Lead ID', a.lead_code || 'No source lead (added directly)'],
-            ['Email', a.email], ['Phone', a.phone], ['Address', a.address], ['Date applied', day(a.application_date)],
+            ['Email', a.email], ['Phone', a.phone], ['Current residence', residenceValue],
+            ['Preferred franchise location', preferredValue], ['Date applied', day(a.application_date)],
             ['Brand', a.preferred_brand?.name ? (
               <span className="inline-flex items-center gap-2">{a.preferred_brand.name}{data.brand_confirmation?.locked && <><FaLock aria-hidden="true" /> {data.brand_confirmation.legacy ? 'Locked (legacy)' : 'Locked'}</>}</span>
             ) : null],
+            (a.inquiry_brand || a.selected_brand) && ['Brand selection', brandLine(a)],
             ['Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned'],
             ['Current stage', a.status_label],
             ['Time in this stage', data.monitor ? (
@@ -271,6 +286,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
             <Pairs rows={[
               ['Status', summary?.legacy ? 'Legacy record - requirements not captured' : summary?.complete ? 'Every requirement accepted' : `Missing: ${(summary?.missing || []).join(', ')}`],
               ['Confirmed Qualified by', data.people?.qualified_by ? `${nameOf(data.people.qualified_by)} · ${when(data.qualification?.qualified_at) || ''}` : null],
+              ['Current residence', residenceValue], ['Preferred franchise location', preferredValue],
             ]} />
           </Card>
           {!summary?.legacy && renderRequirementCards('qualification')}
@@ -285,11 +301,11 @@ export default function ApplicationDetailReport({ report, onClose }) {
     activities: () => {
       if (!reached('activities')) return <NotStarted note="Activities start once Admin clicks Set Schedule." />;
       const rows = data.activity_rows || [];
-      const bc = data.brand_confirmation;
       return (
         <>
-          {['orientation', 'product_tasting', 'training'].map((type) => {
-            const own = rows.filter((r) => r.activity_type === type && r.approval_status !== 'rejected');
+          {(a.inquiry_brand || a.selected_brand) && <p className="m-0 text-[14px] text-[#c9d0e0]">{brandLine(a)}</p>}
+          {['orientation', 'training'].map((type) => {
+            const own = rows.filter((r) => (r.activity_type === type || (type === 'orientation' && r.activity_type === 'product_tasting')) && r.approval_status !== 'rejected');
             return (
               <Card key={type} title={ACTIVITY_LABELS[type]}>
                 {!own.length && <p className="m-0 text-[14px] text-[#c9d0e0]"><strong>Not started yet</strong></p>}
@@ -297,7 +313,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
                   <div key={r.id} className="grid gap-2 [&+&]:mt-3 [&+&]:pt-3 [&+&]:border-t [&+&]:border-t-[#2a3041]">
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={r.status === 'completed' ? (r.review_status === 'accepted' || r.legacy_completion ? 'done' : 'current') : r.status === 'no_show' ? 'bad' : r.review_status === 'returned' ? 'warn' : 'waiting'}>
-                        {r.status === 'no_show' ? 'No Show' : r.review_status === 'accepted' ? 'Attended (accepted)' : r.review_status === 'returned' ? 'Returned to Sales' : titleCase(r.status)}
+                        {r.status === 'no_show' ? 'No Show' : r.review_status === 'accepted' ? (r.activity_type === 'orientation' && r.selected_brand_name ? 'Verified' : 'Attended (accepted)') : r.review_status === 'returned' ? 'Returned to Sales' : titleCase(r.status)}
                       </Badge>
                       {r.completed_before_schedule && <Badge tone="warn">Completed before schedule (legacy)</Badge>}
                     </div>
@@ -306,35 +322,27 @@ export default function ApplicationDetailReport({ report, onClose }) {
                       r.actual_started_at && ['Actual date and time', when(r.actual_started_at)],
                       r.handler_name && ['Handled by', r.handler_name],
                       r.tasted_brand_name && ['Brand tasted', r.tasted_brand_name],
+                      r.selected_brand_name && ['Selected brand', r.selected_brand_name],
                       r.result_notes && ['Notes', r.result_notes],
                       r.no_show_reason && ['No Show reason', r.no_show_reason],
                       r.completion_submitted_at && ['Completed by (Sales)', `${nameOf(r.completion_submitted_by) || '—'} · ${when(r.completion_submitted_at)}`],
-                      r.reviewed_at && [r.review_status === 'returned' ? 'Returned by (Admin)' : 'Marked Attended by (Admin)', `${nameOf(r.reviewed_by) || '—'} · ${when(r.reviewed_at)}`],
+                      r.reviewed_at && [r.review_status === 'returned' ? 'Returned by (Admin)' : r.selected_brand_name ? 'Verified by (Admin)' : 'Marked Attended by (Admin)', `${nameOf(r.reviewed_by) || '—'} · ${when(r.reviewed_at)}`],
                       r.review_status === 'returned' && ['Return reason', r.return_reason],
                     ]} />
-                    <Files label="Attendance proof" items={r.proof_documents === null ? null : (r.proof_documents || []).map((d) => ({
-                      key: `p${d.id}`, name: d.original_name, mime: d.mime_type, note: d.replaced_at ? 'Replaced' : '', path: `/activities/${r.id}/documents/${d.id}/download`,
-                    }))} />
+                    {[['Attendance proof', (d) => d.type !== 'brand_selection'], ['Brand selection document', (d) => d.type === 'brand_selection']].map(([label, keep]) => {
+                      const docs = r.proof_documents === null ? null : (r.proof_documents || []).filter(keep);
+                      if (docs !== null && !docs.length && label !== 'Attendance proof') return null;
+                      return (
+                        <Files key={label} label={label} items={docs === null ? null : docs.map((d) => ({
+                          key: `p${d.id}`, name: d.original_name, mime: d.mime_type, note: d.replaced_at ? 'Replaced' : '', path: `/activities/${r.id}/documents/${d.id}/download`,
+                        }))} />
+                      );
+                    })}
                   </div>
                 ))}
               </Card>
             );
           })}
-          <Card title="Brand Confirmation">
-            {bc?.legacy && <p className="m-0 text-[14px] text-[#fbbf24]">Legacy - brand confirmation not captured. The brand is locked.</p>}
-            {!bc?.legacy && !bc?.current && <p className="m-0 text-[14px] text-[#c9d0e0]"><strong>Not started yet</strong></p>}
-            {bc?.current && (
-              <Pairs rows={[
-                ['Status', bc.confirmed ? <span className="inline-flex items-center gap-2"><FaLock aria-hidden="true" /> Confirmed and locked</span> : REQ_STATUS[bc.current.status] || titleCase(bc.current.status)],
-                ['Final brand', bc.current.final_brand?.name], ['Brand tasted', bc.current.tasted_brand?.name],
-                ['How the applicant confirmed', titleCase(String(bc.current.confirmation_method || '').replace(/_/g, ' '))], ['Date confirmed', day(bc.current.confirmed_on)],
-                ['Notes', bc.current.notes], bc.current.change_reason && ['Reason for the change', bc.current.change_reason],
-                ['Submitted by (Sales)', `${nameOf(bc.current.submitted_by) || '—'} · ${when(bc.current.submitted_at)}`],
-                bc.confirmed && ['Confirmed by (Admin)', `${bc.locked_by || '—'} · ${when(bc.locked_at)}`],
-                bc.current.status === 'returned' && ['Return reason', bc.current.return_reason],
-              ]} />
-            )}
-          </Card>
         </>
       );
     },
@@ -360,6 +368,9 @@ export default function ApplicationDetailReport({ report, onClose }) {
               note: d.removed_at ? `Removed${d.removed_reason ? `: ${d.removed_reason}` : ''}` : d.replaced_at ? 'Replaced' : '',
             }))} />
           </Card>
+          {data.requirements?.summary?.loi?.legacy
+            ? <Card title="Proposed site"><p className="m-0 text-[14px] text-[#fbbf24]">Legacy record - requirements not captured.</p></Card>
+            : renderRequirementCards('loi')}
         </>
       );
     },
@@ -367,35 +378,38 @@ export default function ApplicationDetailReport({ report, onClose }) {
       if (!reached('payment')) return <NotStarted />;
       const record = data.payment_record;
       if (!record) return <NotStarted />;
+      const entryCard = (p, title) => (
+        <Card key={p.id} title={title} tone={p.status === 'rejected' ? 'warn' : undefined}>
+          <Pairs rows={[
+            ['Status', p.status_label], ['Date paid', day(p.payment_date)], ['Method', p.payment_method_label],
+            ['OR / AR number', p.or_number], ['Reference number', p.reference_number],
+            ['Encoded by (Sales)', `${p.recorded_by || '—'}${p.recorded_at ? ` · ${when(p.recorded_at)}` : ''}`],
+            p.verified_by && ['Verified by (Admin)', `${p.verified_by} · ${when(p.verified_at)}`],
+            p.rejected_by && ['Rejected by (Admin)', `${p.rejected_by} · ${when(p.rejected_at)}`],
+            p.rejected_reason && ['Rejection reason', p.rejected_reason],
+            p.remarks && ['Remarks', p.remarks],
+          ]} />
+          {p.legacy_no_receipt
+            ? <p className="m-[8px_0_0] text-[13px] text-[#fbbf24]">Legacy - no receipt captured</p>
+            : <Files label="Receipt" items={p.receipts === null ? null : (p.receipts || []).map((d) => ({ key: `pay${d.id}`, name: d.original_name, mime: d.mime_type, path: `/applicants/${a.id}/payments/${p.id}/documents/${d.id}/download` }))} />}
+        </Card>
+      );
       return (
         <>
           <Card title="Payment Record">
-            <p className="m-[0_0_10px] text-[13px] text-[#9aa6c4]">Payments made outside the system, recorded here. The status comes only from Verified entries.</p>
+            <p className="m-[0_0_10px] text-[13px] text-[#9aa6c4]">{record.note}</p>
             <Pairs rows={[
-              ['Status', <Badge key="s" tone={{ fully_paid: 'done', partially_paid: 'current' }[record.status] || 'waiting'}>{record.status_label}</Badge>],
-              ['Agreed Package Amount', record.agreed_amount === null ? 'Not set yet' : `${peso(record.agreed_amount)}${record.package_name ? ` · ${record.package_name}` : ''}${record.source ? ` · from ${record.source}` : ''}`],
-              ['Verified', peso(record.verified_amount)], ['Waiting for review', peso(record.pending_amount)], ['Remaining', peso(record.remaining_amount)],
-              record.legacy_discount && ['Earlier discount (read-only)', `${record.legacy_discount.discount_percent}% off ${peso(record.legacy_discount.original_amount)}`],
+              ['Status', <Badge key="s" tone={{ completed: 'done', for_verification: 'current' }[record.badge] || 'waiting'}>{record.badge_label}</Badge>],
+              ['Required payments', record.required_count ? `${record.verified_count} of ${record.required_count} verified` : (record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet')],
               ['Confirmed by (Admin)', data.people?.payment_confirmed_by ? nameOf(data.people.payment_confirmed_by) : null],
             ]} />
           </Card>
-          {(record.entries || []).map((p, i) => (
-            <Card key={p.id} title={`Entry ${i + 1} · ${peso(p.amount)}`} tone={p.status === 'returned' ? 'warn' : undefined}>
-              <Pairs rows={[
-                ['Status', p.status_label], ['Date paid', day(p.payment_date)], ['Method', p.payment_method_label],
-                ['OR / AR number', p.or_number], ['Reference number', p.reference_number],
-                ['Recorded by (Sales)', `${p.recorded_by || '—'}${p.recorded_at ? ` · ${when(p.recorded_at)}` : ''}`],
-                p.verified_by && ['Verified by (Admin)', `${p.verified_by} · ${when(p.verified_at)}`],
-                p.status === 'returned' && ['Returned by (Admin)', `${p.returned_by || '—'} · ${when(p.returned_at)}`],
-                p.status === 'returned' && ['Return reason', p.returned_reason],
-                p.remarks && ['Remarks', p.remarks],
-              ]} />
-              {p.legacy_no_receipt
-                ? <p className="m-[8px_0_0] text-[13px] text-[#fbbf24]">Legacy - no receipt captured</p>
-                : <Files label="Receipt" items={p.receipts === null ? null : (p.receipts || []).map((d) => ({ key: `pay${d.id}`, name: d.original_name, mime: d.mime_type, path: `/applicants/${a.id}/payments/${p.id}/documents/${d.id}/download` }))} />}
-            </Card>
-          ))}
-          {!(record.entries || []).length && <Card><p className="m-0 text-[14px] text-[#c9d0e0]">No payment recorded yet.</p></Card>}
+          {(record.required || []).map((item) => (item.entry
+            ? entryCard(item.entry, `${item.name} · ${item.status_label}`)
+            : <Card key={`r${item.id}`} title={`${item.name} · ${item.status_label}`}><p className="m-0 text-[14px] text-[#c9d0e0]">Not yet recorded.</p></Card>))}
+          {(record.required || []).flatMap((item) => (item.history || []).map((h) => entryCard(h, `${item.name} · earlier submission`)))}
+          {(record.earlier_entries || []).map((p, i) => entryCard(p, `Earlier entry ${i + 1} (before required payments)`))}
+          {!(record.required || []).length && !(record.earlier_entries || []).length && <Card><p className="m-0 text-[14px] text-[#c9d0e0]">No payment recorded yet.</p></Card>}
         </>
       );
     },
@@ -460,13 +474,24 @@ export default function ApplicationDetailReport({ report, onClose }) {
   const exportReport = (kind) => {
     if (!data) return;
     const rows = [['Overview', 'Applicant ID', a.applicant_code || ''], ['Overview', 'Name', a.full_name], ['Overview', 'Current stage', a.status_label],
-      ['Overview', 'Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned']];
+      ['Overview', 'Assigned Sales', nameOf(data.people?.assigned_sales) || 'Unassigned'],
+      ['Overview', 'Current residence', locationPlain(a.residence_location, a.address_text ?? a.address)],
+      ['Overview', 'Preferred franchise location', locationPlain(a.preferred_location, a.preferred_location_text, a.no_preferred_location)]];
+    if (a.inquiry_brand || a.selected_brand) rows.push(['Overview', 'Brand selection', brandLine(a)]);
     reqItems('qualification').forEach(({ def, item }) => rows.push(['Qualification', def.label, REQ_STATUS[item.status] || item.status]));
     (data.activity_rows || []).forEach((r) => rows.push(['Scheduled Activities', ACTIVITY_LABELS[r.activity_type] || r.activity_type, `${titleCase(r.status)}${r.review_status ? ` / ${r.review_status}` : ''} · ${when(r.starts_at) || ''}`]));
     if (data.loi) rows.push(['LOI', 'Verification', titleCase(String(data.loi.verification_status || '').replace(/_/g, ' '))]);
+    reqItems('loi').forEach(({ def, item }) => {
+      rows.push(['LOI', def.label, REQ_STATUS[item.status] || item.status]);
+      const where = item.data?.location?.city_code ? formatLocation(item.data.location) : locationPlain(null, item.data?.address);
+      if (where) rows.push(['LOI', 'Proposed site location', where]);
+      if (item.data?.ownership) rows.push(['LOI', 'Owned or leased', titleCase(item.data.ownership)]);
+      if (item.location_note) rows.push(['LOI', 'Note', item.location_note]);
+    });
     if (data.payment_record) {
-      rows.push(['Payment Record', 'Status', data.payment_record.status_label], ['Payment Record', 'Agreed Package Amount', peso(data.payment_record.agreed_amount) || '']);
-      data.payment_record.entries.forEach((p) => rows.push(['Payment Record', `OR ${p.or_number || '—'}`, `${peso(p.amount)} · ${p.status_label}`]));
+      const pr = data.payment_record;
+      rows.push(['Payment Record', 'Status', pr.badge_label], ['Payment Record', 'Required payments verified', pr.required_count ? `${pr.verified_count} of ${pr.required_count}` : '—']);
+      (pr.required || []).forEach((item) => rows.push(['Payment Record', item.name, `${item.status_label}${item.entry?.or_number ? ` · OR/AR ${item.entry.or_number}` : ''}`]));
     }
     rows.push(['Approval', 'Approved by', data.approval?.approved_by || 'Not approved yet']);
     history.forEach((h) => rows.push(['History', `${when(h.at)} · ${h.by || 'System'}`, `${h.action}${h.reason ? ` — ${h.reason}` : ''}`]));
@@ -499,7 +524,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
   return createPortal(
     <div className="contents print:[body.ap-print-report_&]:block!">
       <div className="fixed inset-0 z-[2147482100] flex items-center justify-center p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] max-[640px]:p-0 print:static print:p-0 print:[background:none]" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-        <div role="dialog" aria-modal="true" aria-label="Application Detail" className="flex flex-col w-[min(980px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[12px] [background:#0f1626] text-[#e7e9f2] text-[14px] max-[640px]:max-h-[100dvh] max-[640px]:h-[100dvh] max-[640px]:rounded-none print:max-h-none print:overflow-visible print:border-0 print:[background:none] print:**:text-black! print:**:[background:none]! print:**:border-[#bbb]!">
+        <div role="dialog" aria-modal="true" aria-label="Application Detail" className="flex flex-col w-[min(980px,_100%)] h-[min(820px,_calc(100dvh_-_40px))] overflow-hidden border border-[#2a3550] rounded-[12px] [background:#0f1626] text-[#e7e9f2] text-[14px] max-[640px]:max-h-[100dvh] max-[640px]:h-[100dvh] max-[640px]:rounded-none print:max-h-none print:overflow-visible print:border-0 print:[background:none] print:**:text-black! print:**:[background:none]! print:**:border-[#bbb]!">
           <header className="flex flex-none items-start justify-between gap-4 p-[16px_20px] border-b border-b-[#1f2842] print:hidden">
             <div className="min-w-0">
               <span className="block text-[#8f9bbd] text-[12px] font-[700] tracking-[.12em] uppercase">Application Detail{a ? ` · Current stage: ${a.status_label}` : ''}</span>
@@ -516,19 +541,20 @@ export default function ApplicationDetailReport({ report, onClose }) {
                     type="button"
                     role="tab"
                     aria-selected={i === index}
-                    onClick={() => setIndex(i)}
+                    onClick={() => goTo(i)}
                     className={`min-h-[36px] p-[0_12px] rounded-[9px] border text-[14px] ${i === index ? 'border-[color:var(--accent)] text-[#fff] [background:color-mix(in_srgb,_var(--accent)_22%,_transparent)]' : 'border-[#2a3041] text-[#c9d0e0] [background:#141a28]'}`}
                   >
                     {item.label}
                   </button>
                 ))}
               </div>
-              <select className="hidden max-[640px]:block w-full h-[42px] p-[0_10px] rounded-[10px] border border-[#353e57] [background:#0c111d] text-[#edf0fa] text-[15px]" value={index} onChange={(e) => setIndex(Number(e.target.value))} aria-label="Report page">
+              <select className="hidden max-[640px]:block w-full h-[42px] p-[0_10px] rounded-[10px] border border-[#353e57] [background:#0c111d] text-[#edf0fa] text-[15px]" value={index} onChange={(e) => goTo(Number(e.target.value))} aria-label="Report page">
                 {PAGES.map((item, i) => <option key={item.key} value={i}>{i + 1}. {item.label}</option>)}
               </select>
             </nav>
           )}
           <div className="flex-[1_1_auto] min-h-0 overflow-y-auto p-[16px_20px] print:overflow-visible">
+            <div key={index} className={slideDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}>
             {report?.loading && <p className="text-[15px]">Loading the Application Detail…</p>}
             {report?.error && <p className="text-[15px] text-[#ff9ca3]" role="alert">{report.error}</p>}
             {data && !printAll && (
@@ -543,19 +569,20 @@ export default function ApplicationDetailReport({ report, onClose }) {
                 {renderPage(item)}
               </div>
             ))}
+            </div>
           </div>
           {data && (
             <footer className="flex flex-none flex-wrap items-center justify-between gap-[10px] p-[12px_20px] border-t border-t-[#1f2842] [background:rgba(8,_12,_22,_.45)] print:hidden">
               <span className="flex items-center gap-2">
-                <button type="button" disabled={index === 0} onClick={() => setIndex(index - 1)} className="inline-flex items-center gap-2 min-h-[38px] p-[0_12px]"><FaChevronLeft aria-hidden="true" /> Back</button>
+                <button type="button" disabled={index === 0} onClick={() => goTo(index - 1)} className="footer-action-btn"><FaChevronLeft aria-hidden="true" /> Back</button>
                 <span className="text-[14px] text-[#9aa6c4]" aria-live="polite">{index + 1} of {PAGES.length}</span>
-                <button type="button" disabled={index === PAGES.length - 1} onClick={() => setIndex(index + 1)} className="inline-flex items-center gap-2 min-h-[38px] p-[0_12px]">Next <FaChevronRight aria-hidden="true" /></button>
+                <button type="button" disabled={index === PAGES.length - 1} onClick={() => goTo(index + 1)} className="footer-action-btn">Next <FaChevronRight aria-hidden="true" /></button>
               </span>
               <span className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={printPage} className="inline-flex items-center gap-2"><FaPrint aria-hidden="true" /> Print this page</button>
-                <button type="button" onClick={printEverything} className="inline-flex items-center gap-2 text-[13px] opacity-90">Print all pages</button>
-                <button type="button" onClick={() => exportReport('csv')} className="inline-flex items-center gap-2"><FaFileCsv aria-hidden="true" /> CSV</button>
-                <button type="button" onClick={() => exportReport('pdf')} className="inline-flex items-center gap-2"><FaFilePdf aria-hidden="true" /> PDF</button>
+                <button type="button" onClick={printPage} className="footer-action-btn"><FaPrint aria-hidden="true" /> Print this page</button>
+                <button type="button" onClick={printEverything} className="footer-action-btn">Print all pages</button>
+                <button type="button" onClick={() => exportReport('csv')} className="footer-action-btn"><FaFileCsv aria-hidden="true" /> CSV</button>
+                <button type="button" onClick={() => exportReport('pdf')} className="footer-action-btn"><FaFilePdf aria-hidden="true" /> PDF</button>
               </span>
             </footer>
           )}

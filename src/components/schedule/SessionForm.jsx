@@ -103,7 +103,7 @@ export default function SessionForm({ mode = 'create', session = null, applicant
   };
   const brands_ = brandCheck(form.activity_type, form.brand_id, chosen);
 
-  // Brand auto-fill from the applicants' shared preference (tasting/training).
+  // Brand auto-fill from the applicants' shared preference (Training).
   useEffect(() => {
     if (mode === 'create' && branded && !form.brand_id && brands_.commonBrandId) {
       set({ brand_id: String(brands_.commonBrandId) });
@@ -293,7 +293,7 @@ export default function SessionForm({ mode = 'create', session = null, applicant
             {ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
         </Field>
-        <Field label="Brand" required={branded} hint={branded ? 'Must match every applicant’s brand preference.' : 'Orientation is not brand-specific.'}>
+        <Field label="Brand" required={branded} hint={branded ? 'Must match every applicant’s brand preference.' : 'Orientation/Tasting is not brand-specific: the brand is selected when it is completed.'}>
           <select value={form.brand_id} disabled={!branded || mode === 'setAgain'} onChange={(event) => set({ brand_id: event.target.value })}>
             <option value="">{branded ? 'Select brand' : '— Not needed —'}</option>
             {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}

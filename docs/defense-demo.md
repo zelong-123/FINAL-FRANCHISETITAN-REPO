@@ -39,7 +39,7 @@ Hindi puwedeng mag-schedule sa nakaraan ("Activities cannot be scheduled in the 
 |---|---|---|
 | **Applicant A** ("Demo Applicant") | Qualification. Naka-submit na ang requirements: ang ilan **Accepted**, ang **Initial interview** ay **Waiting for review**, at may isang hindi pa naisu-submit | Q1, Q2, Q3, Q5 |
 | **Applicant B** | Activities. Isang Orientation na naka-schedule nang **maaga sa mismong araw ng defense** (hal. 8:00 AM, para pwede nang i-Complete), at isang activity na naka-schedule **bukas** | Q6 |
-| **Applicant C** | Payment Record. **Agreed Package Amount** = ₱50,000.00, may isang **Verified** entry (OR-DEMO-0001, ₱20,000.00) | Q7, Q10 |
+| **Applicant C** | Payment Record. **Required payments** = Reservation Fee + Full Payment (**Package or basis**: "Package B, per signed LOI"); ang **Reservation Fee** ay **Verified** na (OR-DEMO-0001) | Q7, Q10 |
 | **Applicant D** | **Active Franchisee** na (dumaan sa lahat ng stage) | Q4 |
 | **Applicant E** | Brand Confirmation, pagkatapos ng Product Tasting (Done) | Q9 |
 | 2–3 inquiries | ang isa ay lumampas na sa 7 araw (**Overdue**), at ang isa ay may **Next follow-up** na due ngayong araw | Q8 |
@@ -136,18 +136,23 @@ bago ang schedule ay may badge na **Completed before schedule (legacy)**. Iniiwa
 conflict: bawal ang overlapping slot, bawal ang nakaraan, at bawal sa labas ng working hours."
 
 ### Q7. "How do you show payments without billing?"
-**Ipakita (window 2, Sales):** Applicant C → **Payment Record**.
-Ituro ang **Agreed Package Amount**, ang **Verified** / **Waiting for review** / **Remaining**, at ang status (**Partially Paid**).
-**Add payment entry** → **Date paid**, **Amount (₱)** = 30,000, **Method**, **OR / AR number** = `OR-DEMO-0002`,
-**Reference number** = `BT-DEMO-0002`, **Receipt** = `sample-receipt-2.jpg` → **Send to Admin**.
+**Ipakita (window 1, Admin):** Applicant C → **Payment Record** → **Edit required payments**.
+Ituro ang **Payment plan**, ang mga pangalan lang (walang amount), ang **Verified · locked** sa Reservation Fee,
+at ang **Package or basis** note (text lang, hindi number).
 
-**Ipakita (window 1, Admin):** **Verify** → magiging **Fully Paid**.
+**Ipakita (window 2, Sales):** Applicant C → **Payment Record**. Ituro ang **Required payments (set by Admin)**,
+ang naka-collapse na **Verified · locked** na Reservation Fee, at ang link sa signed LOI para malaman kung magkano ang sisingilin.
+Sa form na **Recording: Full Payment** → **Date paid**, **Method** = Bank transfer, **Reference number** = `BT-DEMO-0002`,
+**OR / AR number** = `OR-DEMO-0002`, **Receipt** = `sample-receipt-2.jpg` → **Submit for verification**.
+
+**Ipakita (window 1, Admin):** **Verify payment** → **2 of 2 required payments verified** → **Move to For Approval**.
 
 **Sabihin:**
-"Ayon po sa limitation namin, hindi po kami nagbi-billing, hindi kami nagko-compute ng interest, at walang
-online payment. Nire-record lang po namin ang bayad na nangyari sa labas ng system, kasama ang resibo.
-Ang status ay galing lang sa **Verified** entries. Ang approval at ang COMPLETED ay naa-unlock lang kapag
-**Fully Paid**: *'COMPLETED unlocks only when the Payment Record is Fully Paid. Remaining: …'*"
+"Ayon po sa limitation namin, walang billing at walang computation. Hindi po nag-iimbak ang system ng amount,
+hindi nagsu-sum, at hindi nagko-compute ng balance. Nire-record lang po namin ang bayad na nangyari sa labas ng
+system, kasama ang resibo. Ang 'fully paid' ay nangangahulugang **Verified** ni Admin ang bawat required payment.
+Bago iyon, bawal pong lumipat sa For Approval, at sa API mismo ito naka-enforce:
+*'All required payments must be Verified first: 1 of 2 required payments verified. Not yet verified: Full Payment.'*"
 
 ### Q8. "How do you avoid overlooked inquiries?"
 **Ipakita (window 4, Marketing):** **Inquiries**.
@@ -179,21 +184,21 @@ Hindi rin makaka-schedule ng Training hangga't hindi pa confirmed ang brand. Kay
 Payment Record sa iisang brand."
 
 ### Q10. "Sales both receives and records the payment. How do you prevent mistakes or fraud?"
-**Ipakita (window 2, Sales):** Applicant C → **Add payment entry** gamit ulit ang **OR / AR number** `OR-DEMO-0001`.
-Refused: *"This OR/AR number is already recorded."*
-Subukan ding walang receipt (*"Attach the receipt (PDF, JPG or PNG)."*) at sobra sa natitira
-(*"This would exceed the Agreed Package Amount: … is left to record."*).
+**Ipakita (window 2, Sales):** Applicant C → **Record payment** gamit ulit ang **OR / AR number** `OR-DEMO-0001`.
+Refused: *"This OR/AR number is already recorded."* Subukan ding walang receipt (*"Attach the receipt (PDF, JPG or PNG)."*).
 
+**Ipakita (window 1, Admin):** sa isang entry na **For verification**, mag-type ng **Reason** → **Reject**.
+Sa Sales, lalabas ang reason; **Correct and resubmit** (puwede ulit ang parehong OR/AR number ng na-reject na entry).
 Buksan ang **Payment Record history**.
 
 **Sabihin:**
 "Wala po kaming cashier role, kaya ganito po ang controls:
 1. **Receipt** ang required sa bawat entry. Chine-check ang mismong laman ng file, hindi lang ang extension.
-2. **OR / AR number** at **Reference number** ay unique sa buong system. Database mismo ang nagbabawal, kaya kahit sabay na i-submit, isa lang ang tatanggapin.
-3. Hindi lalampas sa **Agreed Package Amount**, at ang pagbabago ng amount ay si Admin lang ang gumagawa, na may dahilan.
-4. Si **Admin** ang nagve-**Verify**. Hindi kayang i-verify ng Sales ang sarili niyang entry.
-5. **No edits**: *'A payment entry cannot be edited after it is submitted. Admin returns it and Sales records a corrected entry.'*
-6. Lahat naka-log sa history, may notification kay Admin pag may bagong entry at kay Sales pag na-verify o na-return."
+2. **OR / AR number** at **Reference number** ay unique sa buong system. Database mismo ang nagbabawal, kaya kahit sabay na i-submit, isa lang ang tatanggapin. Ang na-reject na entry lang ang hindi humaharang.
+3. Si **Admin** lang ang nagve-**Verify** o nagre-**Reject** (may reason), at walang makakapag-verify ng entry na siya mismo ang nag-encode.
+4. Kapag in-edit ni Sales ang entry habang nire-review ni Admin, tatanggihan ang Verify: *'Sales changed this entry after you opened it. Reload…'*
+5. Ang na-reject na entry ay hindi binubura; nananatili ito sa history. Ang **Verified** ay naka-lock na.
+6. Lahat naka-log sa history, may notification kay Admin pag may bagong entry at sa nag-encode na Sales pag na-verify o na-reject (kasama ang reason)."
 
 ---
 

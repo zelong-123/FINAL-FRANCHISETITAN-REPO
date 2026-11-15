@@ -33,8 +33,8 @@ export const VENUE_OPTIONS = [
   { value: 'Virtual', label: 'Virtual' },
 ];
 
-/** Capacity per session, mirroring config/franchise.php (Training default is 10). */
-export const CAPACITY = { orientation: 30, product_tasting: 15, training: 10 };
+/** Capacity per session, mirroring the API (Orientation/Tasting 5, Training 10). */
+export const CAPACITY = { orientation: 5, training: 10 };
 
 export const pad2 = (value) => String(value).padStart(2, '0');
 
