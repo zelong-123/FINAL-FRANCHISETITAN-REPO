@@ -163,6 +163,9 @@ function changeText(entry) {
 export default function ApplicationDetailReport({ report, onClose }) {
   const data = report?.data;
   const [index, setIndex] = useState(0);
+  // Direction of the last Back/Next move: drives the slide-in of the section content.
+  const [slideDir, setSlideDir] = useState(1);
+  const goTo = (next) => { setSlideDir(next < index ? -1 : 1); setIndex(next); };
   const [historyPage, setHistoryPage] = useState('');
   const [printAll, setPrintAll] = useState(false);
 
@@ -498,7 +501,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
   return createPortal(
     <div className="contents print:[body.ap-print-report_&]:block!">
       <div className="fixed inset-0 z-[2147482100] flex items-center justify-center p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] max-[640px]:p-0 print:static print:p-0 print:[background:none]" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-        <div role="dialog" aria-modal="true" aria-label="Application Detail" className="flex flex-col w-[min(980px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[12px] [background:#0f1626] text-[#e7e9f2] text-[14px] max-[640px]:max-h-[100dvh] max-[640px]:h-[100dvh] max-[640px]:rounded-none print:max-h-none print:overflow-visible print:border-0 print:[background:none] print:**:text-black! print:**:[background:none]! print:**:border-[#bbb]!">
+        <div role="dialog" aria-modal="true" aria-label="Application Detail" className="flex flex-col w-[min(980px,_100%)] h-[min(820px,_calc(100dvh_-_40px))] overflow-hidden border border-[#2a3550] rounded-[12px] [background:#0f1626] text-[#e7e9f2] text-[14px] max-[640px]:max-h-[100dvh] max-[640px]:h-[100dvh] max-[640px]:rounded-none print:max-h-none print:overflow-visible print:border-0 print:[background:none] print:**:text-black! print:**:[background:none]! print:**:border-[#bbb]!">
           <header className="flex flex-none items-start justify-between gap-4 p-[16px_20px] border-b border-b-[#1f2842] print:hidden">
             <div className="min-w-0">
               <span className="block text-[#8f9bbd] text-[12px] font-[700] tracking-[.12em] uppercase">Application Detail{a ? ` · Current stage: ${a.status_label}` : ''}</span>
@@ -515,19 +518,20 @@ export default function ApplicationDetailReport({ report, onClose }) {
                     type="button"
                     role="tab"
                     aria-selected={i === index}
-                    onClick={() => setIndex(i)}
+                    onClick={() => goTo(i)}
                     className={`min-h-[36px] p-[0_12px] rounded-[9px] border text-[14px] ${i === index ? 'border-[color:var(--accent)] text-[#fff] [background:color-mix(in_srgb,_var(--accent)_22%,_transparent)]' : 'border-[#2a3041] text-[#c9d0e0] [background:#141a28]'}`}
                   >
                     {item.label}
                   </button>
                 ))}
               </div>
-              <select className="hidden max-[640px]:block w-full h-[42px] p-[0_10px] rounded-[10px] border border-[#353e57] [background:#0c111d] text-[#edf0fa] text-[15px]" value={index} onChange={(e) => setIndex(Number(e.target.value))} aria-label="Report page">
+              <select className="hidden max-[640px]:block w-full h-[42px] p-[0_10px] rounded-[10px] border border-[#353e57] [background:#0c111d] text-[#edf0fa] text-[15px]" value={index} onChange={(e) => goTo(Number(e.target.value))} aria-label="Report page">
                 {PAGES.map((item, i) => <option key={item.key} value={i}>{i + 1}. {item.label}</option>)}
               </select>
             </nav>
           )}
           <div className="flex-[1_1_auto] min-h-0 overflow-y-auto p-[16px_20px] print:overflow-visible">
+            <div key={index} className={slideDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}>
             {report?.loading && <p className="text-[15px]">Loading the Application Detail…</p>}
             {report?.error && <p className="text-[15px] text-[#ff9ca3]" role="alert">{report.error}</p>}
             {data && !printAll && (
@@ -542,19 +546,20 @@ export default function ApplicationDetailReport({ report, onClose }) {
                 {renderPage(item)}
               </div>
             ))}
+            </div>
           </div>
           {data && (
             <footer className="flex flex-none flex-wrap items-center justify-between gap-[10px] p-[12px_20px] border-t border-t-[#1f2842] [background:rgba(8,_12,_22,_.45)] print:hidden">
               <span className="flex items-center gap-2">
-                <button type="button" disabled={index === 0} onClick={() => setIndex(index - 1)} className="inline-flex items-center gap-2 min-h-[38px] p-[0_12px]"><FaChevronLeft aria-hidden="true" /> Back</button>
+                <button type="button" disabled={index === 0} onClick={() => goTo(index - 1)} className="footer-action-btn"><FaChevronLeft aria-hidden="true" /> Back</button>
                 <span className="text-[14px] text-[#9aa6c4]" aria-live="polite">{index + 1} of {PAGES.length}</span>
-                <button type="button" disabled={index === PAGES.length - 1} onClick={() => setIndex(index + 1)} className="inline-flex items-center gap-2 min-h-[38px] p-[0_12px]">Next <FaChevronRight aria-hidden="true" /></button>
+                <button type="button" disabled={index === PAGES.length - 1} onClick={() => goTo(index + 1)} className="footer-action-btn">Next <FaChevronRight aria-hidden="true" /></button>
               </span>
               <span className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={printPage} className="inline-flex items-center gap-2"><FaPrint aria-hidden="true" /> Print this page</button>
-                <button type="button" onClick={printEverything} className="inline-flex items-center gap-2 text-[13px] opacity-90">Print all pages</button>
-                <button type="button" onClick={() => exportReport('csv')} className="inline-flex items-center gap-2"><FaFileCsv aria-hidden="true" /> CSV</button>
-                <button type="button" onClick={() => exportReport('pdf')} className="inline-flex items-center gap-2"><FaFilePdf aria-hidden="true" /> PDF</button>
+                <button type="button" onClick={printPage} className="footer-action-btn"><FaPrint aria-hidden="true" /> Print this page</button>
+                <button type="button" onClick={printEverything} className="footer-action-btn">Print all pages</button>
+                <button type="button" onClick={() => exportReport('csv')} className="footer-action-btn"><FaFileCsv aria-hidden="true" /> CSV</button>
+                <button type="button" onClick={() => exportReport('pdf')} className="footer-action-btn"><FaFilePdf aria-hidden="true" /> PDF</button>
               </span>
             </footer>
           )}

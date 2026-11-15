@@ -324,6 +324,9 @@ button:disabled { opacity: .52; cursor: not-allowed; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--hover); }
 td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); background: var(--hover); transform: translateY(-1px); }
+:root[data-theme='light'] .applicant-row-actions > button:not(.primary-button) { background: #fff !important; color: #3e4b64 !important; border: 1px solid #d5dcea !important; }
+:root[data-theme='light'] .applicant-row-actions > button:not(.primary-button):hover:not(:disabled) { background: #f1f4fb; color: #172033; }
+:root[data-theme='light'] .applicant-row-actions > .primary-button { color: #fff !important; border-color: transparent !important; background: linear-gradient(135deg, var(--accent), var(--accent-2)) !important; }
 #update-applicant-form { color: #dce2ef; font-size: 12px; }
 #update-applicant-form input,
 #update-applicant-form select,
@@ -481,6 +484,62 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
     min-width: 620px;
   }
 }
+
+/* Applicants > Application Detail tab: roomier spacing, larger text, darker canvas so cards stand out. Dark mode only for the background. */
+.ap-detail-panel { padding: 16px 18px 18px !important; }
+.ap-detail-panel > div:first-child { padding: 0 0 4px; gap: 12px; }
+.ap-detail-panel > div:first-child [role='tablist'],
+.ap-detail-panel > div:first-child [role='group'] { padding: 5px; }
+.ap-detail-panel > div:first-child button { font-size: 13px; padding: 7px 12px; min-height: 34px; }
+.ap-detail-panel [role='list'] { gap: 12px; padding: 4px 0 12px; }
+.ap-detail-panel [role='listitem'] { padding: 14px; gap: 5px; font-size: 12px; border-radius: 8px !important; min-height: 0 !important; }
+.ap-detail-panel [role='listitem'] strong { font-size: 14px; }
+.ap-detail-panel [role='listitem'] span { font-size: 12px; }
+.ap-detail-panel [role='listitem'] .status-pill { font-size: 11px; }
+.ap-detail-panel [role='listitem'] .ap-folder-remarks { font-size: 12px; }
+.ap-detail-panel table td { font-size: 13px; }
+.ap-detail-panel table th { font-size: 11px; }
+:root:not([data-theme='light']) .ap-detail-panel { background: #0a0e18 !important; }
+:root:not([data-theme='light']) .ap-detail-panel [role='listitem'] { background: #161d2e !important; border-color: #2e3850 !important; }
+:root:not([data-theme='light']) .ap-detail-panel [role='listitem']:hover { background: #1c2539 !important; }
+:root[data-theme='light'] .ap-detail-panel [role='listitem'] { background: #fff !important; }
+
+/* Application Detail modal footer: every button shares one size and style. */
+.footer-action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid #353e57; background: #1a2133; color: #e7e9f2; font-size: 13px; font-weight: 600; line-height: 1; cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.footer-action-btn:hover:not(:disabled) { background: #232c44; border-color: #4b5878; }
+.footer-action-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 2px; }
+.footer-action-btn:disabled { opacity: .45; cursor: not-allowed; }
+:root[data-theme='light'] .footer-action-btn { background: #fff; border-color: #d5dcea; color: #3e4b64; }
+:root[data-theme='light'] .footer-action-btn:hover:not(:disabled) { background: #f1f4fb; border-color: #b8c3da; color: #172033; }
+
+/* Light mode: Activities calendar grid, split layout and Scheduled side panel. Dark mode is untouched. */
+:root[data-theme='light'] .activities-page .big-calendar-split { background: var(--panel) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section { background: var(--panel) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:first-child { border-right: 1px solid var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-day:not(.is-weekend):not(.is-empty) { background: var(--panel-2) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-day.is-clickable:hover { background: #eef2ff !important; }
+:root[data-theme='light'] .activities-page .big-calendar-day.is-weekend { background: #f1f3f8 !important; }
+:root[data-theme='light'] .activities-page .cal-nav { background: var(--panel-2) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .cal-nav-select { background-color: #fff !important; color: var(--text) !important; border-color: var(--border) !important; color-scheme: light; }
+:root[data-theme='light'] .activities-page .cal-nav > button:not(:last-child) { color: var(--text-secondary) !important; }
+:root[data-theme='light'] .activities-page .cal-nav > button:last-child:disabled { background: var(--panel-2) !important; color: var(--muted) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split h2,
+:root[data-theme='light'] .activities-page .big-calendar-split .panel-heading-copy span { color: var(--text) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split .panel-heading-copy span:not(:first-child) { color: var(--muted) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child > div > div[class*='border-[#2a3350]'] { background: var(--panel-2) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child h3 { color: var(--text) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split
+:root[data-theme='light'] .activities-page .big-calendar-split button[class*='[background:#0c1224]'] { background: #fff !important; color: var(--text) !important; border-color: rgba(72, 105, 235, 0.45) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split button[class*='[background:#0c1224]'] small { color: var(--text) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child div[class*='[background:#151c2c]'] { background: var(--panel-2) !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child div[class*='[background:#151c2c]'] h3 { color: var(--text) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child h3 span { background: rgba(72, 105, 235, 0.12) !important; color: #3e5fd3 !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li { background: #fff !important; border-color: var(--border) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li:hover { background: #f1f4fb !important; border-color: var(--accent) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li span:not(.drawer-avatar) { color: var(--text) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li small,
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child p { color: var(--muted) !important; }
+:root[data-theme='light'] .activities-page .big-calendar-split > section:last-child .drawer-avatar { color: #3e5fd3 !important; background: rgba(72, 105, 235, 0.12) !important; }
 
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {

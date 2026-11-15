@@ -115,7 +115,7 @@ function materialsSummary(branch) {
  * Default view: one branch card. The card and the View label open the
  * same half view.
  * ------------------------------------------------------------------ */
-function BranchCard({ branch, active, onOpen, role, onEditLocation }) {
+function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted = false }) {
   const brand = getBrand(branch);
   const state = stockState(branch);
   const alert = branchAlert(branch);
@@ -133,8 +133,10 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation }) {
 
   return (
     <div
-      className={`bp-card relative gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:var(--bp-surface)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
-      style={{ '--brand-color': brand.color }}
+      id={`branch-card-${branch.id}`}
+      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:var(--bp-surface)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
+      data-highlighted={highlighted || undefined}
+      style={{ '--brand-color': brand.color, ...(highlighted ? { outline: '2px solid var(--accent)', outlineOffset: '3px', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent) 24%, transparent)' } : {}) }}
       role="button"
       tabIndex={0}
       aria-label={`Open ${branch.name}`}
@@ -883,6 +885,42 @@ export default function Branches() {
     critical: alertItems.filter((item) => item.is_new && item.status !== 'low').length,
   };
 
+  // "View branch →" in the alert lists: scroll to the branch's card below and highlight it.
+  const [highlightedId, setHighlightedId] = useState(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => {
+    if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+  }, []);
+  const scrollToBranchCard = (id) => {
+    const branch = branches.find((b) => Number(b.id) === Number(id));
+    if (!branch) return;
+    // Make sure the card is in the list: clear a search that hides it, show demo branches if needed.
+    if (!filtered.some((b) => Number(b.id) === Number(id))) {
+      if (search) setSearch('');
+      if (branch.is_demo && !showDemo) setShowDemo(true);
+    }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let tries = 0;
+    // Wait for the re-render (a few frames at most) before scrolling.
+    const attempt = () => {
+      const card = document.getElementById(`branch-card-${branch.id}`);
+      if (!card) {
+        tries += 1;
+        if (tries < 20) window.requestAnimationFrame(attempt);
+        return;
+      }
+      card.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+      card.focus({ preventScroll: true });
+      setHighlightedId(Number(branch.id));
+      if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+      highlightTimer.current = window.setTimeout(() => {
+        highlightTimer.current = null;
+        setHighlightedId(null);
+      }, 2500);
+    };
+    window.requestAnimationFrame(attempt);
+  };
+
   const [levelsTarget, setLevelsTarget] = useState(null);
   const [branchAction, setBranchAction] = useState(null);
 
@@ -954,7 +992,7 @@ export default function Branches() {
               marking={markingSeen}
               onMarkSeen={() => void markSeen()}
               onClose={() => setAlertList(null)}
-              onViewBranch={(id) => openBranch(branches.find((branch) => Number(branch.id) === Number(id)))}
+              onViewBranch={scrollToBranchCard}
               error={alerts.error ? String(alerts.error) : ''}
               loaded={Boolean(alerts.data)}
               onRetry={() => void reloadAlerts()}
@@ -1045,6 +1083,7 @@ export default function Branches() {
                         onOpen={openBranch}
                         role={role}
                         onEditLocation={(branch) => setBranchAction({ kind: 'location', branch })}
+                        highlighted={Number(branch.id) === highlightedId}
                       />
                     ))}
                   </div>
