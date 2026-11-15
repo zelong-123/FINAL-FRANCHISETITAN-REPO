@@ -13,10 +13,10 @@ They exist only to walk through the system and to demonstrate it at the defense.
 | `sample-site-photo.jpg` | Qualification requirements → **Proposed site** → Site photos (address: 123 Sample Street, Demo City; Leased) |
 | `sample-attendance-sheet.pdf` | Activities & Schedule → **Mark Complete** → Attendance proof (Orientation, Product Tasting, Training) |
 | `sample-loi.pdf` | LOI section → LOI document (the scan) |
-| `sample-receipt-1.jpg` | Payment Record → **Add payment entry** → Receipt (OR/AR number **OR-DEMO-0001**, reference **BT-DEMO-0001**, ₱20,000.00, Bank transfer) |
-| `sample-receipt-2.jpg` | Payment Record → **Add payment entry** → Receipt (OR/AR number **OR-DEMO-0002**, reference **BT-DEMO-0002**, ₱30,000.00) |
+| `sample-receipt-1.jpg` | Payment Record → **Recording: Reservation Fee** → Receipt (OR/AR number **OR-DEMO-0001**, reference **BT-DEMO-0001**, Bank transfer) |
+| `sample-receipt-2.jpg` | Payment Record → **Recording: Full Payment** → Receipt (OR/AR number **OR-DEMO-0002**, reference **BT-DEMO-0002**, Bank transfer) |
 | `sample-franchise-agreement.pdf` | Before Active Franchisee requirements → **Signed franchise agreement** |
 
-Agreed Package Amount used in the demo: **₱50,000.00** (Kiosk package, taken from the Signed LOI).
+Required payments used in the demo: **Reservation Fee** and **Full Payment** (Package or basis note: "Package B, per signed LOI"). No amounts are entered in the system.
 
-To show the "same OR number" refusal, record a third entry with OR/AR number `OR-DEMO-0001` again.
+To show the "same OR number" refusal, record another entry with OR/AR number `OR-DEMO-0001` again.

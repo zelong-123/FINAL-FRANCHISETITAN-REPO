@@ -137,33 +137,38 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   scan.set('submission_date', new Date().toISOString().slice(0, 10));
   okay('Sales uploads the scan', await call('POST', `${path}/loi`, { token: sales, form: scan }), 201);
   okay('Admin verifies', await call('POST', `${path}/loi`, { token: admin, form: verify() }));
+  blocked('Complete LOI before the Proposed site is verified', await call('POST', `${path}/loi/complete`, { token: admin, body: {} }));
+  blocked('Proposed site without photos', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi', { site_photos: null }) }));
+  okay('Sales submits the Proposed site', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi') }), 201);
+  okay('Admin verifies the Proposed site', await call('POST', `${path}/requirements/proposed_site/accept`, { token: admin, body: {} }));
   assert.equal(okay('Complete LOI', await call('POST', `${path}/loi/complete`, { token: admin, body: { remarks: 'LOI verified.' } })).data.status, 'payment_submitted');
 
-  // ---- Payment Record ----
-  const entry = (amount: number, or: string, withReceipt = true) => {
+  // ---- Payment Record (no amounts: required payments, verified by Admin) ----
+  const entry = (requiredId: number, or: string, withReceipt = true) => {
     const f = new FormData();
+    f.set('required_payment_id', String(requiredId));
     f.set('payment_date', new Date().toISOString().slice(0, 10));
-    f.set('amount', String(amount));
     f.set('payment_method', 'bank_transfer');
     f.set('or_number', or);
     f.set('reference_number', `BT-${or}`);
     if (withReceipt) f.set('receipt', pdf('sample-receipt.pdf'));
     return f;
   };
-  blocked('record a payment before the Agreed Package Amount', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(1000, 'OR-W-0') }));
-  okay('Agreed Package Amount', await call('PATCH', `${path}/payment-plan`, { token: admin, body: { agreed_amount: 50000, package_name: 'Kiosk package', source: 'Signed LOI' } }));
-  blocked('a payment without a receipt', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-W-1', false) }));
-  blocked('more than the Agreed Package Amount', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(60000, 'OR-W-1') }));
-  const first = okay('first payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-W-1') }), 201).data.entry;
-  blocked('the same OR number again', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(10000, 'OR-W-1') }));
-  blocked('Sales verifies its own payment', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: sales, body: {} }), 403);
-  okay('verify first', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: {} }));
-  blocked('COMPLETED before Fully Paid', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
-  blocked('edit a submitted payment', await call('PATCH', `${path}/payments/${first.id}`, { token: sales, body: { amount: 1 } }));
-  const second = okay('second payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(30000, 'OR-W-2') }), 201).data.entry;
-  okay('verify second', await call('POST', `${path}/payment-entries/${second.id}/verify`, { token: admin, body: {} }));
-  const paidAlerts = await q(`select user_id from system_notifications where type = 'payment_fully_paid' and (data->>'applicant_id')::bigint = $1`, [id]);
-  assert.ok(paidAlerts.some((r) => Number(r.user_id) === salesUser.id), 'Fully Paid reaches the (new) assigned Sales user');
+  blocked('COMPLETED before any required payment is set', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
+  blocked('Sales sets the required payments', await call('PUT', `${path}/required-payments`, { token: sales, body: { preset: 'reservation_full' } }), 403);
+  const required = okay('required payments', await call('PUT', `${path}/required-payments`, { token: admin, body: { preset: 'reservation_full', basis_note: 'Kiosk package, per signed LOI' } })).data.required;
+  const [reservationId, fullId] = required.map((r: any) => r.id);
+  blocked('a payment without a receipt', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-W-1', false) }));
+  const first = okay('first payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-W-1') }), 201).data.entry;
+  blocked('the same OR number again', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-1') }));
+  blocked('Sales verifies its own payment', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: sales, body: { revision: first.revision } }), 403);
+  okay('verify first', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: { revision: first.revision } }));
+  blocked('COMPLETED before every required payment is Verified', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
+  blocked('edit a payment through the old endpoint', await call('PATCH', `${path}/payments/${first.id}`, { token: sales, body: { amount: 1 } }));
+  const second = okay('second payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-2') }), 201).data.entry;
+  okay('verify second', await call('POST', `${path}/payment-entries/${second.id}/verify`, { token: admin, body: { revision: second.revision } }));
+  const verifiedAlerts = await q(`select user_id from system_notifications where type = 'payment_entry_verified' and (data->>'applicant_id')::bigint = $1`, [id]);
+  assert.ok(verifiedAlerts.some((r) => Number(r.user_id) === salesUser.id), 'the Sales user who encoded the entry is told it was verified');
   assert.equal(okay('COMPLETED', await call('POST', `${path}/payments/complete`, { token: admin, body: {} })).data.status, 'for_approval');
 
   // ---- Approval ----

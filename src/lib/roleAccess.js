@@ -143,12 +143,12 @@ export const PERMISSIONS = {
   'inquiries.restore': ['admin', 'marketing'],
   'inquiries.delete': ['admin'],
 
-  // Payment Submission stage (Admin sets/reviews, Sales collects)
-  'payments.set_total': ['admin'],
+  // Payment Record (no billing): Admin sets required payments and verifies; Sales records entries
+  'payments.required_manage': ['admin'],
   'payments.entry_manage': ['sales'],
-  'payments.turn_over': ['sales'],
-  'payments.confirm': ['admin'],
-  'payments.return': ['admin'],
+  'payments.verify': ['admin'],
+  'payments.reject': ['admin'],
+  'payments.move_for_approval': ['admin'],
 
   // Applicants
   'applicants.view': ['admin', 'sales', 'franchisee'],

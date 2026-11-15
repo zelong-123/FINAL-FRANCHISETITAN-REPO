@@ -110,7 +110,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   // Confirm Qualified lists exactly which Qualification requirements are not Accepted yet.
   const notReady = await call('POST', `${path}/confirm-qualified`, { token: admin, body: { confirmed: true, remarks: 'Trying too early.' } });
   assert.equal(notReady.status, 422);
-  assert.match(notReady.json.errors.requirements[0], /Missing: Application form, Valid government ID, Proof of funds, Initial interview, Proposed site\./);
+  assert.match(notReady.json.errors.requirements[0], /Missing: Application form, Valid government ID, Proof of funds, Initial interview\./);
   // The old five-checkbox assessment is replaced.
   const keys = ['profile_reviewed', 'financial_capability_assessed', 'initial_interview_completed', 'preferred_location_evaluated', 'investment_understood'];
   const milestones = Object.fromEntries(keys.map((k) => [`qualification_${k}`, true]));
@@ -193,18 +193,29 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.ok(old.replaced_at, 'old LOI kept, marked replaced');
   assert.equal(Number(old.replaced_by_document_id), replacement.json.data.id);
   assert.equal(files.store.size, filesBefore + 2, 'both files stay in storage');
-  // Not verified yet, so Complete is refused, and Proceed makes it Pending.
-  assert.match((await call('POST', `${path}/loi/complete`, { token: admin, body: {} })).json.errors.loi[0], /Mark the LOI as Verified/);
-  const proceed = await call('POST', `${path}/loi/proceed`, { token: admin, body: {} });
-  assert.equal(proceed.json.data.status, 'payment_submitted');
-  assert.equal(proceed.json.data.loi_status, 'pending');
-  assert.equal(proceed.json.data.payment_stage_state, 'waiting_total');
+  // Proceed is gone: Complete LOI is the only way on, and it needs the LOI AND the Proposed site verified.
+  assert.match((await call('POST', `${path}/loi/proceed`, { token: admin, body: {} })).json.errors.loi[0], /Proceed] was removed/);
+  const notYet = (await call('POST', `${path}/loi/complete`, { token: admin, body: {} })).json.errors.loi[0];
+  assert.match(notYet, /Mark the LOI as Verified/);
+  assert.match(notYet, /Proposed site must be verified by Admin \(it has not been submitted yet\)/);
+  const verify = new FormData();
+  verify.set('verification_status', 'verified');
+  assert.equal((await call('POST', `${path}/loi`, { token: admin, form: verify })).status, 200);
+  assert.equal((await call('POST', `/applicants/${applicantId}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi') })).status, 201);
+  const siteWaiting = await call('POST', `${path}/loi/complete`, { token: admin, body: {} });
+  assert.equal(siteWaiting.status, 422);
+  assert.match(siteWaiting.json.errors.loi[0], /Proposed site must be verified by Admin \(it is waiting for Admin review\)/);
+  assert.equal((await call('POST', `/applicants/${applicantId}/requirements/proposed_site/accept`, { token: admin, body: {} })).status, 200);
+  const completed = await call('POST', `${path}/loi/complete`, { token: admin, body: {} });
+  assert.equal(completed.status, 200, JSON.stringify(completed.json));
+  assert.equal(completed.json.data.status, 'payment_submitted');
+  assert.equal(completed.json.data.loi_status, 'complete');
 
-  // Payment Record: a reference amount and recorded payments (the advanced features are off).
-  const entry = (amount: number, or: string, extra: Record<string, string> = {}) => {
+  // Payment Record: required payments (names only), one entry each, verified by Admin. No amounts.
+  const entry = (requiredId: number, or: string, extra: Record<string, string> = {}) => {
     const form = new FormData();
+    form.set('required_payment_id', String(requiredId));
     form.set('payment_date', '2026-11-01');
-    form.set('amount', String(amount));
     form.set('payment_method', 'bank_transfer');
     form.set('or_number', or);
     form.set('reference_number', `REF-${or}`);
@@ -212,43 +223,36 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
     for (const [k, v] of Object.entries(extra)) form.set(k, v);
     return form;
   };
-  const early = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(100, 'OR-1000') });
-  assert.match(early.json.errors.payments[0], /Admin must set the Agreed Package Amount/);
-  assert.match((await call('PATCH', `${path}/payment-plan`, { token: admin, body: { total_required_amount: 100000, discount_percent: 10, promo_name: 'Launch' } })).json.errors.discount_percent[0], /turned off/, 'no discounts while the advanced features are off');
-  const plan = await call('PATCH', `${path}/payment-plan`, { token: admin, body: { agreed_amount: 80000, package_name: 'Kiosk package', source: 'Signed LOI' } });
-  assert.equal(plan.json.data.total_required_amount, '80000.00');
-  assert.equal(plan.json.data.payment_stage_state, 'collecting');
-  assert.match((await call('POST', `${path}/payments/report`, { token: sales, body: { entries: [{ amount: 100, payment_date: '2026-11-01' }] } })).json.errors.payments[0], /turned off/, 'no Sales Report batching');
-
-  assert.match((await call('POST', `${path}/payment-entries`, { token: sales, form: entry(90000, 'OR-1001') })).json.errors.amount[0], /exceed the Agreed Package Amount/);
-  assert.match((await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-1001', { payment_date: '2999-11-01' }) })).json.errors.payment_date[0], /future/);
-  assert.equal((await call('POST', `${path}/payment-entries`, { token: otherSales, form: entry(20000, 'OR-1001') })).status, 403, 'only the assigned Sales user records payments');
-  const noReceipt = entry(20000, 'OR-1001');
+  assert.match((await call('PATCH', `${path}/payment-plan`, { token: admin, body: { agreed_amount: 80000 } })).json.errors.payments[0], /Agreed Package Amount was removed/);
+  assert.match((await call('POST', `${path}/payments/report`, { token: sales, body: { entries: [{ amount: 100, payment_date: '2026-11-01' }] } })).json.errors.payments[0], /not part of this system/, 'no Sales Report batching');
+  assert.equal((await call('PUT', `${path}/required-payments`, { token: sales, body: { preset: 'reservation_full' } })).status, 403, 'Sales cannot set the list');
+  const plan = await call('PUT', `${path}/required-payments`, { token: admin, body: { preset: 'reservation_full', basis_note: 'Kiosk package, per signed LOI' } });
+  assert.equal(plan.status, 200, JSON.stringify(plan.json));
+  const [reservationId, fullId] = plan.json.data.required.map((r: any) => r.id);
+  assert.equal((await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-1001', { payment_date: '2999-11-01' }) })).json.errors.payment_date[0].includes('future'), true);
+  assert.equal((await call('POST', `${path}/payment-entries`, { token: otherSales, form: entry(reservationId, 'OR-1001') })).status, 403, 'only the assigned Sales user records payments');
+  const noReceipt = entry(reservationId, 'OR-1001');
   noReceipt.delete('receipt');
   assert.match((await call('POST', `${path}/payment-entries`, { token: sales, form: noReceipt })).json.errors.receipt[0], /Attach the receipt/);
-  const first = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(20000, 'OR-1001') });
+  const first = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-1001') });
   assert.equal(first.status, 201, JSON.stringify(first.json));
-  assert.equal(first.json.data.entry.status, 'pending');
-  assert.equal((await call('POST', `${path}/payment-entries/${first.json.data.entry.id}/verify`, { token: sales, body: {} })).status, 403, 'Sales cannot verify its own entry');
-  const verified = await call('POST', `${path}/payment-entries/${first.json.data.entry.id}/verify`, { token: admin, body: {} });
-  assert.equal(verified.json.data.status_label, 'Partially Paid');
+  assert.equal(first.json.data.entry.status, 'for_verification');
+  const firstId = first.json.data.entry.id;
+  assert.equal((await call('POST', `${path}/payment-entries/${firstId}/verify`, { token: sales, body: { revision: 1 } })).status, 403, 'Sales cannot verify');
+  const verified = await call('POST', `${path}/payment-entries/${firstId}/verify`, { token: admin, body: { revision: 1 } });
+  assert.equal(verified.json.data.verified_count, 1);
+  assert.equal(verified.json.data.required_count, 2);
   const [payment] = await q(`select * from payments where applicant_id = $1`, [applicantId]);
   assert.equal(payment.status, 'verified');
   assert.equal((await q(`select count(*)::int c from applicant_payments where legacy_payment_id = $1`, [payment.id]))[0].c, 1, 'ledger mirrors the payment');
-  assert.equal((await call('POST', `${path}/payments/complete`, { token: admin, body: {} })).status, 422, 'not Fully Paid (and the LOI is pending)');
-  assert.match((await call('PATCH', `${path}/payments/${payment.id}`, { token: sales, body: { amount: 1 } })).json.errors.payments[0], /cannot be edited after it is submitted/);
+  assert.equal((await call('POST', `${path}/payments/complete`, { token: admin, body: {} })).status, 422, 'not every required payment is Verified');
+  assert.match((await call('PATCH', `${path}/payments/${payment.id}`, { token: sales, body: { amount: 1 } })).json.errors.payments[0], /not part of this system/);
 
-  const rest = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(60000, 'OR-1002') });
+  const rest = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-1002') });
   assert.equal(rest.status, 201);
-  await call('POST', `${path}/payment-entries/${rest.json.data.entry.id}/verify`, { token: admin, body: {} });
-  assert.equal((await call('GET', path, { token: admin })).json.data.payment_record.status_label, 'Fully Paid');
+  await call('POST', `${path}/payment-entries/${rest.json.data.entry.id}/verify`, { token: admin, body: { revision: 1 } });
+  assert.equal((await call('GET', path, { token: admin })).json.data.payment_record.badge_label, 'Completed');
 
-  // Complete the Pending LOI, then the stage.
-  const verify = new FormData();
-  verify.set('verification_status', 'verified');
-  await call('POST', `${path}/loi`, { token: admin, form: verify });
-  assert.match((await call('POST', `${path}/loi/complete`, { token: admin, body: {} })).message ?? '', /|/);
-  assert.equal((await q(`select loi_status from applicants where id = $1`, [applicantId]))[0].loi_status, 'complete');
   // A complete LOI's scan can no longer be removed.
   const locked = await call('DELETE', `${path}/documents/${replacement.json.data.id}`, { token: admin, body: { reason: 'Wrong file' } });
   assert.equal(locked.status, 422);
@@ -256,7 +260,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   const complete = await call('POST', `${path}/payments/complete`, { token: admin, body: {} });
   assert.equal(complete.json.data.status, 'for_approval');
   assert.equal(complete.json.data.payment_stage_state, 'confirmed');
-  assert.match((await call('PATCH', `${path}/payment-plan`, { token: admin, body: { agreed_amount: 90000, reason: 'Price changed' } })).json.errors.agreed_amount[0], /locked/);
+  assert.equal((await call('PUT', `${path}/required-payments`, { token: admin, body: { preset: 'full' } })).status, 422, 'the list is locked past the Payment Record');
 
   // Approval needs the review; activation needs the account.
   assert.match((await call('POST', `${path}/approve`, { token: admin, body: {} })).json.errors.status[0], /review must be confirmed/);
@@ -294,12 +298,15 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
 test('report, folders, rejection and restore', async () => {
   const report = await call('GET', `/applicants/${applicantId}/report`, { token: admin });
   assert.equal(report.status, 200);
-  assert.equal(report.json.data.payment.summary.verified_amount, 80000);
-  assert.equal(report.json.data.payment.plan.discount.discount_percent, 0, 'no discount: the agreed amount is recorded as-is');
+  assert.equal(report.json.data.payment.progress.verified_count, 2);
+  assert.equal(report.json.data.payment.progress.all_verified, true);
+  assert.ok(!('plan' in report.json.data.payment), 'no billing plan in the report');
   assert.equal(report.json.data.approval.checkpoints.every((x: any) => x.done), true);
   const folders = await call('GET', '/applicants/application-detail?folder=approved', { token: admin });
   const row = folders.json.data.find((a: any) => a.id === applicantId);
-  assert.equal(row.payment_percent, 100);
+  assert.equal(row.payments_verified, 2);
+  assert.equal(row.payments_required, 2);
+  assert.ok(!('payment_percent' in row));
   assert.equal(typeof folders.json.meta.folder_counts.rejected, 'number');
   assert.equal((await call('GET', '/applicants/active-franchisees?search=juan', { token: admin })).json.data[0].has_portal_account, true);
 

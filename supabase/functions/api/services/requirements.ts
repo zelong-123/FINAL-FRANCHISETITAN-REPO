@@ -13,6 +13,8 @@ const IMAGES = 'jpg,jpeg,png';
 /** The stage each requirement belongs to, and the applicant status at which Sales submits it. */
 export const REQUIREMENT_STAGES: Record<string, { label: string; applicant_status: string; gate: string }> = {
   qualification: { label: 'Qualification', applicant_status: 'converted', gate: 'Confirm Qualified' },
+  // Submitted next to the LOI; Complete LOI needs it Accepted (see assertLoiCompletable).
+  loi: { label: 'LOI Submission', applicant_status: 'loi_submitted', gate: 'Complete LOI' },
   activation: { label: 'Before Active Franchisee', applicant_status: 'approved', gate: 'Mark as Active Franchisee' },
 };
 
@@ -55,7 +57,7 @@ export const REQUIREMENTS: RequirementDef[] = [
     files: [{ key: 'interview_sheet', label: 'Signed interview sheet', required: true, accept: DOCS }],
   },
   {
-    key: 'proposed_site', stage: 'qualification', label: 'Proposed site', help: 'The address, whether it is owned or leased, and photos of the site.',
+    key: 'proposed_site', stage: 'loi', label: 'Proposed site', help: 'The address, whether it is owned or leased, and photos of the site.',
     fields: [
       { key: 'address', label: 'Site address', type: 'text', required: true },
       { key: 'ownership', label: 'Owned or leased', type: 'select', required: true, options: [{ value: 'owned', label: 'Owned' }, { value: 'leased', label: 'Leased' }] },
@@ -131,6 +133,8 @@ export function legacyStage(a: Row, stage: string, rows: Row[]): boolean {
   if (rows.some((r) => r.stage === stage)) return false;
   if (stage === 'qualification') return a.status !== 'converted' && a.status !== 'rejected' ? true : false;
   if (stage === 'activation') return a.status === 'active_franchisee';
+  // Applicants already past LOI Submission are never asked for the Proposed site again.
+  if (stage === 'loi') return ['payment_submitted', 'for_approval', 'approved', 'active_franchisee'].includes(a.status);
   return false;
 }
 

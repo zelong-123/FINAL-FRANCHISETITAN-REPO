@@ -30,7 +30,6 @@ const TONE = {
   warn: 'text-[#fbbf24] border-[rgba(251,_191,_36,_.45)]',
   bad: 'text-[#ff888e] border-[rgba(255,_136,_142,_.5)]',
 };
-const peso = (v) => (v === null || v === undefined ? null : `₱${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const when = (v) => (v ? manilaDateTimeLabel(v) : null);
 const day = (v) => (v ? formatDate(v) : null);
 const nameOf = (person) => person?.full_name || null;
@@ -367,35 +366,38 @@ export default function ApplicationDetailReport({ report, onClose }) {
       if (!reached('payment')) return <NotStarted />;
       const record = data.payment_record;
       if (!record) return <NotStarted />;
+      const entryCard = (p, title) => (
+        <Card key={p.id} title={title} tone={p.status === 'rejected' ? 'warn' : undefined}>
+          <Pairs rows={[
+            ['Status', p.status_label], ['Date paid', day(p.payment_date)], ['Method', p.payment_method_label],
+            ['OR / AR number', p.or_number], ['Reference number', p.reference_number],
+            ['Encoded by (Sales)', `${p.recorded_by || '—'}${p.recorded_at ? ` · ${when(p.recorded_at)}` : ''}`],
+            p.verified_by && ['Verified by (Admin)', `${p.verified_by} · ${when(p.verified_at)}`],
+            p.rejected_by && ['Rejected by (Admin)', `${p.rejected_by} · ${when(p.rejected_at)}`],
+            p.rejected_reason && ['Rejection reason', p.rejected_reason],
+            p.remarks && ['Remarks', p.remarks],
+          ]} />
+          {p.legacy_no_receipt
+            ? <p className="m-[8px_0_0] text-[13px] text-[#fbbf24]">Legacy - no receipt captured</p>
+            : <Files label="Receipt" items={p.receipts === null ? null : (p.receipts || []).map((d) => ({ key: `pay${d.id}`, name: d.original_name, mime: d.mime_type, path: `/applicants/${a.id}/payments/${p.id}/documents/${d.id}/download` }))} />}
+        </Card>
+      );
       return (
         <>
           <Card title="Payment Record">
-            <p className="m-[0_0_10px] text-[13px] text-[#9aa6c4]">Payments made outside the system, recorded here. The status comes only from Verified entries.</p>
+            <p className="m-[0_0_10px] text-[13px] text-[#9aa6c4]">{record.note}</p>
             <Pairs rows={[
-              ['Status', <Badge key="s" tone={{ fully_paid: 'done', partially_paid: 'current' }[record.status] || 'waiting'}>{record.status_label}</Badge>],
-              ['Agreed Package Amount', record.agreed_amount === null ? 'Not set yet' : `${peso(record.agreed_amount)}${record.package_name ? ` · ${record.package_name}` : ''}${record.source ? ` · from ${record.source}` : ''}`],
-              ['Verified', peso(record.verified_amount)], ['Waiting for review', peso(record.pending_amount)], ['Remaining', peso(record.remaining_amount)],
-              record.legacy_discount && ['Earlier discount (read-only)', `${record.legacy_discount.discount_percent}% off ${peso(record.legacy_discount.original_amount)}`],
+              ['Status', <Badge key="s" tone={{ completed: 'done', for_verification: 'current' }[record.badge] || 'waiting'}>{record.badge_label}</Badge>],
+              ['Required payments', record.required_count ? `${record.verified_count} of ${record.required_count} verified` : (record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet')],
               ['Confirmed by (Admin)', data.people?.payment_confirmed_by ? nameOf(data.people.payment_confirmed_by) : null],
             ]} />
           </Card>
-          {(record.entries || []).map((p, i) => (
-            <Card key={p.id} title={`Entry ${i + 1} · ${peso(p.amount)}`} tone={p.status === 'returned' ? 'warn' : undefined}>
-              <Pairs rows={[
-                ['Status', p.status_label], ['Date paid', day(p.payment_date)], ['Method', p.payment_method_label],
-                ['OR / AR number', p.or_number], ['Reference number', p.reference_number],
-                ['Recorded by (Sales)', `${p.recorded_by || '—'}${p.recorded_at ? ` · ${when(p.recorded_at)}` : ''}`],
-                p.verified_by && ['Verified by (Admin)', `${p.verified_by} · ${when(p.verified_at)}`],
-                p.status === 'returned' && ['Returned by (Admin)', `${p.returned_by || '—'} · ${when(p.returned_at)}`],
-                p.status === 'returned' && ['Return reason', p.returned_reason],
-                p.remarks && ['Remarks', p.remarks],
-              ]} />
-              {p.legacy_no_receipt
-                ? <p className="m-[8px_0_0] text-[13px] text-[#fbbf24]">Legacy - no receipt captured</p>
-                : <Files label="Receipt" items={p.receipts === null ? null : (p.receipts || []).map((d) => ({ key: `pay${d.id}`, name: d.original_name, mime: d.mime_type, path: `/applicants/${a.id}/payments/${p.id}/documents/${d.id}/download` }))} />}
-            </Card>
-          ))}
-          {!(record.entries || []).length && <Card><p className="m-0 text-[14px] text-[#c9d0e0]">No payment recorded yet.</p></Card>}
+          {(record.required || []).map((item) => (item.entry
+            ? entryCard(item.entry, `${item.name} · ${item.status_label}`)
+            : <Card key={`r${item.id}`} title={`${item.name} · ${item.status_label}`}><p className="m-0 text-[14px] text-[#c9d0e0]">Not yet recorded.</p></Card>))}
+          {(record.required || []).flatMap((item) => (item.history || []).map((h) => entryCard(h, `${item.name} · earlier submission`)))}
+          {(record.earlier_entries || []).map((p, i) => entryCard(p, `Earlier entry ${i + 1} (before required payments)`))}
+          {!(record.required || []).length && !(record.earlier_entries || []).length && <Card><p className="m-0 text-[14px] text-[#c9d0e0]">No payment recorded yet.</p></Card>}
         </>
       );
     },
@@ -465,8 +467,9 @@ export default function ApplicationDetailReport({ report, onClose }) {
     (data.activity_rows || []).forEach((r) => rows.push(['Scheduled Activities', ACTIVITY_LABELS[r.activity_type] || r.activity_type, `${titleCase(r.status)}${r.review_status ? ` / ${r.review_status}` : ''} · ${when(r.starts_at) || ''}`]));
     if (data.loi) rows.push(['LOI', 'Verification', titleCase(String(data.loi.verification_status || '').replace(/_/g, ' '))]);
     if (data.payment_record) {
-      rows.push(['Payment Record', 'Status', data.payment_record.status_label], ['Payment Record', 'Agreed Package Amount', peso(data.payment_record.agreed_amount) || '']);
-      data.payment_record.entries.forEach((p) => rows.push(['Payment Record', `OR ${p.or_number || '—'}`, `${peso(p.amount)} · ${p.status_label}`]));
+      const pr = data.payment_record;
+      rows.push(['Payment Record', 'Status', pr.badge_label], ['Payment Record', 'Required payments verified', pr.required_count ? `${pr.verified_count} of ${pr.required_count}` : '—']);
+      (pr.required || []).forEach((item) => rows.push(['Payment Record', item.name, `${item.status_label}${item.entry?.or_number ? ` · OR/AR ${item.entry.or_number}` : ''}`]));
     }
     rows.push(['Approval', 'Approved by', data.approval?.approved_by || 'Not approved yet']);
     history.forEach((h) => rows.push(['History', `${when(h.at)} · ${h.by || 'System'}`, `${h.action}${h.reason ? ` — ${h.reason}` : ''}`]));

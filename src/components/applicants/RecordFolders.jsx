@@ -2,9 +2,9 @@ import React from 'react';
 import { FaFolderOpen } from 'react-icons/fa6';
 import { StatusBadge } from '../ApiUi';
 import RecordCode, { ApplicantIdCell } from '../RecordCode';
-import { formatDate, formatNumber } from '../../lib/format';
+import { formatDate } from '../../lib/format';
 import {
-  PAYMENT_STAGES, branchLabel, folderDate, paidLabel, planTitle as planSummary,
+  PAYMENT_STAGES, branchLabel, folderDate, paidLabel, planTitle,
 } from '../../lib/recordFolders';
 
 /*
@@ -15,8 +15,6 @@ import {
  * Every card has the same slots (icon row, 2-line name, two meta lines, footer)
  * so cards in a row are always the same height.
  */
-
-const planTitle = (row) => planSummary(row, (value) => formatNumber(value, 2));
 
 function statusLine(folder, row) {
   if (folder === 'approved') {

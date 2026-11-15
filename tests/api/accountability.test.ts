@@ -180,7 +180,7 @@ test('LOI: stage-gated, franchisee refused, Admin only verifies, files locked on
   assert.match((await call('POST', `/applicants/${early.id}/loi`, { token: sales, form: scan() })).json.errors.loi[0], /only be changed at the LOI stage/);
 });
 
-test('required reasons: Undo LOI, Return for revision and payment Return need at least 5 characters', async () => {
+test('required reasons: Undo LOI, Return for revision and payment Reject need at least 5 characters', async () => {
   const [a] = await q(`insert into applicants (full_name, status, application_date, assigned_sales_user_id) values ('Reasons', 'loi_submitted', '2026-01-01', $1) returning id`, [salesUser.id]);
   const path = `/applicants/${a.id}`;
   assert.match((await call('PATCH', `${path}/status`, { token: admin, body: { status: 'scheduled' } })).json.errors.remarks[0], /Remarks are required for "Undo LOI"/);
@@ -189,8 +189,10 @@ test('required reasons: Undo LOI, Return for revision and payment Return need at
   await q(`update applicants set status = 'for_approval' where id = $1`, [a.id]);
   assert.match((await call('POST', `${path}/revise`, { token: admin, body: { stage: 'qualified', remarks: 'no' } })).json.errors.remarks[0], /at least 5 characters/);
 
-  await q(`update applicants set status = 'payment_submitted', payment_stage_state = 'for_review' where id = $1`, [a.id]);
-  assert.match((await call('POST', `${path}/payments/return`, { token: admin, body: { note: 'bad' } })).json.errors.note[0], /at least 5 characters/);
+  await q(`update applicants set status = 'payment_submitted' where id = $1`, [a.id]);
+  const [item] = await q(`insert into applicant_required_payments (applicant_id, name, position) values ($1, 'Full Payment', 1) returning id`, [a.id]);
+  const [p] = await q(`insert into payments (applicant_id, required_payment_id, payment_type, payment_date, payment_method, or_number, status, recorded_by_user_id) values ($1, $2, 'payment_record', '2026-11-01', 'cash', 'OR-REASON-1', 'pending', $3) returning id`, [a.id, item.id, salesUser.id]);
+  assert.match((await call('POST', `${path}/payment-entries/${p.id}/reject`, { token: admin, body: { reason: 'bad', revision: 1 } })).json.errors.reason[0], /at least 5 characters/);
 });
 
 test('the report header shows the real stage, not "Approved applicant"', async () => {

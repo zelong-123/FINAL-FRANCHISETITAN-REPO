@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
 import { abort, boolParam, fail, Filter, insertRow, intParam, manilaToday, ok, paginate, perPage, pick, routeId, updateRow } from '../lib/http.ts';
-import { readInput, validate, validateEach } from '../lib/validate.ts';
+import { readInput, validate } from '../lib/validate.ts';
 import { downloadDocument, MAX_UPLOAD_KB, storeDocument } from '../lib/files.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit, assignPublicCode, createAccount, publicUser } from '../services/users.ts';
@@ -13,11 +13,10 @@ import { applyRecordSearch } from '../services/recordSearch.ts';
 import { provisionBranch } from '../services/branchAccess.ts';
 import { renameParticipantName } from '../services/scheduleNames.ts';
 import {
-  APPLICANT_MODEL, applicantJson, hasVerifiedInitialPayment, isPaymentFullyDiscounted, loadApplicant, loadPlan, milestoneState, MILESTONES, PAYMENT_INITIAL_PERCENT, paymentPercent,
-  QUALIFICATION_KEYS, REQUIRED_MILESTONES, verifiedPaymentTotal,
+  APPLICANT_MODEL, applicantJson, loadApplicant, milestoneState, MILESTONES, QUALIFICATION_KEYS, REQUIRED_MILESTONES,
 } from '../services/applicantModel.ts';
 import {
-  ACTIVITY_ORDER, activityDone, activityDoneState, activityLabel, assertLoiCompletable, assertLoiProceedable, assertQualificationChecked, assertTransition, LOI_PENDING_BLOCK, loiPending,
+  ACTIVITY_ORDER, activityDone, activityDoneState, activityLabel, assertLoiCompletable, assertQualificationChecked, assertTransition, LOI_PENDING_BLOCK, loiPending,
   qualificationChecked, scheduledChecked, STAGE_ORDER, stageLabel, statusLabel, TRACKED_ACTIVITY_MILESTONES,
 } from '../services/pipeline.ts';
 import { fileRef, logEvent, logStageChange, transition } from '../services/applicantStage.ts';
@@ -25,11 +24,11 @@ import { activeSalesUser, assertAssignedSales, notifyAssignedSales, optionalReas
 import {
   assertBrandUnlocked, BRAND_METHODS, brandState, latestBrandConfirmation, retastingDone, tastedBrandId,
 } from '../services/brandConfirmation.ts';
-import * as payments from '../services/paymentStage.ts';
 import { assertNoSessionOfOtherBrand, sessionsFor, syncApplicantAttendance } from '../services/scheduleHooks.ts';
 import { forgetActivity, releaseCompletedTastingKeys } from '../services/schedule/sync.ts';
 import { assertStageRequirements, loiRequirement } from '../services/requirements.ts';
-import { OFF_MESSAGE, paymentAdvanced, recordPayload, setAgreedAmount } from '../services/paymentRecord.ts';
+import { moveToForApproval, OFF_MESSAGE, recordPayload } from '../services/paymentRecord.ts';
+import { entryStatus, legacySatisfied, paymentProgress } from '../services/requiredPayments.ts';
 import { applicantMonitor, applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, STAGE_DAYS_SQL } from '../services/monitoring.ts';
 import { applicantHistory, REPORT_PAGES } from '../services/applicationDetail.ts';
 import { canSeeRequirementFiles, requirementsPayload } from './requirements.ts';
@@ -38,7 +37,6 @@ import { accountAuditValues, cleanOptionalPhone, issueInitialCredentials } from 
 export const applicantRoutes = new Hono<AppEnv>();
 
 const PAYMENT_MODEL = 'App\\Models\\Payment';
-const PAYMENT_TYPE_VALUES = 'downpayment,installment_payment,full_payment,initial_franchise_fee,fully_paid,installment';
 const LEAD_CODE_SQL = '(select fi.lead_code from franchise_inquiries fi where fi.id = applicants.inquiry_id)';
 const STATUSES = 'converted,qualified,scheduled,loi_submitted,payment_submitted,for_approval,approved,rejected,active_franchisee';
 const viewers = role('admin', 'sales', 'franchisee');
@@ -75,12 +73,21 @@ function paymentRequestDetails(p: Row | null | undefined) {
   if (!p) return null;
   return {
     id: p.id, department: p.department, paid_date: p.payment_date, requested_at: iso(p.requested_at), remarks: p.remarks,
-    payment_type: p.payment_type, amount: Number(p.amount), payment_method: p.payment_method, status: p.status,
+    payment_type: p.payment_type, payment_method: p.payment_method, or_number: p.or_number ?? null, status: entryStatus(p.status),
     documents: p.documents ?? [],
   };
 }
 const PAYMENT_DOCS = (id: string) => `coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'original_name', d.original_name) order by d.id) from documents d
   where d.documentable_type = 'App\\Models\\Payment' and d.documentable_id = ${id}), '[]'::jsonb)`;
+
+/** A payment row as the API shows it: no amount (billing is not part of the system). */
+const paymentRowJson = (p: Row): Row => ({
+  id: p.id, required_payment_id: p.required_payment_id ?? null, payment_type: p.payment_type, payment_date: p.payment_date, payment_method: p.payment_method,
+  or_number: p.or_number ?? null, reference_number: p.reference_number ?? null, status: entryStatus(p.status), remarks: p.remarks,
+  recorded_by: p.recorded_by?.full_name ?? p.recorded_name ?? null, verified_by: p.verified_by?.full_name ?? p.verified_name ?? null,
+  verified_at: iso(p.verified_at), submitted_at: iso(p.requested_at),
+  documents: (p.documents ?? []).map((d: Row) => ({ id: d.id, original_name: d.original_name })),
+});
 
 // ---- lists ----
 applicantRoutes.get('/applicants', viewers, async (c) => {
@@ -140,6 +147,9 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
       out.has_pending_payment_request = own.some((p) => p.status === 'pending');
       out.payment_request = paymentRequestDetails(own[0]);
       out.payment_confirmed = row.payment_confirmed_at !== null;
+      const progress = await paymentProgress(db, row.id);
+      out.payments_verified = progress.verified;
+      out.payments_required = progress.required;
     }
     if (assessment) out.has_assessment_request = assessment.has(row.id);
     if (activity) out.has_activity_update = activity.has(row.id);
@@ -246,7 +256,6 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
       ${NAME('a.assigned_sales_user_id')} as assigned_sales,
       (select x.business_name from franchisees x where x.applicant_id = a.id limit 1) as business_name,
       (select l.name from franchisees x join franchise_locations l on l.franchisee_id = x.id where x.applicant_id = a.id order by l.id limit 1) as location_name,
-      (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as plan,
       (select jsonb_build_object('remarks', h.remarks, 'created_at', h.created_at, 'by', (select u.full_name from users u where u.id = h.changed_by_user_id))
        from applicant_status_histories h where h.applicant_id = a.id and h.to_status = 'rejected' order by h.id desc limit 1) as rejection`,
     from: 'applicants a', where: f.clauses, params: f.params, orderBy: `${order[folder]}, a.id desc`, perPage: perPage(c, 15),
@@ -256,7 +265,6 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
   const data = [];
   for (const a of body.data) {
     const stepIndex = steps.indexOf(a.status);
-    const required = Number(a.plan?.total_required_amount ?? a.total_required_amount ?? 0);
     const business = a.business_name && a.business_name.trim().toLowerCase() !== a.full_name.trim().toLowerCase() ? a.business_name : null;
     const rejection = a.status === 'rejected' ? a.rejection : null;
     data.push({
@@ -267,15 +275,7 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
       rejected_on: a.rejected_at ? iso(a.rejected_at) : null,
       business_name: business, location: a.location_name, brand: a.brand_name, application_date: a.application_date,
       approved_at: iso(a.approved_at), updated_at: iso(a.updated_at), step: stepIndex < 0 ? null : stepIndex + 1, step_total: steps.length,
-      payment_percent: await paymentPercent(db, a),
-      payment_required_amount: required > 0 ? required : null,
-      payment_plan: a.plan ? {
-        package_name: a.plan.package_name,
-        total_required_amount: a.plan.total_required_amount !== null ? Number(a.plan.total_required_amount) : null,
-        original_total_required_amount: a.plan.total_required_original_amount !== null ? Number(a.plan.total_required_original_amount) : null,
-        discount_percent: Number(a.plan.total_required_discount_percent ?? 0),
-        promo_name: a.plan.promo_name,
-      } : null,
+      ...(await (async () => { const p = await paymentProgress(db, a.id); return { payments_verified: p.verified, payments_required: p.required }; })()),
       rejected_at: iso(a.rejected_at) ?? iso(rejection?.created_at),
       rejected_by: rejection?.by ?? null,
       rejection_remarks: rejection?.remarks ?? null,
@@ -347,11 +347,9 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
     `select a.*, (select to_jsonb(b) from brands b where b.id = a.preferred_brand_id) as preferred_brand,
        (select to_jsonb(fi) from franchise_inquiries fi where fi.id = a.inquiry_id) as inquiry,
        (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'phone', u.phone) from users u where u.id = a.user_id) as "user",
-       (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as payment_plan,
        ${HISTORY('a.id')} as status_history,
        ${person('assigned_sales_user_id')} as assigned_sales,
        ${person('assigned_sales_by_user_id')} as assigned_sales_by,
-       ${person('total_required_set_by_user_id')} as total_set_by,
        ${person('payment_turned_over_by_user_id')} as payment_turned_over_by,
        ${person('payment_returned_by_user_id')} as payment_returned_by,
        (select u.full_name from users u where u.id = a.approved_by_user_id) as approved_by,
@@ -387,7 +385,7 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
   const payload: Row = {
     ...applicantJson(row),
     schedules: schedules.map(scheduleJson),
-    payments: paymentRows,
+    payments: paymentRows.map(paymentRowJson),
     documents,
     milestone_state: milestoneState(a),
     lead: row.inquiry ? { id: row.inquiry.id, lead_code: row.inquiry.lead_code } : null,
@@ -406,43 +404,16 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
   if (name === 'sales') payload.has_assessment_request = (await unreadApplicantIds(db, user.id, 'assessment_pending')).has(id);
 
   if (['admin', 'sales'].includes(name)) {
-    const plan = row.payment_plan;
     payload.has_pending_payment_request = paymentRows.some((p) => p.status === 'pending');
     payload.payment_confirmed = a.payment_confirmed_at !== null;
     const latest = paymentRows[paymentRows.length - 1];
     payload.payment_request = paymentRequestDetails(latest && { ...latest, documents: latest.documents.map((d: Row) => ({ id: d.id, original_name: d.original_name })) });
-    const required = Number(plan?.total_required_amount ?? a.total_required_amount ?? 0);
-    let initial = Number(plan?.initial_payment_amount ?? a.initial_payment_amount ?? 0);
-    if (initial <= 0 && required > 0) initial = Math.round(required * PAYMENT_INITIAL_PERCENT) / 100;
-    const verified = await verifiedPaymentTotal(db, a, plan);
-    payload.payment_summary = {
-      package_name: plan?.package_name ?? a.package_name,
-      total_required_amount: required,
-      initial_payment_amount: initial,
-      other_fees: Number(plan?.other_fees ?? a.other_fees ?? 0),
-      verified_amount: verified,
-      remaining_balance: Math.max(0, required - verified),
-      payment_percent: await paymentPercent(db, a),
-      payment_terms: plan?.payment_terms ?? null,
-    };
-    payload.payment_stage = await payments.stagePayload(db, a, user);
-    payload.payment_record = await recordPayload(db, a, user, paymentAdvanced(c), canSeeRequirementFiles(user, a));
-    if (!paymentAdvanced(c)) {
-      // The advanced features are off: their fields are left out (existing discounts stay readable in payment_record).
-      for (const key of ['installment', 'can_set_schedule', 'installment_percent', 'downpayment_amount', 'installment_amount', 'can_use_downpayment', 'promo_name', 'discount_percent', 'discount_set_at', 'discount_set_by']) delete payload.payment_stage[key];
-      payload.payment_stage.can_submit_report = false;
-      payload.payment_stage.can_add_entry = false;
-    }
-    payload.payment_history = paymentRows.map((p) => ({
-      id: p.id, payment_type: p.payment_type, payment_method: p.payment_method, amount: Number(p.amount), payment_date: p.payment_date, status: p.status, remarks: p.remarks,
-      recorded_by: p.recorded_by?.full_name ?? null, received_by: p.received_by?.full_name ?? null, received_by_user_id: p.received_by_user_id,
-      received_by_role_id: p.received_by_role_id, verified_by: p.verified_by?.full_name ?? null,
-      documents: p.documents.map((d: Row) => ({ id: d.id, original_name: d.original_name })),
-    }));
+    payload.payment_record = await recordPayload(db, a, user, canSeeRequirementFiles(user, a));
+    payload.payment_history = paymentRows.map(paymentRowJson);
     const [legacy] = await db.query(`select * from applicant_payments where applicant_id = $1 and is_legacy_baseline = true limit 1`, [id]);
     if (legacy && !paymentRows.some((p) => p.payment_type === 'legacy_fully_paid')) {
       payload.payment_history.push({
-        id: `legacy-${legacy.id}`, payment_type: 'legacy_fully_paid', amount: Number(legacy.amount), payment_date: legacy.payment_date,
+        id: `legacy-${legacy.id}`, payment_type: 'legacy_fully_paid', payment_date: legacy.payment_date,
         status: 'verified', remarks: legacy.remarks, verified_by: 'System baseline', documents: [],
       });
     }
@@ -512,7 +483,8 @@ applicantRoutes.get('/applicants/:applicant/report', viewers, async (c) => {
     brand_confirmation: await brandPayload(db, a),
     activity_rows: schedules.map((s) => ({ ...scheduleJson(s), proof_documents: showFiles ? s.proof_documents : null })),
     loi_documents: showFiles ? loiDocuments : null,
-    payment_record: await recordPayload(db, a, user, paymentAdvanced(c), showFiles),
+    // The Package or basis note is a working note for the Payment Record card only: never in reports or exports.
+    payment_record: await (async () => { const { basis_note: _note, ...rest } = await recordPayload(db, a, user, showFiles); return rest; })(),
     follow_ups: await followUpsOf(db, 'applicant', a.id),
     history: await applicantHistory(db, a.id, showFiles),
   });
@@ -532,7 +504,6 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   const id = a.id;
   const milestones = a.milestones ?? {};
   const details = a.milestone_details ?? {};
-  const plan = await loadPlan(db, id);
   const history = await db.query(`select h.*, (select u.full_name from users u where u.id = h.changed_by_user_id) as by_name from applicant_status_histories h where h.applicant_id = $1 order by h.id`, [id]);
   const schedules = await db.query(`select s.*, (select u.full_name from users u where u.id = s.assigned_to_user_id) as assigned_name from activity_schedules s where s.applicant_id = $1 order by s.starts_at`, [id]);
   const paymentRows = await db.query(
@@ -546,8 +517,8 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
   const assignedSales = await db.query(`select full_name from users where id = $1`, [a.assigned_sales_user_id ?? null]);
   const [names] = await db.query(
     `select (select full_name from users where id = $1) as reviewed, (select full_name from users where id = $2) as loi_by, (select full_name from users where id = $3) as approved,
-       (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code, (select full_name from users where id = $6) as discount_by`,
-    [a.reviewed_by_user_id, a.loi_confirmed_by_user_id, a.approved_by_user_id, a.preferred_brand_id, a.inquiry_id, plan?.discount_set_by_user_id ?? null],
+       (select name from brands where id = $4) as brand, (select lead_code from franchise_inquiries where id = $5) as lead_code`,
+    [a.reviewed_by_user_id, a.loi_confirmed_by_user_id, a.approved_by_user_id, a.preferred_brand_id, a.inquiry_id],
   );
   const qualified = history.find((h) => h.to_status === 'qualified');
   const approvedHistory = history.find((h) => h.to_status === 'approved');
@@ -561,19 +532,9 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
       completed_at: iso(completed?.completed_at), recorded_by: completed?.assigned_name ?? details[key]?.by ?? null, recorded_at: details[key]?.on ?? null,
     };
   });
-  const required = Number(plan?.total_required_amount ?? a.total_required_amount ?? 0);
-  let initial = Number(plan?.initial_payment_amount ?? a.initial_payment_amount ?? 0);
-  if (initial <= 0 && required > 0) initial = Math.round(required * PAYMENT_INITIAL_PERCENT) / 100;
-  const verified = paymentRows.filter((p) => p.status === 'verified');
-  const percent = await paymentPercent(db, a);
-  let paidDate: string | null = null;
-  let running = 0;
-  for (const p of verified) {
-    running += Number(p.amount);
-    if (!paidDate && required > 0 && running >= required) paidDate = p.payment_date;
-  }
-  const verifiedTotal = verified.reduce((sum, p) => sum + Number(p.amount), 0);
-  const final = plan?.total_required_amount ?? a.total_required_amount;
+  const progress = await paymentProgress(db, id);
+  const verifiedRows = paymentRows.filter((p) => p.status === 'verified' && p.required_payment_id);
+  const completedAt = progress.all_verified ? verifiedRows.map((p) => iso(p.verified_at)).filter(Boolean).sort().pop() ?? null : null;
   return {
     applicant: {
       id, applicant_code: a.applicant_code, lead_code: names.lead_code ?? null, full_name: a.full_name, email: a.email, phone: a.phone, address: a.address, notes: a.notes,
@@ -596,38 +557,20 @@ async function reportPayload(db: Db, a: Row): Promise<Row> {
       status: a.loi_status, verified_at: iso(a.loi_confirmed_at), verified_by: names.loi_by ?? null, remarks: a.loi_remarks, document: loi ?? null,
     },
     payment: {
-      plan: {
-        package_name: plan?.package_name ?? a.package_name,
-        total_required_amount: required > 0 ? required : null,
-        initial_payment_amount: initial > 0 ? initial : null,
-        other_fees: Number(plan?.other_fees ?? a.other_fees ?? 0),
-        payment_terms: plan?.payment_terms ?? null,
-        discount: final === null || final === undefined ? null : {
-          original_amount: Number(plan?.total_required_original_amount ?? a.total_required_original_amount ?? final),
-          discount_percent: Number(plan?.total_required_discount_percent ?? a.total_required_discount_percent ?? 0),
-          promo_name: plan?.promo_name ?? null, final_amount: Number(final), set_by: names.discount_by ?? null, set_at: iso(plan?.discount_set_at),
-        },
-        installment: await payments.installmentPayload(db, a),
+      // Counts of Verified milestones only: no amounts, totals or balances.
+      progress: {
+        required_count: progress.required, verified_count: progress.verified, all_verified: progress.all_verified,
+        badge: progress.badge, required: progress.items.map((i) => ({ id: i.id, name: i.name, status: i.status })), completed_at: completedAt,
+        entry_count: paymentRows.length,
       },
-      summary: {
-        verified_amount: verifiedTotal,
-        pending_amount: paymentRows.filter((p) => ['pending', 'for_revision'].includes(p.status)).reduce((sum, p) => sum + Number(p.amount), 0),
-        remaining_balance: required > 0 ? Math.max(0, required - verifiedTotal) : null,
-        payment_percent: percent,
-        fully_paid_at: paidDate,
-        transaction_count: paymentRows.length,
-      },
-      history: paymentRows.map((p) => ({
-        id: p.id, payment_type: p.payment_type, payment_method: p.payment_method, amount: Number(p.amount), payment_date: p.payment_date, submitted_at: iso(p.requested_at),
-        status: p.status, department: p.department, remarks: p.remarks, recorded_by: p.recorded_name, verified_by: p.verified_name, verified_at: iso(p.verified_at), documents: p.documents,
-      })),
+      history: paymentRows.map(paymentRowJson),
     },
     approval: {
       checkpoints: [
         { key: 'qualification', label: 'Qualification verified', done: qualificationChecked(a) },
         { key: 'activities', label: 'Activities verified', done: await scheduledChecked(db, a) },
         { key: 'loi', label: 'LOI verified', done: a.loi_verification_status === 'verified' || a.loi_confirmed_at !== null },
-        { key: 'payment', label: 'Payment verified', done: await hasVerifiedInitialPayment(db, a) },
+        { key: 'payment', label: 'All required payments verified', done: progress.all_verified || (progress.required === 0 && legacySatisfied(a)) },
       ],
       reviewed_at: iso(a.reviewed_at), reviewed_by: names.reviewed ?? null, review_remarks: a.review_remarks, approved_at: iso(a.approved_at),
       approved_by: names.approved ?? approvedHistory?.by_name ?? null, approved_by_user_id: a.approved_by_user_id, remarks: approvedHistory?.remarks ?? null,
@@ -1277,6 +1220,13 @@ applicantRoutes.post('/applicants/:applicant/loi', viewers, async (c) => {
       fail('file', 'The LOI is already verified. Admin must set it back to Not verified before the scan can be replaced.');
     }
   }
+  // The LOI file is required: the LOI cannot be saved (submitted) without one attached.
+  if (name === 'sales' && !v.file) {
+    const [current] = await db.query(
+      `select 1 from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' and removed_at is null and replaced_at is null limit 1`, [APPLICANT_MODEL, a.id],
+    );
+    if (!current) fail('file', 'Attach the LOI file (PDF, JPG or PNG). The LOI cannot be submitted without it.');
+  }
 
   const earlier = await db.query(
     `select id, original_name, type from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' and removed_at is null and replaced_at is null`,
@@ -1367,7 +1317,8 @@ applicantRoutes.post('/applicants/:applicant/loi/complete', admin, async (c) => 
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be moved forward.');
 
   if (a.status === 'payment_submitted' && loiPending(a)) {
-    await assertLoiCompletable(db, a);
+    // An older Pending LOI: the applicant is already at Payment Record, so only the LOI itself is checked.
+    await assertLoiCompletable(db, a, false);
     await db.tx(async (tx) => {
       const saved = await updateRow(tx, 'applicants', a.id, { loi_status: 'complete', loi_completed_at: new Date(), loi_completed_by_user_id: user.id });
       await logEvent(tx, saved!, 'loi_completed', user.id, { submission_type: a.loi_submission_type, completed_after_proceed: true }, 'Pending LOI completed at the Payment Record stage.');
@@ -1387,26 +1338,9 @@ applicantRoutes.post('/applicants/:applicant/loi/complete', admin, async (c) => 
   return ok(c, await freshWithHistory(db, a.id), 'LOI verified — the applicant is now at the Payment Record stage.');
 });
 
-applicantRoutes.post('/applicants/:applicant/loi/proceed', admin, async (c) => {
-  const { db } = c.get('deps');
-  const a = await load(c);
-  const user = c.get('user');
-  const v = await validate(db, await readInput(c), { remarks: ['nullable', 'string', 'max:2000'] });
-  if (a.archived_at) fail('applicant', 'An archived applicant cannot be moved forward.');
-  if (a.status !== 'loi_submitted') fail('status', '[Proceed] is only available at the LOI Submission stage.');
-  assertLoiProceedable(a);
-  const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'LOI Pending — soft copy to follow. Proceeded to Payment Record by Admin.';
-  await assertTransition(db, a, 'payment_submitted', user, remarks, true);
-  await db.tx(async (tx) => {
-    const saved = await transition(c, tx, a, 'payment_submitted', user, remarks, 'applicant.loi_proceeded', {
-      payment_stage_state: a.payment_stage_state ?? 'waiting_total', loi_status: 'pending', loi_proceeded_at: new Date(), loi_proceeded_by_user_id: user.id,
-    });
-    const hasImage = (await tx.query(`select 1 from documents where documentable_type = $1 and documentable_id = $2 and type = 'loi' limit 1`, [APPLICANT_MODEL, a.id])).length > 0;
-    await logEvent(tx, saved, 'loi_proceeded', user.id, { submission_type: a.loi_submission_type, has_image: hasImage, verification_status: a.loi_verification_status }, 'LOI Pending — must be completed before For Approval.');
-  });
-  if (a.user_id) await notifyUser(db, a.user_id, 'applicant_status', 'Application status updated', 'You can now submit your payment requirements. Please send the soft copy of your Letter of Intent as well.', { applicant_id: a.id, status: 'payment_submitted' });
-  return ok(c, await freshWithHistory(db, a.id), 'Moved to Payment Record with the LOI Pending. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
-});
+/** Removed: Complete LOI is the only way to Payment Record (it needs the LOI and the Proposed site verified). */
+applicantRoutes.post('/applicants/:applicant/loi/proceed', admin, () =>
+  fail('loi', '[Proceed] was removed. Complete LOI is the only way to Payment Record: verify the LOI (with its file) and the Proposed site first.'));
 
 // ---- documents ----
 const loadDocument = async (c: Context<AppEnv>, type: string, ownerId: number): Promise<Row> => {
@@ -1455,187 +1389,23 @@ applicantRoutes.get('/applicants/:applicant/payments/:payment/documents/:documen
 });
 
 // ---- payments ----
-const entryRules = {
-  amount: ['required', 'numeric', 'gt:0'],
-  payment_date: ['required', 'date'],
-  payment_type: ['nullable', `in:${PAYMENT_TYPE_VALUES}`],
-  payment_method: ['nullable', `in:${payments.PAYMENT_METHODS.join(',')}`],
-  remarks: ['nullable', 'string', 'max:2000'],
-};
-const REQUEST_MODEL = 'App\\Models\\PaymentRequest';
+// Billing is not part of the system: the older payment endpoints (Sales Reports, edit/delete
+// requests, the older review, totals, discounts and installment schedules) always refuse.
+// Payments are recorded per required payment in routes/paymentRecord.ts.
+const refuseBilling = () => fail('payments', OFF_MESSAGE);
+applicantRoutes.post('/applicants/:applicant/payments', sales, refuseBilling);
+applicantRoutes.put('/applicants/:applicant/payments/:payment', sales, refuseBilling);
+applicantRoutes.patch('/applicants/:applicant/payments/:payment/verify', admin, refuseBilling);
+applicantRoutes.patch('/applicants/:applicant/payments/:payment', sales, refuseBilling);
+applicantRoutes.delete('/applicants/:applicant/payments/:payment', sales, refuseBilling);
+applicantRoutes.post('/applicants/:applicant/payments/report', sales, refuseBilling);
+applicantRoutes.post('/applicants/:applicant/payments/apply-report', admin, refuseBilling);
+applicantRoutes.post('/applicants/:applicant/payments/return', admin, refuseBilling);
+applicantRoutes.patch('/applicants/:applicant/payment-plan', admin, () =>
+  fail('payments', 'The Agreed Package Amount was removed: no amounts are set or computed. Use "Edit required payments" to choose which payments the applicant must complete.'));
+applicantRoutes.patch('/applicants/:applicant/payment-schedule', admin, refuseBilling);
 
-applicantRoutes.post('/applicants/:applicant/payments', sales, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', 'Record each payment with Add payment entry (date, amount, method, OR/AR number, reference number and receipt).');
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  await assertAssignedSales(c, a);
-  const user = c.get('user');
-  const input = await readInput(c);
-  if (a.payment_stage_state !== null) {
-    const v = await validate(db, input, entryRules);
-    const request = await payments.submitReport(db, a.id, user, [v]);
-    await audit(c, db, 'payment.report_submitted', { type: REQUEST_MODEL, id: request.id }, null, request);
-    return ok(c, request, 'Sales Report sent to Admin for confirmation.', 201);
-  }
-  // Records from before the Payment Record state machine.
-  if (!['loi_submitted', 'for_approval', 'approved'].includes(a.status)) fail('status', 'Payments may be recorded after LOI submission.');
-  if ((await db.query(`select 1 from payments where applicant_id = $1 and status in ('pending', 'for_revision') limit 1`, [a.id])).length) fail('status', 'A payment report is already awaiting Admin review.');
-  const v = await validate(db, input, {
-    payment_type: ['required', 'string', 'max:50'],
-    payment_method: ['nullable', 'string', 'max:100'],
-    amount: ['required', 'numeric', 'gt:0'],
-    payment_date: ['required', 'date'],
-    department: ['nullable', 'string', 'in:Sales'],
-    remarks: ['nullable', 'string'],
-    receipt: ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', `max:${MAX_UPLOAD_KB}`],
-  });
-  const first = a.status === 'loi_submitted';
-  if (first) await assertTransition(db, a, 'payment_submitted', user, v.remarks ?? null, true);
-  const payment = await db.tx(async (tx) => {
-    const row = await insertRow(tx, 'payments', {
-      applicant_id: a.id, payment_type: v.payment_type, department: v.department ?? 'Sales', requested_at: new Date(), payment_method: v.payment_method ?? null,
-      amount: v.amount, payment_date: v.payment_date, status: 'pending', recorded_by_user_id: user.id, remarks: v.remarks ?? null,
-    });
-    await payments.syncLedger(tx, row);
-    if (v.receipt) await storeDocument(c, tx, v.receipt, `applicants/${a.id}/payments`, { type: PAYMENT_MODEL, id: row.id }, 'payment_receipt');
-    return row;
-  });
-  if (first) await transition(c, db, a, 'payment_submitted', user, v.remarks ?? 'Payment confirmation requested by Sales.', 'applicant.payment_requested');
-  await notifyRoles(db, ['admin'], 'payment_submitted', 'Payment confirmation requested', `Sales submitted a payment report for ${a.full_name}.`, { applicant_id: a.id, payment_id: payment.id });
-  await audit(c, db, 'applicant.payment_recorded', { type: PAYMENT_MODEL, id: payment.id }, null, payment);
-  return ok(c, { ...payment, documents: await paymentDocuments(db, payment.id) }, 'Payment report sent to Admin.', 201);
-});
-
-const paymentDocuments = (db: Db, id: number) => db.query(`select * from documents where documentable_type = $1 and documentable_id = $2 order by id`, [PAYMENT_MODEL, id]);
-
-applicantRoutes.put('/applicants/:applicant/payments/:payment', sales, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be edited after it is submitted. Admin returns it and Sales records a corrected entry.');
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  await assertAssignedSales(c, a);
-  const user = c.get('user');
-  if (a.payment_stage_state !== null) fail('payment', 'This payment belongs to the Payment Record stage — use Edit or Delete on the payment record instead.');
-  const [p] = await db.query(`select * from payments where id = $1`, [routeId(c, 'payment')]);
-  requireFound(p);
-  if (p.applicant_id !== a.id) abort(404, 'Record not found.');
-  if (p.status !== 'for_revision' || p.recorded_by_user_id !== user.id) fail('payment', 'Only your own payment returned For Revision can be edited.');
-  const v = await validate(db, await readInput(c), {
-    payment_type: ['sometimes', 'required', 'string', 'max:50'],
-    payment_method: ['sometimes', 'nullable', 'string', 'max:100'],
-    amount: ['sometimes', 'required', 'numeric', 'gt:0'],
-    payment_date: ['sometimes', 'required', 'date'],
-    remarks: ['sometimes', 'nullable', 'string'],
-    receipt: ['sometimes', 'nullable', 'file', 'mimes:pdf,jpg,jpeg,png', `max:${MAX_UPLOAD_KB}`],
-  });
-  const { receipt, ...changes } = v;
-  const saved = await db.tx(async (tx) => {
-    const row = await updateRow(tx, 'payments', p.id, { ...changes, status: 'pending', verified_by_user_id: null, verified_at: null, requested_at: new Date() });
-    await payments.syncLedger(tx, row!);
-    if (receipt) await storeDocument(c, tx, receipt, `applicants/${a.id}/payments`, { type: PAYMENT_MODEL, id: p.id }, 'payment_receipt');
-    return row!;
-  });
-  await audit(c, db, 'applicant.payment_revised', { type: PAYMENT_MODEL, id: p.id }, p, saved);
-  return ok(c, { ...saved, documents: await paymentDocuments(db, p.id) }, 'Payment revision resubmitted to Admin.');
-});
-
-applicantRoutes.patch('/applicants/:applicant/payments/:payment/verify', admin, async (c) => {
-  const { db } = c.get('deps');
-  const a = await load(c);
-  const user = c.get('user');
-  const [p] = await db.query(`select * from payments where id = $1`, [routeId(c, 'payment')]);
-  requireFound(p);
-  if (p.applicant_id !== a.id) abort(404, 'Record not found.');
-  if (a.payment_stage_state !== null) fail('payment', 'Use Confirm payment or Return to Sales in the Payment Record stage.');
-  const v = await validate(db, await readInput(c), {
-    status: ['required', 'in:verified,for_revision,rejected'],
-    remarks: ['required_if:status,for_revision,rejected', 'nullable', 'string'],
-  });
-  if (['for_revision', 'rejected'].includes(v.status)) v.remarks = requireReason(v.remarks, 'remarks', 'a return reason');
-  // With the advanced features off, this older review only marks the entry: it never moves the stage.
-  // The applicant then finishes through the Payment Record (Agreed Package Amount, then COMPLETED when Fully Paid).
-  const moveStage = paymentAdvanced(c);
-  if (!moveStage && v.status === 'rejected') fail('status', `${OFF_MESSAGE} Return the entry (For revision) instead of rejecting the payment request.`);
-  if (!['pending', 'for_revision'].includes(p.status)) fail('payment', 'Only payments awaiting verification can be reviewed.');
-  if (v.status === 'rejected' && a.status !== 'payment_submitted') fail('status', 'Only an initial payment request at the "Payment Submitted" stage can be rejected; later installments remain at their current stage.');
-  await db.tx(async (tx) => {
-    const saved = await updateRow(tx, 'payments', p.id, { status: v.status, verified_by_user_id: user.id, verified_at: new Date(), remarks: v.remarks ?? p.remarks });
-    await payments.syncLedger(tx, saved!);
-    await logEvent(tx, a, 'payment_entry_reviewed', user.id, { payment_id: p.id }, v.remarks ?? null, {
-      step: 'payment_record', old_values: { payment_id: p.id, status: p.status }, new_values: { payment_id: p.id, status: v.status },
-    });
-    if (moveStage && v.status === 'verified' && a.status === 'payment_submitted') {
-      const remarks = v.remarks ?? 'Payment verified by Admin.';
-      await assertTransition(tx, a, 'for_approval', user, remarks, true);
-      await transition(c, tx, a, 'for_approval', user, remarks, 'applicant.payment_confirmed', { payment_confirmed_at: new Date(), payment_confirmed_by_user_id: user.id, payment_remarks: v.remarks ?? null });
-    } else if (v.status === 'rejected') {
-      await transition(c, tx, a, 'loi_submitted', user, `Payment request rejected. ${v.remarks ?? 'Sales may submit a new request.'}`, 'applicant.payment_request_rejected');
-    }
-    await audit(c, tx, 'payment.verified', { type: PAYMENT_MODEL, id: p.id }, p, saved);
-  });
-  const [row] = await db.query(`select p.*, ${NAME('p.verified_by_user_id')} as verified_by from payments p where p.id = $1`, [p.id]);
-  return ok(c, { ...row, documents: await paymentDocuments(db, p.id) }, 'Payment review saved.');
-});
-
-applicantRoutes.patch('/applicants/:applicant/payments/:payment', sales, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be edited after it is submitted. Admin returns it and Sales records a corrected entry.');
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  await assertAssignedSales(c, a);
-  const id = routeId(c, 'payment');
-  const [p] = await db.query(`select * from payments where id = $1`, [id]);
-  requireFound(p);
-  const v = await validate(db, await readInput(c), {
-    amount: ['sometimes', 'required', 'numeric', 'gt:0'],
-    payment_date: ['sometimes', 'required', 'date'],
-    payment_type: ['sometimes', 'required', `in:${PAYMENT_TYPE_VALUES}`],
-    remarks: ['sometimes', 'nullable', 'string', 'max:2000'],
-  });
-  const request = await payments.requestChange(db, a.id, id, c.get('user'), 'update', v);
-  await audit(c, db, 'payment.change_requested', { type: REQUEST_MODEL, id: request.id }, p, request);
-  return ok(c, request, 'Edit request sent to Admin for approval.', 202);
-});
-
-applicantRoutes.delete('/applicants/:applicant/payments/:payment', sales, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', 'A payment entry cannot be deleted. Admin returns it and Sales records a corrected entry.');
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  await assertAssignedSales(c, a);
-  const id = routeId(c, 'payment');
-  const [p] = await db.query(`select * from payments where id = $1`, [id]);
-  requireFound(p);
-  const request = await payments.requestChange(db, a.id, id, c.get('user'), 'delete');
-  await audit(c, db, 'payment.delete_requested', { type: REQUEST_MODEL, id: request.id }, p, request);
-  return ok(c, request, 'Delete request sent to Admin for approval.', 202);
-});
-
-applicantRoutes.post('/applicants/:applicant/payments/report', sales, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', OFF_MESSAGE);
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  await assertAssignedSales(c, a);
-  const input = await readInput(c);
-  const list = await validate(db, input, { entries: ['required', 'array', 'min:1', 'max:20'] });
-  const entries = await validateEach(db, list.entries, 'entries', entryRules);
-  const request = await payments.submitReport(db, a.id, c.get('user'), entries);
-  await audit(c, db, 'payment.report_submitted', { type: REQUEST_MODEL, id: request.id }, null, request);
-  return ok(c, request, 'Sales Report sent to Admin. The payment is not saved until Admin clicks SAVE APPLICANT.', 201);
-});
-
-applicantRoutes.post('/applicants/:applicant/payments/apply-report', admin, async (c) => {
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  const v = await validate(db, await readInput(c), { remarks: ['nullable', 'string', 'max:2000'] });
-  const saved = await payments.applyReport(db, a.id, c.get('user'), v.remarks ?? null);
-  await audit(c, db, 'payment.report_applied', { type: APPLICANT_MODEL, id: a.id }, a, saved);
-  return ok(c, await freshWithHistory(db, a.id), 'Sales Report confirmed and saved to the applicant record.');
-});
-
+/** Admin: Move to For Approval. Allowed only when every required payment is Verified (checked here and in the pipeline). */
 applicantRoutes.post('/applicants/:applicant/payments/complete', admin, async (c) => {
   const { db } = c.get('deps');
   const a = await load(c);
@@ -1644,67 +1414,11 @@ applicantRoutes.post('/applicants/:applicant/payments/complete', admin, async (c
   const v = await validate(db, await readInput(c), { remarks: ['nullable', 'string', 'max:2000'] });
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be moved forward.');
   if (a.status === 'payment_submitted' && loiPending(a)) fail('loi', LOI_PENDING_BLOCK);
-  const already = a.payment_stage_state === 'confirmed';
-  const confirmed = await payments.completePayment(db, a.id, user, v.remarks ?? null, async (tx, locked) => {
-    if (locked.status !== 'payment_submitted') return;
-    const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'Payment confirmed by Admin.';
+  const moved = await moveToForApproval(db, a.id, user, v.remarks ?? null, async (tx, locked) => {
+    const remarks = String(v.remarks ?? '').trim() ? v.remarks : 'All required payments verified by Admin.';
     await assertTransition(tx, locked, 'for_approval', user, remarks, true);
     await transition(c, tx, locked, 'for_approval', user, remarks, 'applicant.payment_confirmed', { payment_remarks: v.remarks ?? null });
   });
-  await audit(c, db, 'payment.completed', { type: APPLICANT_MODEL, id: a.id }, null, confirmed);
-  return ok(c, await freshWithHistory(db, a.id), already ? 'Payment was already confirmed — nothing changed.' : 'Payment completed — the applicant is now at For Approval.');
+  await audit(c, db, 'payment.completed', { type: APPLICANT_MODEL, id: a.id }, null, { status: moved.status });
+  return ok(c, await freshWithHistory(db, a.id), 'All required payments are Verified — the applicant is now at For Approval.');
 });
-
-applicantRoutes.post('/applicants/:applicant/payments/return', admin, async (c) => {
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  const v = await validate(db, await readInput(c), { note: ['required', 'string', 'max:2000'] });
-  const saved = await payments.returnToSales(db, a.id, c.get('user'), v.note);
-  await audit(c, db, 'payment.returned', { type: APPLICANT_MODEL, id: a.id }, a, saved);
-  return ok(c, applicantJson(saved), 'Payment returned to Sales.');
-});
-
-applicantRoutes.patch('/applicants/:applicant/payment-plan', admin, async (c) => {
-  const { db } = c.get('deps');
-  const a = await load(c);
-  if (!paymentAdvanced(c)) {
-    const input = await readInput(c);
-    const hidden = ['discount_percent', 'promo_name', 'initial_payment_amount', 'original_total_required_amount', 'other_fees', 'payment_terms'].filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== '');
-    if (hidden.length) fail(hidden[0], OFF_MESSAGE);
-    const saved = await setAgreedAmount(db, a.id, c.get('user'), { ...input, agreed_amount: input.agreed_amount ?? input.total_required_amount });
-    await audit(c, db, 'applicant.agreed_amount_set', { type: APPLICANT_MODEL, id: a.id }, { total_required_amount: a.total_required_amount }, { total_required_amount: saved.total_required_amount, reason: input.reason ?? null });
-    const [row] = await db.query(`select a.*, (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as payment_plan from applicants a where a.id = $1`, [a.id]);
-    return ok(c, applicantJson(row), 'Agreed Package Amount saved.');
-  }
-  const v = await validate(db, await readInput(c), {
-    package_name: ['sometimes', 'nullable', 'string', 'max:255'],
-    total_required_amount: ['sometimes', 'required', 'numeric', 'gt:0'],
-    original_total_required_amount: ['sometimes', 'required', 'numeric', 'gt:0'],
-    discount_percent: ['sometimes', 'nullable', 'integer', 'between:0,100'],
-    initial_payment_amount: ['sometimes', 'nullable', 'numeric', 'min:0'],
-    other_fees: ['sometimes', 'numeric', 'min:0'],
-    payment_terms: ['sometimes', 'nullable', 'string', 'max:2000'],
-    promo_name: ['sometimes', 'nullable', 'string', 'max:120'],
-  });
-  const saved = await payments.setTotal(db, a.id, c.get('user'), v);
-  await audit(c, db, 'applicant.payment_plan_updated', { type: APPLICANT_MODEL, id: a.id }, a, saved);
-  const [row] = await db.query(`select a.*, (select to_jsonb(p) from applicant_payment_plans p where p.applicant_id = a.id limit 1) as payment_plan, ${NAME('a.total_required_set_by_user_id')} as total_set_by from applicants a where a.id = $1`, [a.id]);
-  return ok(c, applicantJson(row), 'Payment plan updated.');
-});
-
-applicantRoutes.patch('/applicants/:applicant/payment-schedule', admin, async (c) => {
-  if (!paymentAdvanced(c)) fail('payments', OFF_MESSAGE);
-  const { db } = c.get('deps');
-  const a = await load(c);
-  authorize(c, a, true);
-  const v = await validate(db, await readInput(c), {
-    frequency: ['required', 'string', `in:${Object.keys(payments.FREQUENCIES).join(',')}`],
-    custom_days: ['nullable', 'integer', 'between:1,365'],
-    first_due_date: ['required', 'date'],
-  });
-  await payments.setSchedule(db, a.id, c.get('user'), v);
-  return ok(c, { payment_stage: await payments.stagePayload(db, a, c.get('user')) }, 'Installment plan saved.');
-});
-
-export { isPaymentFullyDiscounted };

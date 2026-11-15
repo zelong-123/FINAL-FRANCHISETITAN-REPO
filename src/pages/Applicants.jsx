@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import QualificationReview from '../components/applicants/QualificationReview.jsx';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -28,7 +28,7 @@ import { formatDate, localDateInputValue, manilaDateTimeLabel, titleCase } from 
 import { RecordFolderGrid, RecordFolderTable } from '../components/applicants/RecordFolders';
 import RecordCode from '../components/RecordCode';
 import { RECORD_FOLDERS } from '../lib/recordFolders';
-import { currentMinimum, downpaymentBase, entryRuleIssue, minDownpayment } from '../lib/installments';
+import { loiHalves, qualificationFill } from '../lib/stepperProgress';
 
 const statuses = [
   'converted', 'qualified', 'scheduled', 'loi_submitted',
@@ -115,118 +115,6 @@ const fmtDateTime = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 };
-const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value) || 0);
-// Payment Record money rule: peso sign, thousands separators, cents only
-// when the amount is not a whole peso (₱500,000 not ₱500,000.00).
-const moneyExact = (value) => {
-  const amount = Number(value) || 0;
-  const whole = Math.abs(amount % 1) < 0.005;
-  const formatted = new Intl.NumberFormat('en-PH', {
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: whole ? 0 : 2,
-  }).format(amount);
-  return `₱${formatted}`;
-};
-
-/** Compact money for the header chip: ₱50k / ₱120k. */
-const moneyShort = (value) => {
-  const amount = Number(value) || 0;
-  return amount >= 1000 ? `₱${Math.round(amount / 1000)}k` : `₱${amount}`;
-};
-
-// Payment Record product rules (the API enforces the same limits).
-// The Admin's ORIGINAL Total required (before discount) — mirrors the backend
-// ceiling in PaymentStageService::MAX_TOTAL_CENTS.
-const MAX_TOTAL_REQUIRED = 500000;
-const MAX_PAYMENT_AMOUNT = 999999;
-const PAYMENT_TYPE_OPTIONS = [
-  { value: 'downpayment', label: 'Downpayment' },
-  { value: 'installment_payment', label: 'Installment Payment' },
-  { value: 'full_payment', label: 'Full Payment' },
-];
-/** Values older records were saved with, shown under their current label. */
-const LEGACY_PAYMENT_TYPE_MAP = {
-  initial_franchise_fee: 'installment_payment',
-  installment: 'installment_payment',
-  fully_paid: 'full_payment',
-};
-const PAYMENT_METHOD_OPTIONS = [
-  { value: 'cash', label: 'Cash' },
-  { value: 'gcash', label: 'GCash' },
-  { value: 'bank_transfer', label: 'Bank Transfer' },
-  { value: 'check', label: 'Check' },
-  { value: 'other', label: 'Other' },
-];
-const paymentTypeLabel = (value) => {
-  const canonical = LEGACY_PAYMENT_TYPE_MAP[value] || value;
-  return PAYMENT_TYPE_OPTIONS.find((option) => option.value === canonical)?.label
-    || titleCase(String(value || 'payment'));
-};
-const paymentMethodLabel = (value) => {
-  if (!value) return '—';
-  return PAYMENT_METHOD_OPTIONS.find((option) => option.value === value)?.label
-    || titleCase(String(value).replaceAll('_', ' '));
-};
-
-const DISCOUNT_PRESETS = [50, 40, 30, 20, 10];
-
-/** Raw digits of a money input (thousands separators are display only). */
-const amountInputValue = (value) => String(value ?? '').replace(/,/g, '').trim();
-
-/**
- * Clean money input: digits and at most one decimal point, grouped with
- * thousands separators as the Admin types. No minus sign, no spinner arrows,
- * `inputMode="decimal"` on the element gives mobile a numeric keypad.
- */
-const formatAmountInput = (value) => {
-  const cleaned = String(value ?? '').replace(/[^\d.]/g, '');
-  const [wholePart, ...rest] = cleaned.split('.');
-  const decimals = rest.length ? `.${rest.join('').slice(0, 2)}` : '';
-  const whole = wholePart.replace(/^0+(?=\d)/, '');
-  if (whole === '' && decimals === '') return '';
-  return `${(whole || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${decimals}`;
-};
-
-/** The Admin's Total required (the ORIGINAL amount, before the discount). */
-const totalRequiredError = (value) => {
-  const raw = amountInputValue(value);
-  if (raw === '') return 'Enter the Total required.';
-  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return 'Numbers only — letters are not allowed.';
-  const amount = Number(raw);
-  if (!Number.isFinite(amount) || amount <= 0) return 'The Total required must be greater than ₱0.';
-  if (amount > MAX_TOTAL_REQUIRED) return `The Total required cannot exceed ${moneyExact(MAX_TOTAL_REQUIRED)}.`;
-  return '';
-};
-
-/** Custom discount: whole numbers 1 to 100 only (decimals, 0 and 101+ rejected). */
-const customDiscountError = (value) => {
-  const raw = String(value ?? '').trim();
-  if (raw === '') return 'Enter the discount percentage.';
-  if (!/^\d+$/.test(raw)) return 'Whole numbers only — type a percentage from 1 to 100.';
-  const percent = Number(raw);
-  if (percent < 1 || percent > 100) return 'The discount must be a whole number from 1 to 100.';
-  return '';
-};
-
-/** Percentage the dropdown currently represents (0 = no discount). */
-const discountPercentFor = (choice, custom) => {
-  if (!choice || choice === 'none') return 0;
-  if (choice === 'custom') return customDiscountError(custom) ? 0 : Number(custom);
-  return Number(choice) || 0;
-};
-
-/**
- * Same rule as the server, in integer centavos: the final amount is always
- * derived from the ORIGINAL amount, never from a previous final, so a discount
- * never compounds.
- */
-const discountedAmount = (value, percent) => {
-  const raw = amountInputValue(value);
-  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return 0;
-  const cents = Math.round(Number(raw) * 100);
-  return Math.round((cents * (100 - percent)) / 100) / 100;
-};
-
 /* ---------------- Fixed, centered dialog ----------------
  * The Update dialog used to live inside the page, so any ancestor with a
  * transform / filter / scroll container became the reference for
@@ -368,7 +256,7 @@ function ApplicantPagination({ meta, page, onPage, noun = 'applicants' }) {
  * The tracker is display-only: stages are moved with the single primary action button
  * below it (the API is the state machine), so steps are never clickable.
  */
-function Stepper({ items, qualificationProgress = null, attendedProgress = null }) {
+function Stepper({ items, qualificationProgress = null, attendedProgress = null, loiProgress = null }) {
   return (
     <ol className="flex items-start [list-style:none] p-0 m-0 gap-0 max-[721px]:overflow-x-auto max-[721px]:later:pb-[5px]">
       {items.map((item, index) => {
@@ -377,21 +265,26 @@ function Stepper({ items, qualificationProgress = null, attendedProgress = null 
         const fillsQualification = index === 0 && qualificationProgress != null;
         // Scheduling: the connector fills per admin-attended activity (1 of 3, 2 of 3, 3 of 3).
         const fillsScheduling = item.key === 'scheduled' && attendedProgress != null;
-        const lineDone = !fillsQualification && !fillsScheduling && item.state === 'done' && Boolean(next) && next.state !== 'todo';
+        // LOI Submission: two halves, the LOI (left) and the Proposed site (right), each green once verified.
+        const splitsLoi = item.key === 'loi_submitted' && loiProgress != null;
+        const lineDone = !fillsQualification && !fillsScheduling && !splitsLoi && item.state === 'done' && Boolean(next) && next.state !== 'todo';
         const fill = fillsQualification ? qualificationProgress : fillsScheduling ? attendedProgress : null;
+        const lineStyle = fill != null ? { '--qp': `${Math.round(fill * 100)}%` }
+          : splitsLoi ? { '--h1': loiProgress.left ? '#25c77a' : '#30364c', '--h2': loiProgress.right ? '#25c77a' : '#30364c' } : undefined;
         return (
           <li
             key={item.key}
-            style={fill != null ? { '--qp': `${Math.round(fill * 100)}%` } : undefined}
-            className={`ap-step flex flex-col items-center gap-[6px] later:flex-[1_1_0] min-w-0 relative text-center [&:not(:last-child)::after]:[content:''] [&:not(:last-child)::after]:absolute [&:not(:last-child)::after]:top-[11px] [&:not(:last-child)::after]:left-[calc(50%_+_13px)] [&:not(:last-child)::after]:right-[calc(-50%_+_13px)] [&:not(:last-child)::after]:h-[4px] [&:not(:last-child)::after]:[background:linear-gradient(to_right,#25c77a_var(--qp,0%),#30364c_var(--qp,0%))] [&.line-done:not(:last-child)::after]:[background:#25c77a] later-2:[&.is-done_.ap-node]:text-[#071a12] later:[&.is-done_.ap-node]:[background:#25c77a] later-2:[&.is-done_.ap-node]:border-[#25c77a] later-3:[&.is-current_.ap-node]:text-[#fff] later-2:[&.is-current_.ap-node]:[background:#7668f6] later-3:[&.is-current_.ap-node]:border-[#8b80ff] [&.is-current_.ap-node]:[box-shadow:0_0_0_3px_rgba(118,_104,_246,_.14)] max-[721px]:later:min-w-[66px] [#update-applicant-form_&:not(:last-child)::after]:top-[10px] later-4:[&.is-waiting_.ap-node]:text-[#ffd284] later-3:[&.is-waiting_.ap-node]:[background:rgba(244,_184,_74,_.12)] later-4:[&.is-waiting_.ap-node]:border-[rgba(244,_184,_74,_.55)] later-4:[&.is-pending_.ap-node]:[background:rgba(245,_158,_11,_.18)] later-5:[&.is-pending_.ap-node]:border-[#f59e0b] later-5:[&.is-pending_.ap-node]:text-[#fbbf24] is-${item.state}${lineDone ? ' line-done' : ''}`}
+            style={lineStyle}
+            className={`ap-step flex flex-col items-center gap-[6px] later:flex-[1_1_0] min-w-0 relative text-center [&:not(:last-child)::after]:[content:''] [&:not(:last-child)::after]:absolute [&:not(:last-child)::after]:top-[11px] [&:not(:last-child)::after]:left-[calc(50%_+_13px)] [&:not(:last-child)::after]:right-[calc(-50%_+_13px)] [&:not(:last-child)::after]:h-[4px] [&:not(:last-child)::after]:[background:linear-gradient(to_right,#25c77a_var(--qp,0%),#30364c_var(--qp,0%))] [&.line-done:not(:last-child)::after]:[background:#25c77a] [&.split-line:not(:last-child)::after]:[background:linear-gradient(to_right,var(--h1)_0_50%,var(--h2)_50%_100%)] later-2:[&.is-done_.ap-node]:text-[#071a12] later:[&.is-done_.ap-node]:[background:#25c77a] later-2:[&.is-done_.ap-node]:border-[#25c77a] later-3:[&.is-current_.ap-node]:text-[#fff] later-2:[&.is-current_.ap-node]:[background:#7668f6] later-3:[&.is-current_.ap-node]:border-[#8b80ff] [&.is-current_.ap-node]:[box-shadow:0_0_0_3px_rgba(118,_104,_246,_.14)] max-[721px]:later:min-w-[66px] [#update-applicant-form_&:not(:last-child)::after]:top-[10px] later-4:[&.is-pending_.ap-node]:[background:rgba(245,_158,_11,_.18)] later-5:[&.is-pending_.ap-node]:border-[#f59e0b] later-5:[&.is-pending_.ap-node]:text-[#fbbf24] is-${item.state}${lineDone ? ' line-done' : ''}${splitsLoi ? ' split-line' : ''}`}
           >
             <div className="flex relative z-1 w-full min-w-0 p-[0_3px] items-center flex-col gap-[6px] border-0 [background:transparent] text-[color:inherit] cursor-default later:[button&]:cursor-pointer later:[button&:disabled]:cursor-not-allowed later:[button&:disabled]:opacity-[.6]">
               <span className="ap-node relative z-1 place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex items-center justify-center later:w-[25px] later:h-[25px] rounded-[50%] later:[background:#20263b] later:border later:border-[#3a4261] later:text-[#9ba5bd] later:text-[10px] font-[700] [#update-applicant-form_&]:w-[23px] [#update-applicant-form_&]:h-[23px]">
                 {item.state === 'done' ? <FaCheck aria-hidden="true" />
                   : item.state === 'waiting' ? (
-                    <span className="inline-flex items-center justify-center gap-[3px] [&_i]:w-[5px] [&_i]:h-[5px] [&_i]:rounded-[50%] [&_i]:[background:#f4b84a] [&_i]:[animation:apDotBounce_1.1s_ease-in-out_infinite] [&_i:nth-child(2)]:[animation-delay:.15s] later:[&_i:nth-child(3)]:[animation-delay:.3s]" role="img" aria-label="Waiting">
-                      <i /><i /><i />
-                    </span>
+                    <>
+                      <span className="absolute inset-[-4px] rounded-[50%] pointer-events-none [will-change:transform] [animation:apRingSpin_1.2s_linear_infinite]" style={{ background: 'conic-gradient(from 0deg, rgba(37,199,122,0) 0deg, rgba(37,199,122,0.15) 150deg, #25c77a 360deg)', WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))', mask: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px))' }} aria-hidden="true" />
+                      {index + 1}
+                    </>
                   )
                     : item.state === 'pending' ? <span className="font-[800] text-[13px] leading-[1]" aria-label="Pending">!</span>
                     : item.state === 'current' ? <FaClock aria-hidden="true" /> : index + 1}
@@ -407,8 +300,6 @@ function Stepper({ items, qualificationProgress = null, attendedProgress = null 
 
 /* Exactly the three tracked activities rendered in the schedule section.
  * The "other" type is never shown here and gates nothing. */
-/* LOI soft copy (Soft copy / Email): [Complete] needs the image; [Proceed] exists. */
-const LOI_SOFT_TYPES = ['digital', 'email'];
 
 const TRACKED_ACTIVITIES = [
   { type: 'orientation', key: 'orientation_attended', label: 'Orientation' },
@@ -444,7 +335,7 @@ const PAYMENT_PANEL_FROM = ['payment_submitted', 'for_approval', 'approved', 'ac
  * the handler key depend on the current stage and on the role permission matrix.
  * A button a role cannot use stays visible but disabled, with a short reason.
  */
-function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, qualificationMissing = [], activationMissing = [], paymentPercent, hasPortalAccount, isAdminRole, isSalesRole }) {
+function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, qualificationMissing = [], activationMissing = [], paymentsComplete = false, hasPortalAccount, isAdminRole, isSalesRole }) {
   const adminOnly = 'Admin action — your role can only view this stage.';
 
   // Sales only gets a "View" button before the Scheduled stage: no actions yet.
@@ -489,17 +380,17 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
         ? { label: 'Completed', enabled: false, reason: adminOnly }
         : { label: 'Completed', enabled: false, reason: 'Waiting for Admin to verify and complete the LOI.' };
     case 'payment_submitted':
-      // The Payment Record stage renders its own buttons in the same spot
-      // (Turn over to Admin / Confirm payment + Return to Sales), so the generic
-      // primary button steps aside instead of competing with them.
+      // The Payment Record card has its own Admin-only Move to For Approval
+      // button (enabled when every required payment is Verified), so the generic
+      // primary button steps aside instead of competing with it.
       return null;
     case 'for_approval':
       // Approval is a footer action with a two-step confirmation, so the progress
       // tracker itself only shows progress (no action button here).
       return null;
     case 'approved':
-      if (Number(paymentPercent) < 100) {
-        return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: `At least 100% verified payment is required; current progress is ${Number(paymentPercent) || 0}%.` };
+      if (!paymentsComplete) {
+        return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: 'Every required payment must be Verified by Admin first.' };
       }
       if (activationMissing.length) {
         return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: `The signed franchise agreement must be Accepted first. Missing: ${activationMissing.join(', ')}.` };
@@ -731,9 +622,31 @@ function QualificationAssessment({ draft, onToggle, readOnly = false, log = [], 
  * There is deliberately no Save Record button here and no per-activity "Set
  * Again": Set Again is an applicant-level action shown in the stage area.
  */
-const PAY_STATUS_TONE = { unpaid: 'text-[#9aa6c4] border-[#3a4256]', partially_paid: 'text-[#8fb4ff] border-[rgba(143,_180,_255,_.45)]', fully_paid: 'text-[#45d991] border-[rgba(69,_217,_145,_.45)]' };
-const ENTRY_TONE = { pending: 'text-[#8fb4ff]', verified: 'text-[#45d991]', returned: 'text-[#fbbf24]' };
-const peso = (value) => (value === null || value === undefined ? '—' : `₱${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+/* ---------------- Payment Record (no billing, no computation) ----------------
+ * The system only records and verifies payments made outside it. Admin sets the required
+ * payments (names only); the assigned Sales user records one entry per required payment;
+ * Admin verifies or rejects each entry. No amount is stored, summed or compared here.
+ */
+const PAY_PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[10px] text-[#fff] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50 disabled:cursor-not-allowed';
+const PAY_SECONDARY = 'min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-[#3a4256] rounded-[10px] [background:#121826] text-[#d6dcea] font-[650] disabled:opacity-50 disabled:cursor-not-allowed';
+const PAY_DANGER = 'min-h-[38px] inline-flex items-center justify-center p-[0_16px] border border-[rgba(248,_113,_113,_.6)] rounded-[10px] [background:transparent] text-[#f87171] font-[700] disabled:opacity-50 disabled:cursor-not-allowed';
+const PAY_BADGE_TONE = {
+  unpaid: 'text-[#c3cbe0] [background:#232b3d]',
+  not_yet_paid: 'text-[#c3cbe0] [background:#232b3d]',
+  for_verification: 'text-[#fbbf24] [background:rgba(251,_191,_36,_.14)]',
+  rejected: 'text-[#f87171] [background:rgba(248,_113,_113,_.14)]',
+  verified: 'text-[#45d991] [background:rgba(69,_217,_145,_.14)]',
+  completed: 'text-[#45d991] [background:rgba(69,_217,_145,_.14)]',
+  new: 'text-[#c3cbe0] [background:#232b3d]',
+};
+const PAY_INPUT = 'w-full min-h-[42px] p-[0_12px] border border-[#2a3550] rounded-[10px] [background:#0b111c] text-[#e7ebf5] placeholder:text-[#64708c]';
+
+function PayBadge({ tone, children }) {
+  return <span className={`inline-flex items-center whitespace-nowrap p-[3px_11px] rounded-[999px] text-[12px] font-[700] ${PAY_BADGE_TONE[tone] || PAY_BADGE_TONE.unpaid}`}>{children}</span>;
+}
+function PayChip({ children }) {
+  return <span className="inline-flex p-[3px_11px] rounded-[8px] [background:#1c2435] text-[#d6dcea] text-[13px] font-[600]">{children}</span>;
+}
 
 /** Receipts are fetched through the API with role checks, then opened. */
 async function openReceipt(applicantId, paymentId, document) {
@@ -747,177 +660,385 @@ async function openReceipt(applicantId, paymentId, document) {
   window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-/**
- * Payment Record: records payments that already happened outside the system (no billing).
- * Admin enters the Agreed Package Amount; the assigned Sales user records each payment with
- * its OR/AR number, reference number and receipt; Admin verifies or returns each entry.
- */
-function PaymentRecordPanel({ editing, readOnly = false, busy, onSetAmount, onSubmitEntry, onVerify, onReturn, onError }) {
-  const record = editing?.payment_record;
-  const [amountForm, setAmountForm] = useState(null);
-  const [entryForm, setEntryForm] = useState(null);
-  const [fileError, setFileError] = useState('');
-  const [returning, setReturning] = useState(null);
-  const [reason, setReason] = useState('');
-  if (!record) return null;
-  const maxBytes = (record.receipt_rule?.max_mb || 10) * 1024 * 1024;
-  const accept = (record.receipt_rule?.accept || ['pdf', 'jpg', 'jpeg', 'png']).map((ext) => `.${ext}`).join(',');
-  const pickReceipt = (file) => {
-    setFileError('');
-    if (!file) { setEntryForm({ ...entryForm, receipt: null }); return; }
+function ReceiptLinks({ applicantId, entry, busy, onError }) {
+  if (entry.receipts === null) return <span className="text-[#8f9bbd]">Private</span>;
+  if (!entry.receipts?.length) return <span className="text-[#fbbf24]">Legacy - no receipt captured</span>;
+  return entry.receipts.map((doc) => (
+    <button key={doc.id} type="button" disabled={busy} className="p-0 border-0 [background:none] text-[#7fa8ff] text-left underline-offset-2 hover:underline [overflow-wrap:anywhere]"
+      onClick={() => openReceipt(applicantId, entry.id, doc).catch((error) => onError(error.message))}>
+      {doc.original_name}
+    </button>
+  ));
+}
+
+function EntryDetails({ applicantId, entry, busy, onError }) {
+  const cells = [
+    ['Date paid', formatDate(entry.payment_date)],
+    ['Method', entry.payment_method_label],
+    ['Reference no.', entry.reference_number || '—'],
+    ['OR / AR no.', entry.or_number || '—'],
+    [entry.receipts?.length > 1 ? 'Receipts' : 'Receipt', <span key="r" className="grid gap-1 justify-items-start"><ReceiptLinks applicantId={applicantId} entry={entry} busy={busy} onError={onError} /></span>],
+    ['Remarks', entry.remarks || '—'],
+  ];
+  return (
+    <dl className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[14px_18px] m-[14px_0_0] max-[721px]:grid-cols-[repeat(2,_minmax(0,_1fr))]">
+      {cells.map(([label, value]) => (
+        <div key={label} className="min-w-0">
+          <dt className="text-[#8f9bbd] text-[11px] font-[700] tracking-[.08em] uppercase">{label}</dt>
+          <dd className="m-[3px_0_0] text-[#edf0fa] text-[15px] [overflow-wrap:anywhere]">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function AuditLine({ entry }) {
+  const parts = [];
+  if (entry.recorded_by) parts.push(`Encoded by Sales · ${entry.recorded_by}${entry.recorded_at ? ` · ${manilaDateTimeLabel(entry.recorded_at)}` : ''}`);
+  if (entry.verified_by) parts.push(`Verified by Admin · ${entry.verified_by}${entry.verified_at ? ` · ${manilaDateTimeLabel(entry.verified_at)}` : ''}`);
+  if (entry.rejected_by) parts.push(`Rejected by Admin · ${entry.rejected_by}${entry.rejected_at ? ` · ${manilaDateTimeLabel(entry.rejected_at)}` : ''}`);
+  if (!parts.length) return null;
+  return <p className="m-[12px_0_0] text-[#8f9bbd] text-[13px]">{parts.join('  |  ')}</p>;
+}
+
+function RejectedNote({ entry }) {
+  if (!entry || entry.status !== 'rejected') return null;
+  return (
+    <p className="m-[12px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="status">
+      Rejected by Admin{entry.rejected_by ? ` (${entry.rejected_by})` : ''}: {entry.rejected_reason || 'No reason given.'}
+    </p>
+  );
+}
+
+/** Sales: the entry form for one required payment (new, resubmission, or an edit while For verification). */
+function PaymentEntryForm({ item, record, existing, applicantId, busy, onCancel, onSend, onError }) {
+  const editingEntry = Boolean(existing && existing.status === 'for_verification');
+  const start = existing
+    ? { payment_date: existing.payment_date || localDateInputValue(), payment_method: existing.payment_method || 'cash', or_number: existing.or_number || '', reference_number: existing.payment_method === 'cash' ? '' : (existing.reference_number || ''), remarks: existing.remarks || '' }
+    : { payment_date: localDateInputValue(), payment_method: 'cash', or_number: '', reference_number: '', remarks: '' };
+  const [form, setForm] = useState(start);
+  // Receipts: up to 2. Saved ones (an entry being edited, or a rejected entry being corrected) stay unless removed.
+  const [newReceipts, setNewReceipts] = useState([]);
+  const [savedReceipts, setSavedReceipts] = useState(() => (existing?.receipts || []).filter(Boolean));
+  const maxMb = record.receipt_rule?.max_mb || 10;
+  const maxFiles = record.receipt_rule?.max_files || 2;
+  const acceptList = record.receipt_rule?.accept || ['pdf', 'jpg', 'jpeg', 'png'];
+  const validateReceipt = (file) => {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (!(record.receipt_rule?.accept || []).includes(ext)) { setFileError('The receipt must be a PDF, JPG or PNG file.'); setEntryForm({ ...entryForm, receipt: null }); return; }
-    if (file.size > maxBytes) { setFileError(`The receipt may not be larger than ${record.receipt_rule.max_mb} MB.`); setEntryForm({ ...entryForm, receipt: null }); return; }
-    setEntryForm({ ...entryForm, receipt: file });
+    if (!acceptList.includes(ext)) return 'The receipt must be a PDF, JPG or PNG file.';
+    if (file.size > maxMb * 1024 * 1024) return `The receipt may not be larger than ${maxMb} MB.`;
+    return '';
   };
-  const needsReference = entryForm && entryForm.payment_method !== 'cash';
-  const entryReady = entryForm && entryForm.payment_date && Number(entryForm.amount) > 0 && entryForm.payment_method && entryForm.or_number.trim()
-    && (!needsReference || entryForm.reference_number.trim()) && entryForm.receipt;
-  const sendEntry = () => {
+  const isCash = form.payment_method === 'cash';
+  const receiptCount = newReceipts.length + savedReceipts.length;
+  const ready = form.payment_date && form.payment_method && form.or_number.trim()
+    && (isCash || form.reference_number.trim()) && receiptCount >= 1 && receiptCount <= maxFiles;
+  const send = () => {
     const body = new FormData();
-    for (const key of ['payment_date', 'amount', 'payment_method', 'or_number', 'reference_number', 'remarks']) if (String(entryForm[key] || '').trim()) body.append(key, String(entryForm[key]).trim());
-    body.append('receipt', entryForm.receipt);
-    onSubmitEntry(body);
-    setEntryForm(null);
+    body.append('required_payment_id', String(item.id));
+    for (const key of ['payment_date', 'payment_method', 'or_number', 'remarks']) if (String(form[key] || '').trim()) body.append(key, String(form[key]).trim());
+    if (!isCash && form.reference_number.trim()) body.append('reference_number', form.reference_number.trim());
+    // Always sent, so the API knows exactly which earlier receipts stay (empty = none).
+    body.append('keep_receipt_ids', savedReceipts.map((d) => d.id).join(','));
+    for (const file of newReceipts) body.append('receipt', file);
+    onSend(body);
   };
-  const changing = record.agreed_amount !== null;
-  const amountReady = amountForm && Number(amountForm.agreed_amount) > 0 && (!changing || !record.has_entries || amountForm.reason.trim().length >= 5);
+  // Labels align to the top of their grid cell, so neighbouring fields share the same top edge.
+  const label = 'grid gap-[6px] content-start self-start text-[#c9d0e0] text-[13.5px] font-[600]';
+  return (
+    <div className="mt-[14px] grid gap-[14px]">
+      <div className="grid grid-cols-[repeat(2,_minmax(0,_1fr))] items-start gap-[14px_18px] max-[721px]:grid-cols-[1fr]">
+        <label className={label}>Date paid *
+          <input className={PAY_INPUT} type="date" max={localDateInputValue()} value={form.payment_date} onChange={(e) => setForm({ ...form, payment_date: e.target.value })} />
+        </label>
+        <label className={label}>Method *
+          <select
+            className={PAY_INPUT}
+            value={form.payment_method}
+            onChange={(e) => setForm({ ...form, payment_method: e.target.value, reference_number: e.target.value === 'cash' ? '' : form.reference_number })}
+          >
+            {Object.entries(record.methods || {}).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+          </select>
+        </label>
+        <label className={label}>{isCash ? 'Reference number (not needed for cash)' : 'Reference number *'}
+          <input
+            className={`${PAY_INPUT} disabled:opacity-45 disabled:cursor-not-allowed disabled:[background:#161c29]`}
+            placeholder={isCash ? 'Not needed for cash' : 'e.g. 0034 8821'}
+            disabled={isCash}
+            aria-disabled={isCash}
+            value={isCash ? '' : form.reference_number}
+            onChange={(e) => setForm({ ...form, reference_number: e.target.value })}
+          />
+        </label>
+        <label className={label}>OR / AR number *
+          <input className={PAY_INPUT} placeholder="e.g. AR-0462" value={form.or_number} onChange={(e) => setForm({ ...form, or_number: e.target.value })} />
+        </label>
+        <div className="self-start">
+          <RequirementFileDrop
+            label="Receipt"
+            required
+            multiple
+            replaceable
+            max={maxFiles}
+            accept={acceptList.map((ext) => `.${ext}`).join(',')}
+            files={newReceipts}
+            onChange={setNewReceipts}
+            saved={savedReceipts}
+            onSavedChange={setSavedReceipts}
+            onViewSaved={(doc) => openReceipt(applicantId, existing.id, doc).catch((error) => onError(error.message))}
+            validate={validateReceipt}
+            disabled={busy}
+            hint={`PDF, JPG or PNG, up to ${maxMb} MB each · at least 1, at most ${maxFiles} files`}
+          />
+        </div>
+        <label className={label}>Remarks
+          <textarea className={`${PAY_INPUT} h-[42px] p-[10px_12px] leading-[1.35] resize-y`} rows={1} placeholder="Optional" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-[14px] border-t border-t-[#232c40]">
+        <p className="m-0 flex-[1_1_320px] text-[#8f9bbd] text-[13px]">
+          After you submit, the entry goes to Admin as For verification. If Admin rejects it, the reason shows here and you can correct and resubmit.
+        </p>
+        <span className="flex gap-[10px]">
+          <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={onCancel}>Cancel</button>
+          <button type="button" className={PAY_PRIMARY} disabled={busy || !ready} title={receiptCount < 1 ? 'Attach at least 1 receipt.' : ''} onClick={send}>{editingEntry ? 'Save changes' : 'Submit for verification'}</button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Admin: reason + Reject / Verify payment on an entry that is For verification. */
+function VerificationBox({ entry, busy, onVerify, onReject }) {
+  const [reason, setReason] = useState('');
+  const canReject = reason.trim().length >= 5;
+  return (
+    <div className="flex flex-wrap items-center gap-3 mt-[14px] pt-[14px] border-t border-t-[#232c40]">
+      <label className="flex flex-[1_1_360px] items-center gap-3 text-[#8f9bbd] text-[13.5px]">
+        <span className="whitespace-nowrap">Reason (required to reject)</span>
+        <input className={PAY_INPUT} placeholder="e.g. Receipt unreadable" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
+      <button type="button" className={PAY_DANGER} disabled={busy || !canReject} title={canReject ? '' : 'Enter a reason of at least 5 characters.'} onClick={() => { onReject(entry, reason.trim()); setReason(''); }}>Reject</button>
+      <button type="button" className={PAY_PRIMARY} disabled={busy} onClick={() => onVerify(entry)}>Verify payment</button>
+    </div>
+  );
+}
+
+/** A payment_record payload in the current (no-billing) shape. */
+const isPaymentRecord = (value) => Boolean(value && Array.isArray(value.required) && typeof value.badge === 'string');
+
+function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, busy, onEditRequired, onSubmitEntry, onEditEntry, onVerify, onReject, onMove, onError }) {
+  const embedded = isPaymentRecord(editing?.payment_record) ? editing.payment_record : null;
+  // The card reads GET /payment-record itself, so a failure shows here instead of hiding every action.
+  const [loaded, setLoaded] = useState({ key: null, record: null, error: '' });
+  // { id, mode: 'record' | 'edit' }; { id: -1 } means "no form" after Cancel.
+  const [formFor, setFormFor] = useState(null);
+  const loadKey = `${editing?.id}:${editing?.updated_at ?? ''}:${JSON.stringify(editing?.payment_record?.required?.map((r) => [r.id, r.status, r.entry?.revision]) ?? null)}`;
+  useEffect(() => {
+    if (!editing?.id) return undefined;
+    let cancelled = false;
+    api.get(`/applicants/${editing.id}/payment-record`)
+      .then((result) => {
+        if (cancelled) return;
+        if (isPaymentRecord(result?.data)) setLoaded({ key: loadKey, record: result.data, error: '' });
+        else setLoaded({ key: loadKey, record: null, error: 'The server sent the Payment Record in an older format. The API may need to be redeployed; reload the page afterwards.' });
+      })
+      .catch((error) => { if (!cancelled) setLoaded({ key: loadKey, record: null, error: firstValidationMessage(error) || 'The Payment Record could not be loaded.' }); });
+    return () => { cancelled = true; };
+  }, [editing?.id, loadKey]);
+  const fresh = loaded.key === loadKey ? loaded : { record: null, error: '' };
+  const record = fresh.record || embedded;
+  if (!record) {
+    return (
+      <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] text-[#c9d0e0]" aria-live="polite">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="m-0 text-[0.8rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
+          <PayBadge tone="unpaid">Unpaid</PayBadge>
+        </div>
+        {fresh.error
+          ? <p className="m-[12px_0_0] p-[10px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5]" role="alert">{fresh.error}</p>
+          : <p className="m-[12px_0_0] text-[#9aa6c4]">Loading the Payment Record…</p>}
+      </section>
+    );
+  }
+  const required = record.required || [];
+  const salesView = !isAdminRole;
+  const nextToRecord = required.find((item) => item.can_record) || null;
+  const activeForm = readOnly ? null : (formFor || (record.can_record && nextToRecord ? { id: nextToRecord.id, mode: 'record' } : null));
+  const openLoi = () => fetchApplicantDocument(editing.id, record.loi_document)
+    .then((blob) => { const url = URL.createObjectURL(blob); window.open(url, '_blank', 'noopener'); window.setTimeout(() => URL.revokeObjectURL(url), 60000); })
+    .catch((error) => onError(error.message));
+  const send = (body, mode, entry) => {
+    if (mode === 'edit') onEditEntry(entry.id, body); else onSubmitEntry(body);
+    setFormFor(null);
+  };
 
   return (
-    <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
+    <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">Payment Record</h3>
-        <span className={`inline-flex p-[2px_10px] rounded-[999px] border text-[12px] font-[700] ${PAY_STATUS_TONE[record.status] || PAY_STATUS_TONE.unpaid}`}>{record.status_label}</span>
+        <h3 id="ap-payment-record-title" className="m-0 text-[0.8rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
+        <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
       </div>
-      <p className="m-[6px_0_0] text-[#8f9bbd]">Records payments made outside the system. No billing or computation: the status comes only from Verified entries.</p>
-      <dl className="grid grid-cols-[minmax(150px,_220px)_minmax(0,_1fr)] gap-[6px_12px] m-[12px_0_0] [&_dt]:text-[#8f9bbd] [&_dd]:m-0">
-        <dt>Agreed Package Amount</dt><dd><strong className="text-[#edf0fa]">{peso(record.agreed_amount)}</strong>{record.package_name ? ` · ${record.package_name}` : ''}{record.source ? ` · from ${record.source}` : ''}</dd>
-        <dt>Verified</dt><dd>{peso(record.verified_amount)}</dd>
-        <dt>Waiting for review</dt><dd>{peso(record.pending_amount)}</dd>
-        <dt>Remaining</dt><dd>{peso(record.remaining_amount)}</dd>
-        {record.legacy_discount && (
-          <><dt>Earlier discount (read-only)</dt><dd>{record.legacy_discount.discount_percent}% off {peso(record.legacy_discount.original_amount)}{record.legacy_discount.promo_name ? ` · ${record.legacy_discount.promo_name}` : ''}</dd></>
+      {fresh.error && <p className="m-[10px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="alert">Could not refresh the Payment Record: {fresh.error}</p>}
+      <p className="m-[10px_0_0] text-[#9aa6c4]">
+        {salesView
+          ? 'Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.'
+          : record.note}
+      </p>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[#9aa6c4]">{salesView ? 'Required payments (set by Admin):' : 'Required payments:'}</span>
+          {required.length
+            ? required.map((item) => <PayChip key={item.id}>{item.name}</PayChip>)
+            : <span className="text-[#fbbf24]">{record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet'}</span>}
+        </div>
+        {!readOnly && record.can_edit_required && (
+          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]!`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
         )}
-      </dl>
-      {record.locked && <p className="m-[8px_0_0] text-[#45d991]">{record.locked}</p>}
-      {record.pending_sales_report && <p className="m-[8px_0_0] text-[#fbbf24]">An older Sales Report is still waiting for Admin: apply or return it below before new payments are recorded.</p>}
-
-      {!readOnly && record.can_set_amount && !amountForm && (
-        <button type="button" className="mt-3" disabled={busy} onClick={() => setAmountForm({ agreed_amount: record.agreed_amount ?? '', package_name: record.package_name ?? '', source: record.source ?? '', reason: '' })}>
-          {changing ? 'Change Agreed Package Amount' : 'Set Agreed Package Amount'}
-        </button>
-      )}
-      {!readOnly && amountForm && (
-        <div className="grid gap-[10px] mt-3">
-          <Field label="Agreed Package Amount (₱)" required><input type="number" min="1" step="0.01" value={amountForm.agreed_amount} onChange={(e) => setAmountForm({ ...amountForm, agreed_amount: e.target.value })} /></Field>
-          <Field label="Package name"><input value={amountForm.package_name} onChange={(e) => setAmountForm({ ...amountForm, package_name: e.target.value })} /></Field>
-          <Field label="Taken from" hint="e.g. Signed LOI, Package B price list"><input value={amountForm.source} onChange={(e) => setAmountForm({ ...amountForm, source: e.target.value })} /></Field>
-          {changing && record.has_entries && (
-            <Field label="Reason for the change (required, at least 5 characters)" required full>
-              <textarea rows={2} value={amountForm.reason} onChange={(e) => setAmountForm({ ...amountForm, reason: e.target.value })} />
-            </Field>
-          )}
-          <span className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setAmountForm(null)}>Cancel</button>
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !amountReady} onClick={() => { onSetAmount({ ...amountForm, agreed_amount: Number(amountForm.agreed_amount) }); setAmountForm(null); }}>
-              Save amount
-            </button>
-          </span>
-        </div>
-      )}
-
-      <div className="table-wrap overflow-x-auto mt-3">
-        <table className="w-full text-[14px]">
-          <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>OR/AR no.</th><th>Reference no.</th><th>Receipt</th><th>Status</th></tr></thead>
-          <tbody>
-            {!record.entries.length && <tr><td colSpan={7} className="text-muted">No payments recorded yet.</td></tr>}
-            {record.entries.map((p) => (
-              <React.Fragment key={p.id}>
-                <tr>
-                  <td>{formatDate(p.payment_date)}</td>
-                  <td>{peso(p.amount)}</td>
-                  <td>{p.payment_method_label}</td>
-                  <td>{p.or_number || '—'}</td>
-                  <td>{p.reference_number || '—'}</td>
-                  <td>
-                    {p.legacy_no_receipt ? <small className="text-[#fbbf24]">Legacy - no receipt captured</small>
-                      : p.receipts === null ? <small className="text-muted">Private</small>
-                        : p.receipts.map((doc) => (
-                          <button key={doc.id} type="button" disabled={busy} onClick={() => openReceipt(editing.id, p.id, doc).catch((error) => onError(error.message))}>{doc.original_name}</button>
-                        ))}
-                  </td>
-                  <td>
-                    <strong className={ENTRY_TONE[p.status] || ''}>{p.status_label}</strong>
-                    <small className="block">By {p.recorded_by || '—'}{p.recorded_at ? ` · ${manilaDateTimeLabel(p.recorded_at)}` : ''}</small>
-                    {p.verified_by && <small className="block">Verified by {p.verified_by} · {manilaDateTimeLabel(p.verified_at)}</small>}
-                    {p.status === 'returned' && <small className="block text-[#fbbf24]">Returned by {p.returned_by}: {p.returned_reason}</small>}
-                  </td>
-                </tr>
-                {!readOnly && p.reviewable && (
-                  <tr>
-                    <td colSpan={7}>
-                      {returning === p.id ? (
-                        <span className="grid gap-2">
-                          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
-                          <span className="flex gap-2">
-                            <button type="button" disabled={busy} onClick={() => setReturning(null)}>Cancel</button>
-                            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(p.id, reason.trim()); setReturning(null); }}>Return with reason</button>
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="flex gap-2">
-                          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[34px] inline-flex items-center justify-center gap-2 p-[0_12px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy} onClick={() => onVerify(p.id)}>Verify</button>
-                          <button type="button" disabled={busy} onClick={() => { setReturning(p.id); setReason(''); }}>Return to Sales</button>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
       </div>
 
-      {!readOnly && record.can_add_entry && !entryForm && (
-        <button type="button" className="mt-3" disabled={busy} onClick={() => { setFileError(''); setEntryForm({ payment_date: localDateInputValue(), amount: '', payment_method: 'cash', or_number: '', reference_number: '', remarks: '', receipt: null }); }}>
-          Add payment entry
-        </button>
+      {(record.basis_note || record.loi_document || record.loi_file_missing) && (
+        <p className="m-[10px_0_0] text-[#9aa6c4] text-[13.5px]">
+          {record.basis_note && <>Package or basis: <strong className="text-[#d6dcea] font-[600]">{record.basis_note}</strong></>}
+          {record.basis_note && (record.loi_document || record.loi_file_missing) && ' · '}
+          {record.loi_document && (
+            <button type="button" className="p-0 border-0 [background:none] text-[#7fa8ff] hover:underline" onClick={openLoi}>Open signed LOI ({record.loi_document.original_name})</button>
+          )}
+          {!record.loi_document && record.loi_file_missing && <span className="text-[#fbbf24]">No LOI file on record</span>}
+          <span className="block text-[12px] text-[#7b86a3]">Reference only, to check the amount to collect. The system does not store or compute amounts.</span>
+        </p>
       )}
-      {!readOnly && entryForm && (
-        <div className="grid gap-[10px] mt-3">
-          <Field label="Date paid" required><input type="date" max={localDateInputValue()} value={entryForm.payment_date} onChange={(e) => setEntryForm({ ...entryForm, payment_date: e.target.value })} /></Field>
-          <Field label="Amount (₱)" required><input type="number" min="0.01" step="0.01" value={entryForm.amount} onChange={(e) => setEntryForm({ ...entryForm, amount: e.target.value })} /></Field>
-          <Field label="Method" required>
-            <select value={entryForm.payment_method} onChange={(e) => setEntryForm({ ...entryForm, payment_method: e.target.value })}>
-              {Object.entries(record.methods || {}).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
-            </select>
-          </Field>
-          <Field label="OR / AR number" required><input value={entryForm.or_number} onChange={(e) => setEntryForm({ ...entryForm, or_number: e.target.value })} /></Field>
-          <Field label={needsReference ? 'Reference number' : 'Reference number (not needed for cash)'} required={needsReference}>
-            <input value={entryForm.reference_number} onChange={(e) => setEntryForm({ ...entryForm, reference_number: e.target.value })} />
-          </Field>
-          <Field label="Receipt" required full hint={`PDF, JPG or PNG, up to ${record.receipt_rule?.max_mb || 10} MB.`}>
-            <input type="file" accept={accept} onChange={(e) => pickReceipt(e.target.files?.[0] || null)} />
-          </Field>
-          {fileError && <p className="m-0 text-[#ff9ca3]" role="alert">{fileError}</p>}
-          <Field label="Remarks" full><textarea rows={2} value={entryForm.remarks} onChange={(e) => setEntryForm({ ...entryForm, remarks: e.target.value })} /></Field>
-          <span className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setEntryForm(null)}>Cancel</button>
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]" disabled={busy || !entryReady} onClick={sendEntry}>
-              Send to Admin
-            </button>
-          </span>
-        </div>
+
+      <div className="grid gap-[14px] mt-[16px]">
+        {required.map((item) => {
+          const entry = item.entry;
+          const formHere = Boolean(activeForm && activeForm.id === item.id);
+          // Sales: Verified items collapse into one locked row.
+          if (salesView && item.status === 'verified' && entry) {
+            return (
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-[14px_18px] border border-[#252e42] rounded-[11px] [background:#111727]">
+                <span className="flex flex-wrap items-baseline gap-3 min-w-0">
+                  <strong className="text-[#edf0fa] text-[16px]">{item.name}</strong>
+                  <span className="text-[#8f9bbd] text-[13px] [overflow-wrap:anywhere]">
+                    {[formatDate(entry.payment_date), entry.payment_method_label, entry.or_number].filter(Boolean).join(' · ')}
+                  </span>
+                  <span className="flex flex-wrap gap-x-3 gap-y-1 text-[13px]"><ReceiptLinks applicantId={editing.id} entry={entry} busy={busy} onError={onError} /></span>
+                </span>
+                <PayBadge tone="verified">Verified · locked</PayBadge>
+              </div>
+            );
+          }
+          const highlighted = formHere || (isAdminRole && entry?.reviewable && !readOnly);
+          return (
+            <article key={item.id} className={`p-[16px_20px] border rounded-[12px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <strong className="text-[#edf0fa] text-[17px]">{item.name}</strong>
+                <span className="flex items-center gap-2">
+                  {salesView && entry?.editable && !formHere && !readOnly && (
+                    <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={() => setFormFor({ id: item.id, mode: 'edit' })}>Edit entry</button>
+                  )}
+                  {salesView && item.can_record && !formHere && !readOnly && (
+                    <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={() => setFormFor({ id: item.id, mode: 'record' })}>{item.status === 'rejected' ? 'Correct and resubmit' : 'Record payment'}</button>
+                  )}
+                  <PayBadge tone={item.status}>{item.status_label}</PayBadge>
+                </span>
+              </div>
+              {formHere && <p className="m-[6px_0_0] text-[#a9c1ff] text-[13px] font-[700]">Recording: {item.name}</p>}
+              <RejectedNote entry={entry} />
+              {entry && !formHere && (
+                <>
+                  <EntryDetails applicantId={editing.id} entry={entry} busy={busy} onError={onError} />
+                  <AuditLine entry={entry} />
+                </>
+              )}
+              {!entry && !formHere && (
+                <p className="m-[10px_0_0] text-[#8f9bbd] text-[13.5px]">{salesView ? 'Not yet recorded.' : 'Waiting for Sales to record this payment.'}</p>
+              )}
+              {formHere && (
+                <PaymentEntryForm
+                  key={`${item.id}-${activeForm.mode}-${entry?.revision ?? 0}`}
+                  item={item}
+                  record={record}
+                  existing={activeForm.mode === 'edit' || entry?.status === 'rejected' ? entry : null}
+                  applicantId={editing.id}
+                  onError={onError}
+                  busy={busy}
+                  onCancel={() => setFormFor({ id: -1, mode: 'record' })}
+                  onSend={(body) => send(body, activeForm.mode, entry)}
+                />
+              )}
+              {!readOnly && isAdminRole && entry?.reviewable && (
+                <VerificationBox key={`${entry.id}-${entry.revision}`} entry={entry} busy={busy} onVerify={onVerify} onReject={onReject} />
+              )}
+              {!readOnly && isAdminRole && entry?.status === 'for_verification' && !entry.reviewable && (
+                <p className="m-[10px_0_0] text-[#fbbf24] text-[13px]">You encoded this entry, so another Admin must verify it.</p>
+              )}
+              {item.history?.length > 0 && (
+                <details className="mt-[12px] text-[13px] text-[#8f9bbd]">
+                  <summary className="cursor-pointer">Earlier submissions ({item.history.length})</summary>
+                  <ul className="m-[6px_0_0] p-[0_0_0_18px] grid gap-1">
+                    {item.history.map((h) => (
+                      <li key={h.id}>
+                        {formatDate(h.payment_date)} · {h.payment_method_label} · OR/AR {h.or_number || '—'} · {h.status_label}
+                        {h.rejected_reason ? ` — ${h.rejected_reason}` : ''}{h.rejected_by ? ` (${h.rejected_by}${h.rejected_at ? `, ${manilaDateTimeLabel(h.rejected_at)}` : ''})` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      {(record.earlier_entries || []).length > 0 && (
+        <details className="mt-[14px] p-[12px_16px] border border-[#252e42] rounded-[11px] [background:#0f1522]">
+          <summary className="cursor-pointer text-[#c9d0e0] font-[650]">Earlier entries ({record.earlier_entries.length}) — recorded before required payments, read-only</summary>
+          <div className="table-wrap overflow-x-auto mt-2">
+            <table className="w-full text-[13.5px]">
+              <thead><tr><th>Date</th><th>Method</th><th>OR/AR no.</th><th>Reference no.</th><th>Receipt</th><th>Status</th></tr></thead>
+              <tbody>
+                {record.earlier_entries.map((p) => (
+                  <tr key={p.id}>
+                    <td>{formatDate(p.payment_date)}</td>
+                    <td>{p.payment_method_label}</td>
+                    <td>{p.or_number || '—'}</td>
+                    <td>{p.reference_number || '—'}</td>
+                    <td><ReceiptLinks applicantId={editing.id} entry={p} busy={busy} onError={onError} /></td>
+                    <td>{p.status_label}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-[16px] p-[14px_18px] border border-dashed border-[#2a3550] rounded-[11px] [background:#0f1522]">
+        <p className="m-0 flex-[1_1_320px] text-[#c9d0e0]">
+          {record.required_count
+            ? <><strong className="text-[#edf0fa]">{record.verified_count} of {record.required_count}</strong> required payments verified. </>
+            : <><strong className="text-[#edf0fa]">No required payments set.</strong> </>}
+          {readOnly ? '' : 'The applicant moves to For Approval once all required payments are Verified.'}
+        </p>
+        {!readOnly && isAdminRole && editing.status === 'payment_submitted' && (
+          <button type="button" className={PAY_PRIMARY} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
+            Move to For Approval
+          </button>
+        )}
+      </div>
+      {!readOnly && isAdminRole && !record.can_move && record.move_blocker && (
+        <p className="m-[8px_0_0] text-[#8f9bbd] text-[12.5px]">{record.move_blocker}</p>
       )}
 
       {(record.history || []).length > 0 && (
-        <details className="mt-3">
-          <summary>Payment Record history ({record.history.length})</summary>
+        <details className="mt-3 text-[13px]">
+          <summary className="cursor-pointer text-[#9aa6c4]">Payment Record history ({record.history.length})</summary>
           <ul className="m-[6px_0_0] p-[0_0_0_18px] grid gap-1">
             {record.history.map((h) => (
               <li key={h.id}>
-                {manilaDateTimeLabel(h.changed_at)} · {h.by_name || 'System'}{h.actor_role ? ` (${titleCase(h.actor_role)})` : ''} · {titleCase(String(h.event || 'stage change').replace(/^payment_/, '').replace(/_/g, ' '))}
+                {manilaDateTimeLabel(h.changed_at)} · {h.by_name || 'System'}{h.actor_role ? ` (${titleCase(h.actor_role)})` : ''} · {h.action || titleCase(String(h.event || 'stage change').replace(/^payment_/, '').replace(/_/g, ' '))}
                 {h.remarks ? ` — ${h.remarks}` : ''}
               </li>
             ))}
@@ -925,6 +1046,104 @@ function PaymentRecordPanel({ editing, readOnly = false, busy, onSetAmount, onSu
         </details>
       )}
     </section>
+  );
+}
+
+/** Admin: choose which payments this applicant must complete. Names only — no amounts. */
+function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }) {
+  const toRow = (item) => ({ key: `id-${item.id}`, id: item.id, name: item.name, locked: item.locked, lockLabel: item.lock_label, status: item.status });
+  const [rows, setRows] = useState(() => (record.required || []).map(toRow));
+  const [preset, setPreset] = useState(record.preset || '');
+  const [note, setNote] = useState(record.basis_note || '');
+  const nextKey = useRef(0);
+  const newRow = (name = '') => { nextKey.current += 1; return { key: `new-${nextKey.current}`, id: null, name, locked: false, lockLabel: null, status: null }; };
+  const applyPreset = (value) => {
+    setPreset(value);
+    const option = (record.preset_options || []).find((o) => o.value === value);
+    if (!option || !option.items.length) return; // Custom keeps the current list
+    const locked = rows.filter((r) => r.locked);
+    const taken = new Set(locked.map((r) => r.name.toLowerCase()));
+    const existing = new Map(rows.filter((r) => !r.locked && r.id).map((r) => [r.name.toLowerCase(), r]));
+    setRows([...locked, ...option.items.filter((name) => !taken.has(name.toLowerCase())).map((name) => existing.get(name.toLowerCase()) || newRow(name))]);
+  };
+  const update = (key, name) => { setRows(rows.map((r) => (r.key === key ? { ...r, name } : r))); setPreset('custom'); };
+  const remove = (key) => { setRows(rows.filter((r) => r.key !== key)); setPreset('custom'); };
+  const moveRow = (index, delta) => {
+    const target = index + delta;
+    if (target < 0 || target >= rows.length) return;
+    const next = [...rows];
+    [next[index], next[target]] = [next[target], next[index]];
+    setRows(next);
+  };
+  const names = rows.map((r) => r.name.trim().toLowerCase());
+  let issue = '';
+  if (rows.some((r) => !r.name.trim())) issue = 'Enter a name for every required payment, or remove the empty row.';
+  else if (names.some((name, i) => names.indexOf(name) !== i)) issue = 'Each required payment must have a different name.';
+  else if (rows.some((r) => /^[\d\s.,₱$-]+$/.test(r.name.trim()))) issue = 'A required payment is a name (e.g. "Reservation Fee"), not an amount.';
+  const save = () => onSave({
+    preset: preset || null,
+    items: rows.map((r) => (r.id ? { id: r.id, name: r.name.trim() } : { name: r.name.trim() })),
+    basis_note: note.trim() || null,
+  });
+  const subtitle = [applicant.full_name, applicant.applicant_code, applicant.preferred_brand?.name].filter(Boolean).join(' · ');
+
+  return (
+    <Dialog
+      title="Edit required payments"
+      onClose={onCancel}
+      size="medium"
+      zIndex={2147482500}
+      footer={(
+        <>
+          <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={onCancel}>Cancel</button>
+          <button type="button" className={PAY_PRIMARY} disabled={busy || Boolean(issue)} title={issue} onClick={save}>Save required payments</button>
+        </>
+      )}
+    >
+      <p className="m-0 text-[#9aa6c4] text-[14px]">{subtitle}. Choose which payments this applicant must complete. No amounts are set or computed here.</p>
+      <label className="grid gap-[6px] mt-[16px] text-[#c9d0e0] text-[13.5px] font-[600]">Payment plan
+        <select className={PAY_INPUT} value={preset} onChange={(e) => applyPreset(e.target.value)}>
+          <option value="">Choose a plan…</option>
+          {(record.preset_options || []).map((o) => <option key={o.value} value={o.value}>{o.label}{o.items.length ? ` (${o.items.join(', ')})` : ''}</option>)}
+        </select>
+      </label>
+      <ol className="grid gap-[10px] m-[16px_0_0] p-0 [list-style:none]">
+        {rows.map((row, index) => (
+          <li key={row.key} className="grid grid-cols-[22px_minmax(0,_1fr)_auto_auto] items-center gap-[10px] max-[561px]:grid-cols-[22px_minmax(0,_1fr)_auto]">
+            <span className="text-[#8f9bbd] text-[14px]">{index + 1}</span>
+            <input className={PAY_INPUT} value={row.name} disabled={row.locked} maxLength={80} placeholder="Payment name, e.g. 2nd Installment" aria-label={`Required payment ${index + 1}`} onChange={(e) => update(row.key, e.target.value)} />
+            <span className="flex items-center gap-[6px] max-[561px]:col-start-2">
+              {row.locked && <PayBadge tone={row.status === 'verified' ? 'verified' : 'for_verification'}>{row.lockLabel}</PayBadge>}
+              {!row.locked && !row.id && <PayBadge tone="new">New</PayBadge>}
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
+            </span>
+            <button
+              type="button"
+              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171]'}`}
+              disabled={row.locked}
+              title={row.locked ? 'This payment already has an entry, so it cannot be removed.' : 'Remove'}
+              aria-label={`Remove ${row.name || 'row'}`}
+              onClick={() => remove(row.key)}
+            >
+              <FaXmark aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ol>
+      <button type="button" className="mt-[14px] min-h-[42px] p-[0_18px] border border-dashed border-[#3a4660] rounded-[10px] [background:transparent] text-[#a9c1ff] font-[700]" onClick={() => { setRows([...rows, newRow()]); setPreset('custom'); }}>
+        + Add required payment
+      </button>
+      <hr className="my-[18px] border-0 border-t border-t-[#232c40]" />
+      <label className="grid gap-[6px] text-[#c9d0e0] text-[13.5px] font-[600]">Package or basis (optional, text only)
+        <input className={PAY_INPUT} maxLength={500} placeholder="e.g. Package B, per signed LOI" value={note} onChange={(e) => setNote(e.target.value)} />
+        <small className="text-[#8f9bbd] font-[500]">A reference note for Sales and Admin. It is not a number and is never added, compared, or reported.</small>
+      </label>
+      <p className="m-[16px_0_0] p-[12px_14px] border border-dashed border-[#2a3550] rounded-[10px] text-[#9aa6c4] text-[13px]">
+        Payments that already have entries can&apos;t be renamed or removed. Every change is logged with your name and the date.
+      </p>
+      {issue && <p className="m-[10px_0_0] text-[#ff9ca3] text-[13px]" role="alert">{issue}</p>}
+    </Dialog>
   );
 }
 
@@ -1004,38 +1223,105 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
 }
 
 /** Drop zone for requirement files: pick from File manager or drag and drop. Staged files can be viewed or removed before sending. */
-function RequirementFileDrop({ label, required, accept, multiple, files, onChange }) {
+/** A small preview for a picked image file (object URL, revoked on unmount). */
+function FileThumb({ file }) {
+  const url = useMemo(() => (file && /^image\//.test(file.type || '') ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  return (
+    <span className="grid flex-none place-items-center w-[38px] h-[38px] overflow-hidden rounded-[7px] border border-[#2b344c] bg-[#151c2c] text-[#9aa6c4] text-[15px]" aria-hidden="true">
+      {url ? <img src={url} alt="" className="w-full h-full object-cover" /> : (/pdf/i.test(file?.type || file?.name || '') ? <FaFilePdf /> : <FaImage />)}
+    </span>
+  );
+}
+
+/**
+ * The requirement file uploader (drag and drop + Choose file), shared by the Qualification requirements
+ * and the Payment Record receipts. Optional: `max` files in total, `saved` files already on record (kept
+ * unless removed), per-file Replace, and a `validate(file)` check that refuses a file with a message.
+ */
+function RequirementFileDrop({
+  label, required, accept, multiple, files, onChange,
+  max = null, saved = [], onSavedChange = null, onViewSaved = null, replaceable = false, validate = null, hint = null, disabled = false,
+}) {
   const [dragging, setDragging] = useState(false);
+  const [problem, setProblem] = useState('');
+  const [replacing, setReplacing] = useState(null);
   const inputRef = useRef(null);
+  const replaceRef = useRef(null);
+  const total = files.length + saved.length;
+  const full = max != null && total >= max;
+  const accepted = (list) => {
+    for (const file of list) {
+      const issue = validate ? validate(file) : '';
+      if (issue) { setProblem(issue); return null; }
+    }
+    return list;
+  };
   const addFiles = (list) => {
-    const next = multiple ? [...files, ...list] : list.slice(0, 1);
+    setProblem('');
+    if (!list.length || disabled) return;
+    const ok = accepted(list);
+    if (!ok) return;
+    if (!multiple) { onChange(ok.slice(0, 1)); return; }
+    let next = [...files, ...ok];
+    if (max != null && saved.length + next.length > max) {
+      setProblem(`You can attach at most ${max} files. Remove or replace one first.`);
+      next = next.slice(0, Math.max(0, max - saved.length));
+    }
     onChange(next);
   };
+  const replaceWith = (file) => {
+    setProblem('');
+    if (!file || !replacing) return;
+    if (!accepted([file])) { setReplacing(null); return; }
+    if (replacing.kind === 'new') onChange(files.map((f, i) => (i === replacing.index ? file : f)));
+    else { onSavedChange?.(saved.filter((d) => d.id !== replacing.id)); onChange([...files, file]); }
+    setReplacing(null);
+  };
+  const startReplace = (target) => { setReplacing(target); window.setTimeout(() => replaceRef.current?.click(), 0); };
   const viewFile = (file) => {
     const url = URL.createObjectURL(file);
     window.open(url, '_blank', 'noopener');
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
+  const action = 'text-[12px] font-[600] bg-transparent border-0 cursor-pointer hover:underline disabled:opacity-50';
+  const row = 'flex items-center gap-[10px] p-[6px_10px] border border-[#2b344c] rounded-[8px] bg-[#0c111d] text-[13px] text-[#c9d0e0]';
   return (
-    <div className="grid gap-[6px]">
+    <div className="grid gap-[6px] content-start">
       <span className="text-[12px] font-[650] text-[#c9d0e0]">{label}{required && <span className="text-[#f87171]"> *</span>}</span>
       <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragOver={(e) => { e.preventDefault(); if (!full && !disabled) setDragging(true); }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles([...(e.dataTransfer.files || [])]); }}
-        className={`grid place-items-center gap-[8px] p-[16px] border border-dashed rounded-[10px] text-[13px] text-[#9aa6c4] ${dragging ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.08)]' : 'border-[#2b344c] bg-[#101626]'}`}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); if (full) { setProblem(`You can attach at most ${max} files. Remove or replace one first.`); return; } addFiles([...(e.dataTransfer.files || [])]); }}
+        className={`grid place-items-center gap-[8px] p-[16px] border border-dashed rounded-[10px] text-[13px] text-[#9aa6c4] ${dragging ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.08)]' : 'border-[#2b344c] bg-[#101626]'} ${full || disabled ? 'opacity-60' : ''}`}
       >
-        <span>Select a file or drag and drop it here</span>
-        <button type="button" className="min-h-[30px] p-[0_12px] border border-[#2b344c] rounded-[8px] bg-[#1a2133] text-[#c9d0e0] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff]" onClick={() => inputRef.current?.click()}>Choose file</button>
+        <span>{full ? `Maximum of ${max} files attached` : 'Select a file or drag and drop it here'}</span>
+        <button type="button" disabled={full || disabled} className="min-h-[30px] p-[0_12px] border border-[#2b344c] rounded-[8px] bg-[#1a2133] text-[#c9d0e0] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] disabled:cursor-not-allowed" onClick={() => inputRef.current?.click()}>Choose file</button>
         <input ref={inputRef} type="file" className="hidden" multiple={Boolean(multiple)} accept={accept} onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = ''; }} />
+        <input ref={replaceRef} type="file" className="hidden" accept={accept} onChange={(e) => { replaceWith(e.target.files?.[0] || null); e.target.value = ''; }} />
       </div>
-      {files.length > 0 && (
+      {hint && <small className="text-[#8f9bbd] text-[12px]">{hint}</small>}
+      {problem && <small className="text-[#ff9ca3] text-[12px]" role="alert">{problem}</small>}
+      {total > 0 && (
         <ul className="m-0 p-0 [list-style:none] grid gap-[6px]">
+          {saved.map((doc) => (
+            <li key={`saved-${doc.id}`} className={row}>
+              <span className="grid flex-none place-items-center w-[38px] h-[38px] rounded-[7px] border border-[#2b344c] bg-[#151c2c] text-[#9aa6c4] text-[15px]" aria-hidden="true">
+                {/pdf/i.test(doc.mime_type || doc.original_name || '') ? <FaFilePdf /> : <FaImage />}
+              </span>
+              <span className="flex-1 min-w-0"><span className="block truncate">{doc.original_name}</span><small className="text-[#8f9bbd]">Attached earlier</small></span>
+              {onViewSaved && <button type="button" className={`${action} text-[#8fb4ff]`} onClick={() => onViewSaved(doc)}>View</button>}
+              {replaceable && onSavedChange && <button type="button" disabled={disabled} className={`${action} text-[#c9d0e0]`} onClick={() => startReplace({ kind: 'saved', id: doc.id })}>Replace</button>}
+              {onSavedChange && <button type="button" disabled={disabled} className={`${action} text-[#f87171]`} onClick={() => { setProblem(''); onSavedChange(saved.filter((d) => d.id !== doc.id)); }}>Remove</button>}
+            </li>
+          ))}
           {files.map((file, index) => (
-            <li key={`${file.name}-${index}`} className="flex items-center gap-[10px] p-[6px_10px] border border-[#2b344c] rounded-[8px] bg-[#0c111d] text-[13px] text-[#c9d0e0]">
+            <li key={`${file.name}-${index}`} className={row}>
+              {replaceable && <FileThumb file={file} />}
               <span className="flex-1 min-w-0 truncate">{file.name}</span>
-              <button type="button" className="text-[12px] font-[600] text-[#8fb4ff] bg-transparent border-0 cursor-pointer hover:underline" onClick={() => viewFile(file)}>View</button>
-              <button type="button" className="text-[12px] font-[600] text-[#f87171] bg-transparent border-0 cursor-pointer hover:underline" onClick={() => onChange(files.filter((_, i) => i !== index))}>Delete</button>
+              <button type="button" className={`${action} text-[#8fb4ff]`} onClick={() => viewFile(file)}>View</button>
+              {replaceable && <button type="button" disabled={disabled} className={`${action} text-[#c9d0e0]`} onClick={() => startReplace({ kind: 'new', index })}>Replace</button>}
+              <button type="button" disabled={disabled} className={`${action} text-[#f87171]`} onClick={() => { setProblem(''); onChange(files.filter((_, i) => i !== index)); }}>{replaceable ? 'Remove' : 'Delete'}</button>
             </li>
           ))}
         </ul>
@@ -1053,7 +1339,7 @@ function RequirementStatus({ status }) {
  * Requirements of one stage: details + proof files submitted by the assigned Sales user,
  * Accepted or Returned (with a reason) by Admin. The list itself comes from the API config.
  */
-function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy, onSubmit, onAccept, onReturn, onReopen, onError, readOnly = false }) {
+function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy, onSubmit, onAccept, onReturn, onReopen, onError, readOnly = false, title = null }) {
   const { user } = useAuth();
   const [editingKey, setEditingKey] = useState(null);
   const [values, setValues] = useState({});
@@ -1234,7 +1520,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
   return (
     <section className="ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">{stageInfo?.label} requirements</h3>
+        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa]">{title || `${stageInfo?.label} requirements`}</h3>
         <small className="text-[#9ba5bd]">{accepted} of {defs.length} accepted</small>
       </div>
       {summary.legacy && <p className="m-[8px_0_0] text-[#fbbf24]">Legacy record - requirements not captured.</p>}
@@ -1593,11 +1879,11 @@ function ScheduleSection({
 
   return (
     <section className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#0C111D] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#0C111D] [#update-applicant-form_&]:[box-shadow:none] ap-schedule-section [&.is-locked]:opacity-[.92] [&.is-locked_h3]:inline-flex [&.is-locked_h3]:items-center [&.is-locked_h3]:gap-2" ref={sectionRef}>
-      <div className="[&_h3]:m-0 [&_h3]:text-[0.78rem] [&_h3]:tracking-[0.09em] [&_h3]:uppercase flex later:items-center justify-between gap-3 later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap later:mb-[15px] [#update-applicant-form_&]:mb-[11px]">
+      <div className="[&_h3]:m-0 [&_h3]:text-[0.78rem] [&_h3]:tracking-[0.09em] [&_h3]:uppercase flex later:items-center justify-between gap-3 later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap later:mb-[15px] [#update-applicant-form_&]:mb-[11px] pb-[10px] border-b border-[#2a3041]">
         <h3>Schedule activity</h3>
         <small>{doneCount} of {TRACKED_ACTIVITIES.length} done</small>
       </div>
-      <ul className="[.ap-schedule-section_&]:[list-style:none] [.ap-schedule-section_&]:m-[12px_0_0] [.ap-schedule-section_&]:p-0 [.ap-schedule-section_&]:flex [.ap-schedule-section_&]:flex-col [.ap-schedule-section_&]:gap-[10px]">
+      <ul className="[.ap-schedule-section_&]:[list-style:none] [.ap-schedule-section_&]:m-[12px_0_0] [.ap-schedule-section_&]:p-[14px_0_0] [.ap-schedule-section_&]:flex [.ap-schedule-section_&]:flex-col [.ap-schedule-section_&]:gap-[10px] relative [&::before]:[content:''] [&::before]:absolute [&::before]:top-0 [&::before]:bottom-0 [&::before]:left-[161px] [&::before]:w-px [&::before]:[background:#2a3041]">
         {TRACKED_ACTIVITIES.map((tracked) => {
           const info = infoOf(tracked.type);
           const state = info.state || 'not_scheduled';
@@ -1609,11 +1895,12 @@ function ScheduleSection({
           const legacyCompletion = !latest?.completion_submitted_at;
           const canMark = !saved && state === 'completed' && legacyCompletion;
           const overdue = Boolean(info.overdue) && !saved;
+          const hasLinks = state !== 'not_scheduled' && Boolean(onOpenCalendar || onView);
           return (
-            <li key={tracked.type} className="ap-activity-row flex items-center gap-3 flex-wrap p-[10px_12px] border border-[color:var(--border,_#262b36)] rounded-[12px] [background:color-mix(in_srgb,_var(--panel,_#12151c)_92%,_transparent)]" data-activity-type={tracked.type}>
-              <span className={`p-[4px_10px] rounded-[999px] text-[10px] font-[800] tracking-[0.04em] uppercase border border-transparent whitespace-nowrap later-5:[&.is-not\_scheduled]:text-[color:var(--muted,_#8b93a5)] [&.is-not\_scheduled]:[background:color-mix(in_srgb,_var(--muted,_#8b93a5)_14%,_transparent)] [&.is-not\_scheduled]:border-[color:color-mix(in_srgb,_var(--muted,_#8b93a5)_35%,_transparent)] later-6:[&.is-pending\_admin]:text-[#ffc857] later:[&.is-pending\_admin]:[background:color-mix(in_srgb,_#ffc857_12%,_transparent)] later:[&.is-pending\_admin]:border-[color:color-mix(in_srgb,_#ffc857_45%,_transparent)] later-7:[&.is-scheduled]:text-[#4cc9ff] later-2:[&.is-scheduled]:[background:color-mix(in_srgb,_#4cc9ff_12%,_transparent)] later-2:[&.is-scheduled]:border-[color:color-mix(in_srgb,_#4cc9ff_45%,_transparent)] later-8:[&.is-completed]:text-[#7ddfff] later-3:[&.is-completed]:[background:color-mix(in_srgb,_#4cc9ff_18%,_transparent)] later-3:[&.is-completed]:border-[color:color-mix(in_srgb,_#4cc9ff_55%,_transparent)] later-9:[&.is-attended]:text-[#39ffb0] later-4:[&.is-attended]:[background:color-mix(in_srgb,_#39ffb0_14%,_transparent)] later-4:[&.is-attended]:border-[color:color-mix(in_srgb,_#39ffb0_50%,_transparent)] [&.is-attended]:[box-shadow:0_0_10px_color-mix(in_srgb,_#39ffb0_25%,_transparent)] later-10:[&.is-overdue]:text-[#ffb454] later-5:[&.is-overdue]:[background:color-mix(in_srgb,_#ffb454_12%,_transparent)] later-5:[&.is-overdue]:border-[color:color-mix(in_srgb,_#ffb454_45%,_transparent)] [.ap-schedule-section.is-locked_&]:opacity-[.75] is-${overdue ? 'overdue' : state}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span>
-              <span className="flex flex-col gap-[2px] min-w-[150px] flex-1 later-2:[&_small]:text-[color:var(--muted,_#8b93a5)] later:[&_small]:text-[11px]">
-                <strong>{tracked.label}</strong>
+            <li key={tracked.type} className="ap-activity-row flex items-center gap-3 flex-wrap p-[0_0_20px] border-0 [background:none]" data-activity-type={tracked.type}>
+              <span className="w-[150px] shrink-0 mr-3 pr-3 flex items-center"><span className={`p-[4px_10px] rounded-[999px] text-[10px] font-[500] tracking-[0.04em] uppercase whitespace-nowrap later-5:[&.is-not\_scheduled]:text-[color:var(--muted,_#8b93a5)] [&.is-not\_scheduled]:[background:color-mix(in_srgb,_var(--muted,_#8b93a5)_14%,_transparent)] later-6:[&.is-pending\_admin]:text-[#ffc857] later:[&.is-pending\_admin]:[background:color-mix(in_srgb,_#ffc857_12%,_transparent)] later-7:[&.is-scheduled]:text-[#4cc9ff] later-2:[&.is-scheduled]:[background:color-mix(in_srgb,_#4cc9ff_12%,_transparent)] later-8:[&.is-completed]:text-[#7ddfff] later-3:[&.is-completed]:[background:color-mix(in_srgb,_#4cc9ff_18%,_transparent)] later-9:[&.is-attended]:text-[#39ffb0] later-4:[&.is-attended]:[background:color-mix(in_srgb,_#39ffb0_14%,_transparent)] [&.is-attended]:[box-shadow:0_0_10px_color-mix(in_srgb,_#39ffb0_25%,_transparent)] later-10:[&.is-overdue]:text-[#ffb454] later-5:[&.is-overdue]:[background:color-mix(in_srgb,_#ffb454_12%,_transparent)] [.ap-schedule-section.is-locked_&]:opacity-[.75] is-${overdue ? 'overdue' : state}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span></span>
+              <span className="flex flex-col gap-[2px] w-[240px] shrink-0 mr-3 pr-3 later-2:[&_small]:text-[color:var(--muted,_#8b93a5)] later:[&_small]:text-[11px]">
+                <strong className="text-[15px]">{tracked.label}</strong>
                 {info.active && info.starts_at && <small>{fmtDateTime(info.starts_at)}{overdue ? ' · missed' : ''}</small>}
                 {info.completed && !saved && <small>Sales marked Complete — waiting for Attended</small>}
                 {saved && info.completed_at && <small>Sales completed {fmtDateTime(info.completed_at)}</small>}
@@ -1623,8 +1910,8 @@ function ScheduleSection({
                   </small>
                 )}
               </span>
-              {state !== 'not_scheduled' && (onOpenCalendar || onView) && (
-                <span className="ap-activity-links inline-flex gap-[6px] ml-auto flex-wrap">
+              {hasLinks && (
+                <span className="ap-activity-links ml-auto inline-flex gap-[6px] flex-wrap">
                   {onOpenCalendar && sessionOf(tracked.type) && (
                     <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onOpenCalendar(sessionOf(tracked.type))}>
                       Open in calendar
@@ -1643,7 +1930,7 @@ function ScheduleSection({
                   role="checkbox"
                   aria-checked={checked}
                   aria-disabled={!canMark}
-                  className={`ap-check [border:1px_solid_var(--ap-border-2)] flex items-center later:gap-[10px] min-w-0 later:p-[11px_12px] later:border later:border-[#303749] later:rounded-[11px] later:[background:#191f2e] later:text-[#d4daea] text-left later:[font-family:inherit] later:[font-weight:inherit] [font-style:inherit] later:leading-[1.4] cursor-pointer later:[transition:background_.16s_ease,_border-color_.16s_ease] later-2:hover:border-[#6258c9] later:hover:[background:#1d2335] later-3:[&.checked]:border-[rgba(37,_199,_122,_.45)] later-2:[&.checked]:[background:rgba(37,_199,_122,_.07)] [#update-applicant-form_&]:gap-2 [#update-applicant-form_&]:p-[9px_10px] [#update-applicant-form_&]:text-[11px] [#update-applicant-form_&:hover]:[background:#202a40] [&.read-only]:cursor-default [&.read-only:hover]:[background:transparent] [&.read-only:hover]:border-[rgba(226,_232,_255,_.085)] later:[#update-applicant-form_&]:border-[#252e40] later:[#update-applicant-form_&]:rounded-[7px] later:[#update-applicant-form_&]:[background:#141b29] later-2:text-[12px] disabled:cursor-not-allowed disabled:opacity-[.55] [&.is-locked]:cursor-not-allowed later:[&.is-locked]:opacity-[.8] [.ap-activity-row_.ap-activity-links+&]:ml-0 ${checked ? ' checked [&.checklist-item]:border-[color:color-mix(in_srgb,_var(--success)_32%,_transparent)] [&.checklist-item]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] [&.checklist-item_.checklist-box]:[background:var(--success)] [&.checklist-item_.checklist-box]:border-success [&.checklist-item_.checklist-box]:text-[#04120c] [&.checklist-item_.checklist-copy_strong]:text-text' : ''}${saved ? ' is-locked' : ''}`}
+                  className={`ap-check${hasLinks ? '' : ' ml-auto'} shrink-0 [border:1px_solid_var(--ap-border-2)] flex items-center later:gap-[10px] min-w-0 later:p-[11px_12px] later:border later:border-[#303749] later:rounded-[11px] later:[background:#191f2e] later:text-[#d4daea] text-left later:[font-family:inherit] later:[font-weight:inherit] [font-style:inherit] later:leading-[1.4] cursor-pointer later:[transition:background_.16s_ease,_border-color_.16s_ease] later-2:hover:border-[#6258c9] later:hover:[background:#1d2335] later-3:[&.checked]:border-[rgba(37,_199,_122,_.45)] later-2:[&.checked]:[background:rgba(37,_199,_122,_.07)] [#update-applicant-form_&]:gap-2 [#update-applicant-form_&]:p-[9px_10px] [#update-applicant-form_&]:text-[11px] [#update-applicant-form_&:hover]:[background:#202a40] [&.read-only]:cursor-default [&.read-only:hover]:[background:transparent] [&.read-only:hover]:border-[rgba(226,_232,_255,_.085)] later:[#update-applicant-form_&]:border-[#252e40] later:[#update-applicant-form_&]:rounded-[7px] later:[#update-applicant-form_&]:[background:#141b29] later-2:text-[12px] disabled:cursor-not-allowed disabled:opacity-[.55] [&.is-locked]:cursor-not-allowed later:[&.is-locked]:opacity-[.8] ${checked ? ' checked [&.checklist-item]:border-[color:color-mix(in_srgb,_var(--success)_32%,_transparent)] [&.checklist-item]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] [&.checklist-item_.checklist-box]:[background:var(--success)] [&.checklist-item_.checklist-box]:border-success [&.checklist-item_.checklist-box]:text-[#04120c] [&.checklist-item_.checklist-copy_strong]:text-text' : ''}${saved ? ' is-locked' : ''}`}
                   disabled={!canMark}
                   title={saved
                     ? 'Attended is saved and locked.'
@@ -1678,124 +1965,6 @@ function ScheduleSection({
  * A finished stage section, shown under the current work and collapsed by
  * default (show/hide). The content is the same section, read-only by stage.
  */
-/**
- * The saved discount snapshot (Phase 4): original price, discount %, promo
- * name, final total, who set it and when. Display only — the numbers come
- * from the saved record, so a later promo change never rewrites them.
- */
-function DiscountSnapshot({ original, percent, promo, final, setBy, setAt, compact = false }) {
-  if (final == null) return null;
-  const pct = Number(percent) || 0;
-  return (
-    <dl className={`grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[6px_14px] m-[10px_0_0] p-[10px_12px] border border-[#273044] rounded-[10px] [background:#0d1320] [&_div]:min-w-0 later-5:[&_dt]:text-[#8f9bb8] later-4:[&_dt]:text-[11px] [&_dt]:uppercase [&_dt]:tracking-[.04em] later:[&_dd]:m-[2px_0_0] later-3:[&_dd]:text-[#e4e8f4] later-3:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&.is-compact]:grid-cols-[repeat(6,_minmax(0,_1fr))] [&.is-compact]:m-[10px_0] max-[821px]:later:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[821px]:later:[&.is-compact]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-w-full ${compact ? ' is-compact' : ''}`}>
-      <div><dt>Original price</dt><dd>{moneyExact(original ?? final)}</dd></div>
-      <div><dt>Discount</dt><dd>{pct > 0 ? `${pct}%` : 'None'}</dd></div>
-      <div><dt>Promo</dt><dd>{promo || '—'}</dd></div>
-      <div><dt>Final total</dt><dd><strong>{moneyExact(final)}</strong></dd></div>
-      <div><dt>Set by</dt><dd>{setBy || '—'}</dd></div>
-      <div><dt>Date</dt><dd>{setAt ? formatDate(setAt) : '—'}</dd></div>
-    </dl>
-  );
-}
-
-/**
- * Installment plan read-out (Admin + Sales) and Admin's plan form
- * (frequency + first due date, only after the downpayment is saved).
- * Saved payments only count; the pending amount is shown on its own line.
- */
-function InstallmentPlanPanel({ installment, pendingAmount, canSetSchedule, busy, onSave }) {
-  const [form, setForm] = useState(null);
-  if (!installment) return null;
-  const editing = Boolean(form);
-  const frequency = form?.frequency ?? installment.frequency ?? installment.default_frequency ?? 'monthly';
-  const open = () => setForm({
-    frequency: installment.frequency || installment.default_frequency || 'monthly',
-    custom_days: String(installment.custom_days || installment.custom_days_default || 30),
-    first_due_date: installment.first_due_date || '',
-  });
-  const formIssue = !form ? ''
-    : !form.first_due_date ? 'Pick the first due date.'
-      : form.frequency === 'custom' && !(Number(form.custom_days) >= 1 && Number(form.custom_days) <= 365) ? 'Enter 1–365 days.'
-        : '';
-
-  return (
-    <section className="p-[12px_14px] border border-[#273044] rounded-[11px] [background:#0d1320] [&_.pay-muted-line]:m-[10px_0_0] [&_.pay-muted-line]:text-[#8f9bb8] max-w-full" aria-labelledby="ap-pay-plan-title">
-      <div className="flex items-center gap-[10px] mb-2 later-2:[&_h4]:m-0 later:[&_h4]:text-[#edf0fa] later-2:[&_h4]:text-[14px] [&_.pay-mini-btn]:ml-auto">
-        <h4 id="ap-pay-plan-title">Installment plan</h4>
-        {installment.overdue && <span className="[justify-self:start] p-[1px_8px] rounded-[999px] text-[10px] font-[700] pay-badge-overdue">Overdue</span>}
-        {canSetSchedule && !editing && (
-          <button type="button" className="pay-mini-btn later:[justify-self:start] p-[2px_10px] border border-[#3b4767] rounded-[7px] [background:transparent] text-[#c9d1e6] text-[10px] font-[700] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:border-[#8175ff] hover:[background:rgba(129,_117,_255,_.1)] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px]" onClick={open}>
-            <FaPen aria-hidden="true" /> {installment.frequency ? 'Edit plan' : 'Set plan'}
-          </button>
-        )}
-      </div>
-      <dl className="grid grid-cols-[repeat(auto-fit,_minmax(190px,_1fr))] gap-[8px_16px] m-0 later-5:[&_dt]:text-[#8f9bb8] later-4:[&_dt]:text-[11px] [&_dt]:uppercase [&_dt]:tracking-[.04em] later:[&_dd]:m-[2px_0_0] later-3:[&_dd]:text-[#e4e8f4] later-4:[&_dd]:text-[13.5px] later:[&_dd_small]:text-[#8f9bb8] [&_dd_small]:text-[11.5px] [&_dd.is-overdue]:text-[#fda4af] [&_dd.is-overdue]:font-[700]">
-        <div><dt>Minimum downpayment</dt><dd>{moneyExact(installment.min_downpayment_amount)} <small>({installment.min_downpayment_percent}% of the final total)</small></dd></div>
-        <div><dt>Saved downpayment</dt><dd>{installment.has_downpayment ? moneyExact(installment.downpayment_amount) : 'Not yet'}{installment.downpayment_is_legacy ? <small> (first saved payment)</small> : null}</dd></div>
-        <div><dt>Minimum installment</dt><dd>{installment.minimum_installment != null ? <>{moneyExact(installment.minimum_installment)} <small>({installment.installment_minimum_percent_of_downpayment}% of the downpayment, fixed)</small></> : '—'}</dd></div>
-        <div><dt>Next minimum</dt><dd>{installment.next_minimum != null ? moneyExact(installment.next_minimum) : '—'}</dd></div>
-        <div><dt>Remaining balance</dt><dd>{moneyExact(installment.remaining_balance)} <small>(saved payments)</small></dd></div>
-        <div><dt>Pending (not counted)</dt><dd>{moneyExact(pendingAmount || 0)}</dd></div>
-        <div><dt>Frequency</dt><dd>{installment.frequency_label ? `${installment.frequency_label}${installment.frequency === 'custom' && installment.custom_days ? ` · every ${installment.custom_days} days` : ''}` : 'Not set'}</dd></div>
-        <div><dt>Next due date</dt><dd className={installment.overdue ? 'is-overdue' : ''}>{installment.next_due_date ? formatDate(installment.next_due_date) : '—'}</dd></div>
-        <div><dt>Estimated payments left</dt><dd>{installment.estimated_payments || '—'}</dd></div>
-        <div><dt>Estimated last due date</dt><dd>{installment.estimated_last_due_date ? formatDate(installment.estimated_last_due_date) : '—'}</dd></div>
-      </dl>
-      {!installment.has_downpayment && (
-        <p className="pay-muted-line flex-none text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">The plan is set by Admin after the downpayment is saved.</p>
-      )}
-      {editing && (
-        <div className="flex flex-wrap items-end gap-[10px_14px] mt-3 pt-3 border-t border-t-[#273044] [&_label]:grid later:[&_label]:gap-1 later-2:[&_label]:text-[#c3cbe0] later-3:[&_label]:text-[12.5px] later:[&_input]:min-w-[160px] later-6:[&_input]:p-[7px_10px] later-4:[&_input]:border later-5:[&_input]:border-[#2f3a52] later-3:[&_input]:rounded-[8px] later-5:[&_input]:[background:#111827] later-5:[&_input]:text-[#e4e8f4] [&_input]:[color-scheme:dark] later:[&_select]:min-w-[160px] later-3:[&_select]:p-[7px_10px] later-2:[&_select]:border later-2:[&_select]:border-[#2f3a52] later-2:[&_select]:rounded-[8px] later-3:[&_select]:[background:#111827] later-2:[&_select]:text-[#e4e8f4] [&_select]:[color-scheme:dark]">
-          <label>
-            Frequency
-            <select value={frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>
-              {(installment.frequency_options || []).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          {frequency === 'custom' && (
-            <label>
-              Every (days)
-              <input
-                type="text"
-                inputMode="numeric"
-                value={form.custom_days}
-                onChange={(e) => setForm({ ...form, custom_days: e.target.value.replace(/[^\d]/g, '').slice(0, 3) })}
-              />
-            </label>
-          )}
-          <label>
-            First due date
-            <input type="date" value={form.first_due_date} onChange={(e) => setForm({ ...form, first_due_date: e.target.value })} />
-          </label>
-          <div className="flex gap-2 ml-auto">
-            <button type="button" className="pay-mini-btn later:[justify-self:start] p-[2px_10px] border border-[#3b4767] rounded-[7px] [background:transparent] text-[#c9d1e6] text-[10px] font-[700] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:border-[#8175ff] hover:[background:rgba(129,_117,_255,_.1)] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px]" disabled={busy} onClick={() => setForm(null)}>Cancel</button>
-            <button
-              type="button"
-              className="pay-mini-btn later:[justify-self:start] border border-[#3b4767] rounded-[7px] [background:transparent] text-[#c9d1e6] text-[10px] font-[700] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:border-[#8175ff] hover:[background:rgba(129,_117,_255,_.1)] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px] later:p-[5px_16px] max-[641px]:w-full"
-              disabled={busy || Boolean(formIssue)}
-              title={formIssue || undefined}
-              onClick={async () => {
-                const ok = await onSave({
-                  frequency: form.frequency,
-                  custom_days: form.frequency === 'custom' ? Number(form.custom_days) : null,
-                  first_due_date: form.first_due_date,
-                });
-                if (ok) setForm(null);
-              }}
-            >
-              {busy ? 'Saving…' : 'Save plan'}
-            </button>
-          </div>
-          {formIssue && <small className="text-[#ff9ca3] leading-[1.35] later:text-[12px]">{formIssue}</small>}
-        </div>
-      )}
-      <p className="pay-muted-line flex-none text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">Paying more than the minimum lowers the balance and moves the due date to the next period. Overdue is a reminder only — no penalty or interest.</p>
-    </section>
-  );
-}
-
 function DoneSection({ title, summary, children, tone = 'done', defaultOpen = false }) {
   return (
     <details className={`ap-done-section border border-[#293246] rounded-[12px] [background:#121827] [&>summary]:flex [&>summary]:items-center [&>summary]:gap-[10px] [&>summary]:p-[12px_14px] [&>summary]:cursor-pointer [&>summary]:[list-style:none] [&>summary]:text-[#e4e8f4] later:[&>summary]:text-[13px] [&>summary]:font-[700] [&>summary::-webkit-details-marker]:hidden [&>summary:focus-visible]:[outline:2px_solid_#6d8cff] [&>summary:focus-visible]:[outline-offset:2px] [&>summary:focus-visible]:rounded-[12px] [&>summary_small]:text-[#9ba5bd] [&>summary_small]:font-[500] [&.is-pending]:border-[rgba(245,_158,_11,_.45)] is-${tone}`} open={defaultOpen || undefined}>
@@ -1955,7 +2124,7 @@ function LoiAttachment({
   if (!attached) {
     return (
       <div className="grid gap-2 [align-content:start]">
-        <span className="text-[#9aa6c4] text-[10.5px] tracking-[.05em] uppercase [&_em]:text-[#7d879e] [&_em]:not-italic [&_em]:tracking-[0] [&_em]:normal-case">LOI document <em>(optional)</em></span>
+        <span className="text-[#9aa6c4] text-[10.5px] tracking-[.05em] uppercase [&_em]:text-[#7d879e] [&_em]:not-italic [&_em]:tracking-[0] [&_em]:normal-case">LOI document <em className="text-[#ff9ca3]!">*</em></span>
         <div className="grid [justify-items:center] gap-[6px] p-[16px_12px] border border-dashed border-[#3a4560] rounded-[12px] [background:#0c111d] text-center">
           <span className="grid w-[34px] h-[34px] place-items-center rounded-[9px] [background:rgba(129,_117,_255,_.14)] text-[#a89dff]" aria-hidden="true"><FaClipboardCheck /></span>
           <p className="m-0 text-[#edf0fa] text-[11px] [word-break:break-word]">No file attached</p>
@@ -1971,7 +2140,7 @@ function LoiAttachment({
             </label>
           )}
         </div>
-        <span className="text-[#7d879e] text-[10px] leading-[1.4]">PDF, JPG, JPEG or PNG · saved with the applicant record.</span>
+        <span className="text-[#7d879e] text-[10px] leading-[1.4]">Required. PDF, JPG, JPEG or PNG, up to 10 MB · saved with the applicant record.</span>
       </div>
     );
   }
@@ -2013,7 +2182,7 @@ function LoiAttachment({
 
   return (
     <div className="grid gap-2 [align-content:start]">
-      <span className="text-[#9aa6c4] text-[10.5px] tracking-[.05em] uppercase [&_em]:text-[#7d879e] [&_em]:not-italic [&_em]:tracking-[0] [&_em]:normal-case">LOI document <em>(optional)</em></span>
+      <span className="text-[#9aa6c4] text-[10.5px] tracking-[.05em] uppercase [&_em]:text-[#7d879e] [&_em]:not-italic [&_em]:tracking-[0] [&_em]:normal-case">LOI document <em className="text-[#ff9ca3]!">*</em></span>
       <div className="flex items-center gap-[10px] p-[9px_10px] border border-[#2b344c] rounded-[12px] [background:#0c111d]">
         <span className={`grid w-[38px] h-[38px] flex-[0_0_auto] place-items-center overflow-hidden rounded-[9px] [background:rgba(129,_117,_255,_.14)] text-[#a89dff] text-[16px] [&.has-thumb]:[background:#131a29] [&_img]:w-full [&_img]:h-full [&_img]:object-cover ${image && thumb ? ' has-thumb' : ''}`} aria-hidden="true">
           {image && thumb
@@ -2068,10 +2237,7 @@ function LoiPanel({
           {status === 'complete' && <span className="p-[2px_8px] rounded-[999px] text-[11px] font-[700] tracking-[.02em] [&.is-pending]:[background:rgba(245,_158,_11,_.16)] later-5:[&.is-pending]:text-[#fbbf24] [&.is-pending]:border [&.is-pending]:border-[rgba(245,_158,_11,_.4)] later:[&.is-complete]:[background:rgba(34,_197,_94,_.14)] later-6:[&.is-complete]:text-[#4ade80] [&.is-complete]:border later:[&.is-complete]:border-[rgba(34,_197,_94,_.35)] is-complete">Complete</span>}
         </h3>
         <small>
-          {!interactive ? 'Recorded submission'
-            : LOI_SOFT_TYPES.includes(draft.submission_type)
-              ? 'Soft copy: the image is required for Complete.'
-              : 'Hard copy: the image is optional.'}
+          {!interactive ? 'Recorded submission' : 'The LOI file is required for every LOI.'}
         </small>
       </div>
       <div className="grid grid-cols-[240px_minmax(0,_1fr)] gap-4 max-[761px]:later:grid-cols-[1fr]">
@@ -2168,7 +2334,7 @@ function ApprovalReceipt({ applicant, draft }) {
   const details = draft?.details || {};
   const activityState = applicant.activity_state || {};
   const loiDocument = (applicant.documents || []).find((file) => file.type === 'loi');
-  const summary = applicant.payment_summary || {};
+  const paymentRecord = applicant.payment_record || {};
 
   return (
     <section className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#101521] [#update-applicant-form_&]:[box-shadow:none] later:[background:#101728]" aria-labelledby="ap-receipt-title">
@@ -2242,10 +2408,16 @@ function ApprovalReceipt({ applicant, draft }) {
         <article className="p-3 border border-[#272f44] rounded-[10px] [background:#0c111d] [&_h4]:m-[0_0_8px] [&_h4]:text-[#9aa6c4] [&_h4]:text-[10px] [&_h4]:tracking-[.07em] [&_h4]:uppercase [&_ul]:m-0 [&_ul]:p-0 [&_ul]:[list-style:none] [&_ul]:grid [&_ul]:gap-[6px] [&_li]:flex [&_li]:justify-between [&_li]:gap-[10px] [&_li]:text-[#b9c1d5] [&_li]:text-[11px] [&_li_strong]:text-[#edf0fa] [&_li_strong]:font-[600] [&_li_strong]:text-right">
           <h4>4 · Payment Record</h4>
           <ul>
-            <li><span>Package</span><strong>{summary.package_name || '—'}</strong></li>
-            <li><span>Total required</span><strong>{money(summary.total_required_amount)}</strong></li>
-            <li><span>Verified</span><strong className="text-[#34d399]! font-[600]">{money(summary.verified_amount)}</strong></li>
-            <li><span>Balance</span><strong className="text-[#fbbf24]! font-[600]">{money(summary.remaining_balance)}</strong></li>
+            {(paymentRecord.required || []).map((item) => (
+              <li key={item.id}>
+                <span>{item.name}</span>
+                <strong className={item.status === 'verified' ? 'text-[#34d399]! font-[600]' : undefined}>{item.status_label}</strong>
+              </li>
+            ))}
+            <li>
+              <span>Required payments verified</span>
+              <strong>{paymentRecord.required_count ? `${paymentRecord.verified_count} of ${paymentRecord.required_count}` : (paymentRecord.legacy_confirmed ? 'Confirmed (older record)' : '—')}</strong>
+            </li>
           </ul>
         </article>
       </div>
@@ -2307,42 +2479,13 @@ export default function Applicants() {
   const [rejectForm, setRejectForm] = useState(null);
   // Application Detail read-only report.
   const [report, setReport] = useState(null);
-  // Payment Record stage: inline payment entry form, inline Total required
-  // editor, and the Admin "Return to Sales" note dialog.
-  // ADD PAYMENT only appends to `paymentDrafts` — it never calls the API.
-  // Save New Record turns the drafts into one pending Sales Report.
-  const [paymentEntry, setPaymentEntry] = useState(null);
-  const [paymentDrafts, setPaymentDrafts] = useState([]);
-  // Admin's local Confirm Payment state: preview of the pending Sales Report.
-  // It is persisted only by SAVE APPLICANT; closing the modal drops it.
-  const [reportPreview, setReportPreview] = useState(false);
-  // Admin's Total required edit mode. The card value saves with its own Save
-  // button; `paymentTotal` holds the ORIGINAL amount (before the discount).
-  const [paymentTotal, setPaymentTotal] = useState('');
-  const [discountChoice, setDiscountChoice] = useState('');
-  const [customDiscount, setCustomDiscount] = useState('');
-  // Discount snapshot: optional promo name saved with the total (Phase 4).
-  const [promoName, setPromoName] = useState('');
-  const [savingTotal, setSavingTotal] = useState(false);
-  const [totalEditError, setTotalEditError] = useState('');
-  const [returnForm, setReturnForm] = useState(null);
-  // UI-only presentation state for the redesigned Payment Record panel:
-  // Admin's inline Total-required edit and the collapsed Sales Report card.
-  // No behavior, handler or API call depends on them.
-  const [totalEditing, setTotalEditing] = useState(false);
-  const [reportExpanded, setReportExpanded] = useState(false);
   const [activateForm, setActivateForm] = useState(null);
   const [acting, setActing] = useState(false);
   const scheduleRef = useRef(null);
-  // The payment Amount input, used to restore the caret after re-grouping.
-  const entryAmountRef = useRef(null);
 
   // The signed-in user, used for "Marked by". The backend names users with `full_name`.
   const authName = String(user?.full_name || user?.name || user?.email || '').trim();
   const authLabel = authName ? `${authName}${role ? ` (${titleCase(role)})` : ''}` : '';
-  // "Received by" is the signed-in Sales user; the role label shows when the
-  // name is unavailable. The server re-derives both ids from the session.
-  const receivedByLabel = authName ? `Received by ${authName} (Sales)` : 'Received by Sales';
 
   // Cache of applicant details used by the hover card (cleared after every save).
   const detailCache = useRef(new Map());
@@ -2445,17 +2588,7 @@ export default function Applicants() {
     setEditing(null);
     setDraft(null);
     setMark(null);
-    setPaymentEntry(null);
-    setPaymentDrafts([]);
-    setReportPreview(false);
-    setPaymentTotal('');
-    setDiscountChoice('');
-    setCustomDiscount('');
-    setPromoName('');
-    setTotalEditError('');
-    setReturnForm(null);
-    setTotalEditing(false);
-    setReportExpanded(false);
+    setEditRequiredOpen(false);
     setLoiDraft(null);
     setApproveForm(null);
     setReviseForm(null);
@@ -2483,33 +2616,7 @@ export default function Applicants() {
       void api.post('/notifications/mark-seen', { record_type: 'applicant', record_id: id })
         .then(() => window.dispatchEvent(new Event('herald:notifications-updated')))
         .catch(() => {});
-      setPaymentEntry(null);
-      setPaymentDrafts([]);
-      setReportPreview(false);
-      // Edit mode always starts from the ORIGINAL amount and the saved
-      // discount, so a reopened editor never shows a discounted value as if it
-      // were the amount the Admin typed.
-      setPaymentTotal(
-        Number(detail.data.payment_stage?.original_total_required_amount)
-          ? String(detail.data.payment_stage.original_total_required_amount)
-          : (Number(detail.data.payment_stage?.total_required_amount)
-            ? String(detail.data.payment_stage.total_required_amount)
-            : ''),
-      );
-      const savedDiscount = Number(detail.data.payment_stage?.discount_percent) || 0;
-      setPromoName(detail.data.payment_stage?.promo_name || '');
-      if (savedDiscount <= 0) {
-        setDiscountChoice('');
-        setCustomDiscount('');
-      } else if (DISCOUNT_PRESETS.includes(savedDiscount)) {
-        setDiscountChoice(String(savedDiscount));
-        setCustomDiscount('');
-      } else {
-        setDiscountChoice('custom');
-        setCustomDiscount(String(savedDiscount));
-      }
-      setTotalEditError('');
-      setReturnForm(null);
+      setEditRequiredOpen(false);
       setLoiDraft({
         submission_date: detail.data.loi_submission_date ? String(detail.data.loi_submission_date).slice(0, 10) : '',
         received_by: detail.data.loi_received_by || '',
@@ -2594,13 +2701,6 @@ export default function Applicants() {
         milestone_details: draft.details,
       });
 
-      // Admin previewed a Sales Report with Confirm Payment: THIS is the save
-      // that turns it into applicant payment rows. Without this click the
-      // request stays pending and the record is untouched.
-      if (isAdminRole && reportPreview && editing.payment_stage?.sales_report?.id) {
-        await api.post(`/applicants/${editing.id}/payments/apply-report`, {});
-      }
-
       // Read the applicant back and confirm that "Date marked" and "Marked by" really were stored.
       // Without this check the page would report success even if the server silently drops them.
       const fresh = (await api.get(`/applicants/${editing.id}`)).data;
@@ -2663,10 +2763,13 @@ export default function Applicants() {
       setActing(false);
     }
   };
-  const setAgreedAmount = (form) => runRequest(() => api.patch(`/applicants/${editing.id}/payment-plan`, form), 'Agreed Package Amount saved.');
-  const submitPaymentEntry = (body) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries`, body), 'Payment recorded — waiting for Admin to verify it.');
-  const verifyPaymentEntry = (id) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${id}/verify`, {}), 'Payment verified.');
-  const returnPaymentEntry = (id, reason) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${id}/return`, { reason }), 'Payment returned to Sales.');
+  const [editRequiredOpen, setEditRequiredOpen] = useState(false);
+  const saveRequiredPayments = (body) => runRequest(async () => { const result = await api.put(`/applicants/${editing.id}/required-payments`, body); setEditRequiredOpen(false); return result; }, 'Required payments saved.');
+  const submitPaymentEntry = (body) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries`, body), 'Submitted for verification.');
+  const editPaymentEntry = (id, body) => runRequest(() => api.put(`/applicants/${editing.id}/payment-entries/${id}`, body), 'Entry updated — still waiting for Admin to verify it.');
+  const verifyPaymentEntry = (entry) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${entry.id}/verify`, { revision: entry.revision }), 'Payment verified.');
+  const rejectPaymentEntry = (entry, reason) => runRequest(() => api.post(`/applicants/${editing.id}/payment-entries/${entry.id}/reject`, { reason, revision: entry.revision }), 'Payment rejected — Sales was told why.');
+  const moveToForApproval = () => runRequest(() => api.post(`/applicants/${editing.id}/payments/complete`, {}), 'All required payments are Verified — the applicant is now at For Approval.');
   const logApplicantFollowUp = (body) => runRequest(() => api.post(`/applicants/${editing.id}/follow-ups`, body), 'Follow-up logged.');
   const submitRequirement = (key, body) => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}`, body), 'Sent to Admin for review.');
   const acceptRequirement = (key, note = '') => runRequest(() => api.post(`/applicants/${editing.id}/requirements/${key}/accept`, note ? { note } : {}), 'Requirement accepted.');
@@ -2800,25 +2903,23 @@ export default function Applicants() {
   };
 
   /* ---------- Stage 3: LOI submission panel ---------- */
-  // Phase 3 rules (the API enforces the same):
-  //  - [Complete]: Verified + submission date; a soft copy (Soft copy / Email)
-  //    also needs its uploaded image. Hard copy: the image is optional.
-  //  - [Proceed]: soft copy only, type + date — image/verification may follow.
-  //    The LOI becomes Pending and the applicant moves to Payment Record.
-  //  - Uploading never completes the LOI.
-  const loiIsSoft = LOI_SOFT_TYPES.includes(loiDraft?.submission_type);
+  // Rules (the API enforces the same):
+  //  - The LOI file is required: Sales cannot save the LOI without one.
+  //  - [Complete] (the only way to Payment Record): LOI Verified with its file + submission date,
+  //    AND the Proposed site Accepted by Admin. Uploading never completes the LOI.
   const loiSavedDocument = currentLoiDocument(editing?.documents);
   const loiHasImage = Boolean(loiDraft?.file) || Boolean(loiSavedDocument && !loiDraft?.removeDocument);
   const loiDateOk = Boolean(loiDraft?.submission_date) && loiDraft.submission_date <= localDateInputValue();
   const loiPending = editing?.loi_status === 'pending';
+  // An older Pending LOI (already at Payment Record) is completed on the LOI alone.
+  const proposedSiteStatus = editing?.requirements?.items?.find((item) => item.key === 'proposed_site')?.status || 'pending';
+  const siteNeeded = editing?.status === 'loi_submitted';
   const loiCompleteIssue = !loiDraft ? 'Loading the LOI record…'
-    : !loiDateOk ? 'Set the submission date (not in the future).'
-      : loiDraft.verification_status !== 'verified' ? 'Mark the LOI as Verified.'
-        : loiIsSoft && !loiHasImage ? 'A soft copy needs its uploaded image before [Complete].'
-          : '';
-  const loiProceedIssue = !loiIsSoft ? 'A hard copy has no [Proceed] — finish it with [Complete].'
-    : !loiDateOk ? 'Set the submission date (not in the future).'
-      : '';
+    : !loiHasImage ? 'Attach the LOI file — it is required.'
+      : !loiDateOk ? 'Set the submission date (not in the future).'
+        : loiDraft.verification_status !== 'verified' ? 'Mark the LOI as Verified.'
+          : siteNeeded && proposedSiteStatus !== 'accepted' ? 'Verify the Proposed site (Accept it below).'
+            : '';
   const loiReady = loiCompleteIssue === '';
 
   /** Save the LOI record (fields + new file; a removed file is deleted). Never completes it. */
@@ -2832,6 +2933,7 @@ export default function Applicants() {
       if (removedDocument && !loiDraft.file) {
         throw new Error('Choose the replacement scan. The old file stays in the history, marked Replaced.');
       }
+      if (!loiDraft.file && !loiSavedDocument) throw new Error('Attach the LOI file (PDF, JPG or PNG). The LOI cannot be submitted without it.');
       if (loiDraft.submission_date) body.append('submission_date', loiDraft.submission_date);
       body.append('received_by', loiDraft.received_by || authLabel);
       body.append('submission_type', loiDraft.submission_type);
@@ -2850,7 +2952,6 @@ export default function Applicants() {
   const runLoiAction = async (kind) => {
     if (!editing || !loiDraft) return;
     if (kind === 'complete' && !loiReady) return;
-    if (kind === 'proceed' && loiProceedIssue) return;
     setActing(true);
     setActionError('');
     setSuccess('');
@@ -2863,9 +2964,6 @@ export default function Applicants() {
         setSuccess(loiPending
           ? 'LOI Complete — For Approval is no longer blocked by the LOI.'
           : 'LOI Complete — the applicant is now at Payment Record.');
-      } else if (kind === 'proceed') {
-        await api.post(`/applicants/${editing.id}/loi/proceed`, {});
-        setSuccess('Moved to Payment Record with the LOI PENDING. Come back to the LOI section to upload the image, verify it and click Complete — For Approval stays blocked until then.');
       } else {
         setSuccess('LOI record saved. Uploading does not complete the LOI — click Complete when it is verified.');
       }
@@ -2909,16 +3007,6 @@ export default function Applicants() {
         <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={acting} onClick={() => void runLoiAction('save')}>
           Save LOI
         </button>
-        {isAdminRole && draft?.status === 'loi_submitted' && loiIsSoft && (
-          <button
-            type="button"
-            disabled={acting || Boolean(loiProceedIssue)}
-            title={loiProceedIssue || 'Move to Payment Record now; the LOI stays Pending.'}
-            onClick={() => void runLoiAction('proceed')}
-          >
-            Proceed
-          </button>
-        )}
         {isAdminRole && (
         <button
           type="button"
@@ -2931,11 +3019,6 @@ export default function Applicants() {
         </button>
         )}
       </div>
-      {isAdminRole && draft?.status === 'loi_submitted' && loiIsSoft && !loiReady && !loiProceedIssue && (
-        <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0">
-          [Proceed] moves to Payment Record with the LOI <strong>Pending</strong> — you must come back here to upload the image, verify it and Complete it.
-        </p>
-      )}
       {isAdminRole && !loiReady && <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">Complete: {loiCompleteIssue}</p>}
     </div>
   ) : null;
@@ -3053,183 +3136,6 @@ export default function Applicants() {
     });
   };
 
-  /* ---------- Payment Record stage: Sales collects, Admin confirms ---------- */
-
-  /**
-   * Sales [ADD PAYMENT]: append a temporary draft. No API call, no database
-   * write. Existing entries are corrected through a pending change request.
-   */
-  const savePaymentEntry = async (event) => {
-    event?.preventDefault();
-    if (!editing || !paymentEntry) return;
-
-    if (!paymentEntry.id) {
-      if (entryAmountIssue) return;
-      setPaymentDrafts((current) => [...current, {
-        payment_date: paymentEntry.payment_date || localDateInputValue(),
-        amount: paymentEntry.amount,
-        payment_type: entryType,
-        payment_method: paymentEntry.payment_method || 'cash',
-      }]);
-      setPaymentEntry(null);
-      setActionError('');
-      setSuccess('Payment added as a draft. Click Save New Record to send it to Admin.');
-      return;
-    }
-
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.patch(`/applicants/${editing.id}/payments/${paymentEntry.id}`, {
-        payment_date: paymentEntry.payment_date,
-        amount: paymentEntry.amount,
-        payment_type: entryType,
-        remarks: paymentEntry.remarks,
-      });
-      setSuccess('Edit request sent to Admin for approval. The entry is unchanged until Admin saves it.');
-      setPaymentEntry(null);
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      // Keep the form open so the 422 message can be read and corrected.
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
-  /** Remove a local draft before it is submitted. */
-  const removePaymentDraft = (index) => {
-    setPaymentDrafts((current) => current.filter((_, position) => position !== index));
-  };
-
-  /** [Save New Record]: drafts -> one pending Sales Report for Admin. */
-  const submitSalesReport = async () => {
-    if (!editing || paymentDrafts.length === 0) return;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.post(`/applicants/${editing.id}/payments/report`, {
-        entries: paymentDrafts.map((draft) => ({
-          payment_date: draft.payment_date,
-          amount: Number(draft.amount),
-          payment_type: draft.payment_type,
-          payment_method: draft.payment_method || 'cash',
-        })),
-      });
-      setPaymentDrafts([]);
-      setSuccess('Sales Report sent to Admin. The payment is not saved until Admin clicks SAVE APPLICANT.');
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
-  /** Sales: ask Admin to delete one of their own entries (no direct delete). */
-  const removePaymentEntry = async (entry) => {
-    if (!editing || !entry?.editable) return;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.delete(`/applicants/${editing.id}/payments/${entry.id}`);
-      setSuccess('Delete request sent to Admin for approval. The entry is unchanged until Admin saves it.');
-      if (paymentEntry?.id === entry.id) setPaymentEntry(null);
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
-  /**
-   * Admin [Confirm Payment] on the Sales Report card: LOCAL preview only. It
-   * fills the Payment Record / Payment Record sections in this modal view.
-   * SAVE APPLICANT is what persists it; closing discards the preview.
-   */
-  const confirmReportPreview = () => {
-    if (!paymentStage?.sales_report) return;
-    setReportPreview(true);
-    setActionError('');
-    setSuccess('Sales Report loaded into this view. Click SAVE APPLICANT to save it — otherwise it stays pending.');
-  };
-
-  /** Admin [COMPLETED]: verified total == total required. */
-  const completePaymentStage = async () => {
-    if (!editing) return;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.post(`/applicants/${editing.id}/payments/complete`, {});
-      setSuccess('Payment completed — the applicant is now at For Approval.');
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
-  /**
-   * Admin's Edit-mode Save: stores the original amount and the discount, and
-   * the server derives the final Total required from them. Sales never sends
-   * this request (the backend rejects it as well).
-   */
-  const saveTotalRequired = async () => {
-    if (!editing) return;
-    const amountIssue = totalRequiredError(paymentTotal);
-    if (amountIssue) {
-      setTotalEditError(amountIssue);
-      return;
-    }
-    if (editDiscountIssue) {
-      setTotalEditError(editDiscountIssue);
-      return;
-    }
-    setSavingTotal(true);
-    setTotalEditError('');
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.patch(`/applicants/${editing.id}/payment-plan`, {
-        total_required_amount: amountInputValue(paymentTotal),
-        discount_percent: editDiscountPercent,
-        promo_name: promoName.trim() || null,
-      });
-      setTotalEditing(false);
-      setSuccess('Total required updated.');
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      setTotalEditError(firstValidationMessage(error));
-    } finally {
-      setSavingTotal(false);
-    }
-  };
-
-  /** Admin: reject the pending Sales Report and return it with a required note. */
-  const returnPaymentToSales = async () => {
-    if (!editing || !returnForm?.note.trim()) return;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.post(`/applicants/${editing.id}/payments/return`, { note: returnForm.note.trim() });
-      setReturnForm(null);
-      setReportPreview(false);
-      setSuccess('Sales Report returned to Sales.');
-      await refreshApplicant(editing.id);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
   /* ---------- Schedule Activity section actions (Phase 3b) ---------- */
 
   /**
@@ -3340,228 +3246,11 @@ export default function Applicants() {
   // never from unsaved draft ticks: while waiting, the tracker shows 3 dots.
   const scheduleComplete = Boolean(editing?.schedule_complete);
   const reviewDone = Boolean(editing?.reviewed_at);
-  // Phase 4b payment state (Admin + Sales only fields): TRUE only after Admin
-  // verified the payment; a request that is neither pending nor confirmed was
-  // REJECTED — the remarks in payment_request are the Admin's reason.
+  // Payment Record: confirmed once Admin moved the applicant to For Approval with every
+  // required payment Verified. No amounts are read or computed here.
   const paymentConfirmed = Boolean(editing?.payment_confirmed);
   const paymentsVisible = role === 'admin' || role === 'sales';
-  // FEATURE_PAYMENT_ADVANCED (off by default) comes from /auth/me: the hidden features never show without it.
-  const paymentAdvancedUi = Boolean(user?.features?.payment_advanced);
-  const paymentSummary = editing?.payment_summary || null;
-  // Payment Record state machine payload (state, derived totals, entry flags).
-  const paymentStage = editing?.payment_stage || null;
-  const paymentPercent = Number(paymentSummary?.payment_percent) || 0;
-  // Payment stage draft for the inline Sales form (new entry, or editing one).
-  const emptyEntryDraft = {
-    payment_date: localDateInputValue(), amount: '', payment_type: 'downpayment', payment_method: 'cash', remarks: '',
-  };
-  const entryDraft = paymentEntry || emptyEntryDraft;
-  // Drafts are local only; they do not reduce the server balance until Admin
-  // saves the Sales Report, so subtract them here to keep the form within it.
-  const draftTotalAmount = paymentDrafts.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  // Remaining balance available to this entry: the verified balance (minus
-  // local drafts that are not saved yet) plus whatever the edited entry already
-  // occupies inside it. The backend does the same per row of a Sales Report.
-  const stageBalance = paymentStage ? Number(paymentStage.balance_including_pending) : 0;
-  const entryBalance = stageBalance
-    + (paymentEntry?.id ? Number(paymentEntry.amount) || 0 : -draftTotalAmount);
-  // Amount the entry may still hold.
-  const entryMaxAmount = Math.min(MAX_PAYMENT_AMOUNT, Math.max(0, entryBalance));
-  // Phase 4 installment rules on the FINAL total (after the discount). The
-  // auto-filled amounts are the MINIMUMS — Sales may type more, never less:
-  //   Downpayment  >= min_downpayment_percent of the final total;
-  //   Installment  >= saved downpayment × 50% (or the balance when lower).
-  const installmentInfo = paymentStage?.installment || null;
-  const draftHasDownpayment = !paymentEntry?.id && paymentDrafts.some((item) => item.payment_type === 'downpayment');
-  const installmentBase = paymentEntry?.id ? null : downpaymentBase(installmentInfo, paymentDrafts);
-  const hasEarlierEntries = (Number(paymentStage?.entry_count) || 0) > 0 || (!paymentEntry?.id && paymentDrafts.length > 0);
-  const downpaymentCents = Number(installmentInfo?.min_downpayment_amount)
-    || minDownpayment(Number(paymentStage?.total_required_amount) || 0, installmentInfo?.min_downpayment_percent ?? 20);
-  const installmentCents = installmentBase != null
-    ? currentMinimum(installmentBase, entryMaxAmount, installmentInfo?.installment_minimum_percent_of_downpayment ?? 50)
-    : 0;
-  // Downpayment only before the first payment (saved, pending or drafted); an
-  // installment only after a downpayment; a balance at or under the minimum
-  // can only be settled as Full Payment.
-  const canUseDownpayment = (paymentStage ? Boolean(paymentStage.can_use_downpayment) : true) && !draftHasDownpayment;
-  const availableEntryTypes = (() => {
-    if (entryMaxAmount <= 0) return [];
-    if (installmentBase == null && !hasEarlierEntries) {
-      return canUseDownpayment ? ['downpayment', 'full_payment'] : ['full_payment'];
-    }
-    if (installmentBase != null && entryMaxAmount <= installmentCents) return ['full_payment'];
-    return canUseDownpayment
-      ? ['downpayment', 'installment_payment', 'full_payment']
-      : ['installment_payment', 'full_payment'];
-  })();
-  const expectedAmountForType = (type) => {
-    if (type === 'full_payment') return entryMaxAmount;
-    if (type === 'downpayment') return Math.min(downpaymentCents, entryMaxAmount);
-    return Math.min(installmentCents || downpaymentCents, entryMaxAmount);
-  };
-  const pendingReport = paymentStage?.sales_report || null;
-  // The role action panel shows only when it has work in it (Admin: a Sales
-  // Report to review; Sales: the Add payment form). Otherwise the content
-  // goes full width — no empty half.
-  const paySideVisible = (isAdminRole && Boolean(pendingReport)) || (isSalesRole && Boolean(paymentStage?.can_add_entry));
-  const reportPreviewActive = Boolean(isAdminRole && reportPreview && pendingReport);
-  // Displayed money: verified only, or verified + the previewed report after
-  // Admin clicked Confirm Payment. Nothing is persisted by this preview.
-  const displayPaid = reportPreviewActive
-    ? Number(paymentStage.preview_total_paid_amount)
-    : Number(paymentStage?.total_paid_amount);
-  const displayBalance = reportPreviewActive
-    ? Number(paymentStage.preview_remaining_balance)
-    : Number(paymentStage?.balance_including_pending);
-  // A 100% discount ends at ₱0: settled, so the progress and status read like
-  // a fully paid record instead of an unpaid one with a zero balance.
-  const fullyDiscounted = Boolean(paymentStage?.has_total_required)
-    && Number(paymentStage?.total_required_amount) === 0;
-  const displayProgress = fullyDiscounted
-    ? 100
-    : (Number(paymentStage?.total_required_amount) > 0
-      ? Math.min(100, Math.round((displayPaid / Number(paymentStage.total_required_amount)) * 100))
-      : 0);
-  const displayStatus = (fullyDiscounted || displayPaid > 0)
-    ? (displayBalance <= 0 ? 'fully_paid' : 'partially_paid')
-    : 'unpaid';
-  const displayStatusLabel = displayStatus === 'fully_paid'
-    ? 'Fully paid'
-    : (displayStatus === 'partially_paid' ? 'Partially paid' : 'Unpaid');
-  const saveRecordIssue = paymentDrafts.length === 0
-    ? 'Add at least one payment first.'
-    : (draftTotalAmount <= 0 ? 'Add at least one payment first.' : '');
-  // Payment Record rows: saved entries + local Sales drafts + Admin preview
-  // rows + the Sales Report Sales has already turned over.
-  const previewCreateEntries = reportPreviewActive && pendingReport?.action === 'create'
-    ? (pendingReport.entries || [])
-    : [];
-  // A pending report is not an applicant payment yet. Both roles see its rows
-  // tagged Pending (not counted); Admin's Confirm Payment preview replaces them.
-  // (Sales keeps seeing what they submitted.)
-  const salesPendingEntries = (isSalesRole || (isAdminRole && !reportPreviewActive)) && pendingReport?.action === 'create'
-    ? (pendingReport.entries || [])
-    : [];
-  const hasPaymentRows = (paymentStage?.entries || []).length > 0
-    || (isSalesRole && paymentDrafts.length > 0)
-    || previewCreateEntries.length > 0
-    || salesPendingEntries.length > 0;
-  // An amount equal to the remaining balance IS Full Payment, whatever was
-  // picked in the dropdown — the backend stores it that way too.
-  const entryAmountNumber = Number(amountInputValue(entryDraft.amount)) || 0;
-  const entrySettlesBalance = entryAmountNumber > 0 && entryAmountNumber >= entryMaxAmount;
-  const entryType = entrySettlesBalance
-    ? 'full_payment'
-    : (availableEntryTypes.includes(LEGACY_PAYMENT_TYPE_MAP[entryDraft.payment_type] || entryDraft.payment_type)
-      ? (LEGACY_PAYMENT_TYPE_MAP[entryDraft.payment_type] || entryDraft.payment_type)
-      : (availableEntryTypes[0] || 'downpayment'));
-  const entrySettlesWithOneInstallment = entryMaxAmount > 0 && entryMaxAmount <= installmentCents;
-  const entryAmountIssue = (() => {
-    const raw = amountInputValue(entryDraft.amount);
-    if (raw === '') return 'Enter an amount.';
-    if (!/^\d+(\.\d{1,2})?$/.test(raw)) return 'Numbers only — letters are not allowed.';
-    const amount = Number(raw);
-    if (amount <= 0) return 'The amount must be greater than zero.';
-    if (amount > entryMaxAmount) return `The amount cannot exceed the remaining balance of ${moneyExact(entryMaxAmount)}.`;
-    if (amount > MAX_PAYMENT_AMOUNT) return `A payment cannot exceed ${moneyExact(MAX_PAYMENT_AMOUNT)}.`;
-    // Phase 4 minimums for a NEW payment (an edit is re-checked by the API).
-    if (!paymentEntry?.id) {
-      const ruleIssue = entryRuleIssue({
-        type: entryType,
-        amount,
-        remaining: entryMaxAmount,
-        totalRequired: Number(paymentStage?.total_required_amount) || 0,
-        base: installmentBase,
-        hasEarlierEntries: hasEarlierEntries,
-        minDownpaymentPercent: installmentInfo?.min_downpayment_percent ?? 20,
-        installmentPercent: installmentInfo?.installment_minimum_percent_of_downpayment ?? 50,
-      });
-      if (ruleIssue) return ruleIssue;
-    }
-    return '';
-  })();
-  /**
-   * Amount input: the field shows thousands separators while the state keeps
-   * the raw digits (that is what the API receives). The caret is put back after
-   * the separators are re-applied, so editing in the middle of a number does
-   * not jump to the end.
-   */
-  const onEntryAmountChange = (event) => {
-    const input = event.target;
-    const caret = input.selectionStart ?? input.value.length;
-    const digitsBeforeCaret = input.value.slice(0, caret).replace(/[^\d.]/g, '').length;
-    const raw = amountInputValue(input.value);
-    setPaymentEntry({ ...entryDraft, amount: raw });
-    window.requestAnimationFrame(() => {
-      const node = entryAmountRef.current;
-      if (!node || document.activeElement !== node) return;
-      const formatted = formatAmountInput(raw);
-      let position = 0;
-      let seen = 0;
-      while (position < formatted.length && seen < digitsBeforeCaret) {
-        if (/[\d.]/.test(formatted[position])) seen += 1;
-        position += 1;
-      }
-      node.setSelectionRange(position, position);
-    });
-  };
-  // Admin's Total required editor: only where the backend allows it.
-  const canEditTotal = isAdminRole
-    && draft?.status === 'payment_submitted'
-    && Boolean(paymentStage?.can_set_total);
-  // Live discount preview: the card recomputes from the ORIGINAL amount only.
-  const editDiscountPercent = discountPercentFor(discountChoice, customDiscount);
-  const editDiscountIssue = discountChoice === 'custom' ? customDiscountError(customDiscount) : '';
-  const editAmountIssue = totalEditing ? totalRequiredError(paymentTotal) : '';
-  const editFinalTotal = discountedAmount(paymentTotal, editDiscountPercent);
-  // Leaving edit mode without saving restores the saved original + discount.
-  /** Admin: save the installment plan (frequency + first due date). Sales is view-only. */
-  const savePaymentSchedule = async (body) => {
-    if (!editing) return false;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.patch(`/applicants/${editing.id}/payment-schedule`, body);
-      setSuccess('Installment plan saved.');
-      await refreshApplicant(editing.id);
-      return true;
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-      return false;
-    } finally {
-      setActing(false);
-    }
-  };
-
-  const cancelTotalEdit = () => {
-    const original = Number(paymentStage?.original_total_required_amount)
-      || Number(paymentStage?.total_required_amount)
-      || 0;
-    setPaymentTotal(original ? String(original) : '');
-    const saved = Number(paymentStage?.discount_percent) || 0;
-    setDiscountChoice(saved <= 0 ? '' : (DISCOUNT_PRESETS.includes(saved) ? String(saved) : 'custom'));
-    setCustomDiscount(saved > 0 && !DISCOUNT_PRESETS.includes(saved) ? String(saved) : '');
-    setPromoName(paymentStage?.promo_name || '');
-    setTotalEditError('');
-    setTotalEditing(false);
-  };
-  // The header chip: the applicant's Preferred Brand / Concept, never a
-  // hardcoded name. A price range is appended only when Products defines one
-  // for that brand (neither the name nor the numbers are invented here).
-  const brandChip = (() => {
-    const brand = editing?.preferred_brand;
-    if (!brand?.name) return null;
-    const min = Number(brand.price_min ?? brand.price_range_min ?? 0);
-    const max = Number(brand.price_max ?? brand.price_range_max ?? 0);
-    const range = min > 0 && max >= min ? `${moneyShort(min)}–${moneyShort(max)}` : '';
-    return { name: brand.name, range };
-  })();
-  // Saved discount percentage (0 = no discount, so no badge and no strikethrough).
-  const stageDiscountPercent = Number(paymentStage?.discount_percent) || 0;
-  // Sales user initials for the compact Sales Report avatar (e.g. "SU").
-  const reportInitials = String(pendingReport?.requested_by || 'Sales').trim()
-    .split(/\s+/).map((word) => word[0]).join('').slice(0, 2).toUpperCase() || 'SU';
+  const paymentsComplete = Boolean(editing?.payment_record?.all_verified || editing?.payment_record?.legacy_confirmed);
   // Confirm Qualified needs every Qualification requirement Accepted (older records keep their checklist).
   const qualificationSummary = editing?.requirements?.summary?.qualification;
   const qualificationDone = qualificationSummary
@@ -3583,7 +3272,7 @@ export default function Applicants() {
       loiReady,
       qualificationDone,
       activationMissing,
-      paymentPercent,
+      paymentsComplete,
       isAdminRole,
       isSalesRole,
       hasPortalAccount: Boolean(editing?.has_portal_account),
@@ -3665,6 +3354,7 @@ export default function Applicants() {
                 status={editing.loi_status}
                 actions={loiPending ? loiActions : null}
               />
+              <RequirementsPanel editing={editing} stage="loi" title="Proposed site" readOnly busy={false} onSubmit={() => {}} onAccept={() => {}} onReturn={() => {}} onError={setActionError} />
             </DoneSection>
           ) : null;
         }
@@ -3702,8 +3392,7 @@ export default function Applicants() {
   // Tense of the tracker label: an ongoing stage is an action (Scheduling,
   // LOI Submission, Payment Record); a finished one is a completed action
   // (Scheduled, LOI Submitted, Payment Record).
-  const paymentHandedOver = paymentConfirmed
-    || ['for_review', 'confirmed'].includes(paymentStage?.state);
+  const paymentHandedOver = paymentConfirmed;
   const loiFinished = editing?.loi_verification_status === 'verified'
     || Boolean(editing?.loi_confirmed_at);
   const stageIsDone = (key, stageState) => {
@@ -3741,6 +3430,8 @@ export default function Applicants() {
       // (and stays checked from the Qualified stage on).
       else if (stageName === 'qualified') state = 'done';
       else if (stageName === 'scheduled') state = scheduleComplete ? 'done' : 'waiting';
+      // LOI Submission: the same loading ring until Complete LOI moves the applicant on.
+      else if (stageName === 'loi_submitted') state = 'waiting';
       else if (stageName === 'for_approval') state = reviewDone ? 'done' : 'waiting';
       // A pending payment request makes Payment Record "waiting", not checked.
       else if (stageName === 'payment_submitted') state = 'waiting';
@@ -3763,7 +3454,14 @@ export default function Applicants() {
   // Qualification requirements progress (accepted / total) drives the first tracker connector.
   const qualificationDefs = (editing?.requirements?.config?.requirements || []).filter((def) => def.stage === 'qualification');
   const qualificationAccepted = qualificationDefs.filter((def) => editing.requirements.items?.find((item) => item.key === def.key)?.status === 'accepted').length;
-  const qualificationProgress = qualificationDefs.length ? qualificationAccepted / qualificationDefs.length : null;
+  const qualificationProgress = qualificationFill(qualificationAccepted, qualificationDefs.length);
+  // LOI Submission → Payment Record: half for the LOI verified (with its file), half for the Proposed site.
+  const loiProgress = draft?.status === 'loi_submitted' && editing?.requirements
+    ? loiHalves({
+      loiVerified: editing.requirements.loi?.status === 'accepted',
+      siteVerified: editing.requirements.items?.find((item) => item.key === 'proposed_site')?.status === 'accepted',
+    })
+    : null;
 
   // Auto-scroll trigger: the applicant's activity_state signature (the tracked
   // activities) compared with the LAST one this viewer saw for that applicant.
@@ -3845,7 +3543,7 @@ export default function Applicants() {
   }, [location]);
 
   // Escape closes the Update dialog only when no smaller dialog is open on top of it.
-  const updateEscapeEnabled = !mark && !paymentEntry && !returnForm && !activateForm
+  const updateEscapeEnabled = !mark && !editRequiredOpen && !activateForm
     && !approveForm && !reviseForm && !rejectForm;
 
   // Escape closes the approval/rejection confirmations (never mid-request).
@@ -4189,29 +3887,6 @@ export default function Applicants() {
                     {saving ? 'SAVING…' : 'SAVE APPLICANT'}
                   </button>
                 )}
-              {/* Sales footer CTA (moved from the record box inside the panel):
-                  same disabled rules, same handler, nothing else changed. */}
-              {isSalesRole && stage === 'payment_submitted' && paymentStage?.can_add_entry && (
-                <>
-                  <span
-                    className="text-[#9ba5bd] text-[11px] [cursor:help]"
-                    title={paymentDrafts.length
-                      ? 'Temporary only. Save New Record sends the Sales Report to Admin; SAVE APPLICANT by Admin is what records it.'
-                      : 'ADD PAYMENT is temporary. Nothing is recorded until you Save New Record and Admin saves it.'}
-                  >
-                    {paymentDrafts.length} draft payment{paymentDrafts.length === 1 ? '' : 's'}
-                  </span>
-                  <button
-                    type="button"
-                    className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] ap-modal-save"
-                    disabled={acting || Boolean(saveRecordIssue)}
-                    title={saveRecordIssue || 'Sends the Sales Report to Admin — Admin then records it with SAVE APPLICANT.'}
-                    onClick={() => void submitSalesReport()}
-                  >
-                    SAVE NEW RECORD
-                  </button>
-                </>
-              )}
             </>
           )}
         >
@@ -4247,7 +3922,7 @@ export default function Applicants() {
                 </p>
               )}
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
-              <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} />
+              <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} />
 
               <div className="ap-actions flex flex-wrap items-center gap-[10px] mt-[14px]">
                 {primary && (
@@ -4277,24 +3952,6 @@ export default function Applicants() {
                     }}
                   >
                     {primary.label}
-                  </button>
-                )}
-                {/* Payment Record: COMPLETED appears only once it can be used (Total
-                    paid == Total required, no Sales Report pending, LOI not Pending) —
-                    never as a dead disabled button. The rule itself is unchanged. */}
-                {stage === 'payment_submitted' && isAdminRole && paymentStage?.can_complete && (
-                  <button
-                    type="button"
-                    className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.ap-actions_&]:m-0 [.ap-actions_&:disabled]:text-[#7d879e] [.ap-actions_&:disabled]:border [.ap-actions_&:disabled]:border-[#2b344c] [.ap-actions_&:disabled]:[background:#131a29] later:[.ap-actions_&:disabled]:[box-shadow:none] [.ap-actions_&:disabled]:opacity-[1] [.ap-actions_&:disabled]:cursor-not-allowed later-2:[.ap-actions_&:disabled]:[transform:none]"
-                    disabled={!paymentStage?.can_complete || acting || saving}
-                    title={paymentStage?.can_complete
-                      ? 'The Payment Record is Fully Paid with nothing waiting for review. Move the applicant to For Approval.'
-                      : paymentStage?.loi_pending
-                        ? 'The LOI is still Pending — complete it in the LOI section first. For Approval is blocked until then.'
-                        : 'COMPLETED unlocks only when the Payment Record is Fully Paid and nothing is waiting for review.'}
-                    onClick={() => void completePaymentStage()}
-                  >
-                    COMPLETED
                   </button>
                 )}
                 {draft.status === 'loi_submitted' && isAdminRole && (
@@ -4432,6 +4089,22 @@ export default function Applicants() {
                 actions={loiActions}
               />
             )}
+            {/* Proposed site: submitted next to the LOI; Complete LOI needs it Accepted. */}
+            {loiDraft && stage === 'loi_submitted' && (
+              <RequirementsPanel
+                editing={editing}
+                stage="loi"
+                title="Proposed site"
+                isAdminRole={isAdminRole}
+                isAssignedSales={isAssignedSales}
+                busy={acting}
+                onSubmit={submitRequirement}
+                onAccept={acceptRequirement}
+                onReturn={returnRequirement}
+                onReopen={reopenRequirement}
+                onError={setActionError}
+              />
+            )}
 
             {stage !== 'payment_submitted' && doneSections}
 
@@ -4482,769 +4155,38 @@ export default function Applicants() {
               </details>
             )}
 
-            {/* Stage 4: Payment Record. Content, flow and permissions only —
-                the tracker, the theme and the stage button spot are untouched. */}
-            {paymentsVisible && !paymentAdvancedUi && stage === 'payment_submitted' && (
+            {/* Stage 4: Payment Record. Records payments made outside the system:
+                required payments (names only), one entry each, Admin verification. */}
+            {paymentsVisible && stage === 'payment_submitted' && (
               <PaymentRecordPanel
                 editing={editing}
-                busy={acting}
-                onSetAmount={setAgreedAmount}
+                isAdminRole={isAdminRole}
+                busy={acting || saving}
+                onEditRequired={() => setEditRequiredOpen(true)}
                 onSubmitEntry={submitPaymentEntry}
+                onEditEntry={editPaymentEntry}
                 onVerify={verifyPaymentEntry}
-                onReturn={returnPaymentEntry}
+                onReject={rejectPaymentEntry}
+                onMove={moveToForApproval}
                 onError={setActionError}
               />
             )}
-            {paymentsVisible && (paymentAdvancedUi || paymentStage?.sales_report) && stage === 'payment_submitted' && (
-              <section className="flex flex-col p-3 mb-2 border border-[#273044] rounded-[11px] [background:#101521] later:flex-none later:min-h-[auto] overflow-visible h-auto max-h-[none] max-w-full" aria-labelledby="ap-payment-stage-title">
-                <div className="pay-columns grid-cols-[minmax(0,_1fr)_minmax(0,_300px)] gap-0 max-[821px]:later:flex-none max-[821px]:later:grid-cols-[1fr] later:flex-none later:min-h-[auto] [&.is-full]:grid-cols-[minmax(0,_1fr)] later:block [&.is-full]:block is-full">
-                <div className="flex flex-col min-w-0 border-r-[#273044] max-[821px]:later:pr-0 max-[821px]:later:pb-[10px] max-[821px]:later:border-r-0 max-[821px]:later:border-b max-[821px]:later:border-b-[#273044] flex-none later:min-h-[auto] later:gap-3 later-2:p-0 later-2:border-0 overflow-visible later:[.pay-columns.is-full_&]:p-0 later:[.pay-columns.is-full_&]:border-0 [.pay-columns.is-full_&]:overflow-visible max-w-full">
-                  <div className="flex flex-none flex-wrap items-center justify-between gap-2 later-3:[&_h3]:m-0 later-2:[&_h3]:text-[#edf0fa] later:[&_h3]:font-[700] later:[&_h3]:tracking-[.06em] [&_h3]:uppercase later-7:[&_h3]:text-[16px]">
-                    <h3 id="ap-payment-stage-title">Payment Record</h3>
-                    {/* ONE header chip: the applicant's Preferred Brand / Concept
-                        (read from the applicant record), with the brand's price
-                        range when Products defines one. */}
-                    {brandChip && (
-                      <div className="flex items-center gap-[6px]">
-                        <span className="border rounded-[999px] font-[700] inline-flex items-center gap-[6px] later:p-[3px_10px] later:border-[rgba(129,_117,_255,_.35)] later:text-[#cfd6ff] [background:rgba(129,_117,_255,_.1)] later:text-[10px] later:tracking-[.02em] later:normal-case later:cursor-default later:[&_svg]:text-[#a89dff] later:[&_svg]:flex-[0_0_auto]" title="Preferred brand / concept">
-                          <FaStore aria-hidden="true" />
-                          <span>
-                            {brandChip.name}
-                            {brandChip.range ? ` · ${brandChip.range}` : ''}
-                          </span>
-                        </span>
-                        {editing.brand_confirmation?.locked && (
-                          <small className="inline-flex items-center gap-[5px] text-[12px] text-[#45d991]" title="The brand can no longer be changed.">
-                            <FaLock aria-hidden="true" />
-                            {editing.brand_confirmation.legacy
-                              ? 'Locked · Legacy - brand confirmation not captured'
-                              : `Locked · confirmed by ${editing.brand_confirmation.locked_by || 'Admin'}, ${manilaDateTimeLabel(editing.brand_confirmation.locked_at)}`}
-                          </small>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {paymentStage?.returned_note && (
-                    <p className="m-0 p-[7px_10px] border border-[rgba(251,_191,_36,_.35)] rounded-[8px] text-[#ffdf9e] [background:rgba(251,_191,_36,_.07)] text-[11px] leading-[1.4] later:[&_strong]:font-[600]">
-                      <strong>
-                        Returned by {paymentStage.returned_by || 'Admin'}
-                        {paymentStage.returned_at ? ` on ${formatDate(paymentStage.returned_at)}` : ''}:
-                      </strong>{' '}
-                      {paymentStage.returned_note}
-                    </p>
-                  )}
-
-                {totalEditing && canEditTotal ? (
-                  /* Edit mode: the Total required card stays on the left, a
-                     divider, then Edit Value + Select Promos/Discount + Save.
-                     Total paid / Remaining balance are hidden while editing. */
-                  <div className="grid flex-none grid-cols-[minmax(0,_1fr)_minmax(0,_1fr)] gap-[14px] items-stretch max-[641px]:later:grid-cols-[1fr] max-[641px]:later:gap-[10px]">
-                    <div className="grid gap-[6px] [align-content:start] min-w-0 min-h-[66px] p-[9px_11px] border border-[#273044] rounded-[10px] [background:#0c111d]">
-                      <span className="text-[#9aa6c4] tracking-[.04em] uppercase later:text-[11.5px]">Total required</span>
-                      <strong className="text-[#f3f6ff] leading-[1.2] [font-variant-numeric:tabular-nums] [overflow-wrap:anywhere] later:text-[21px]">{moneyExact(editFinalTotal)}</strong>
-                    </div>
-                    <div className="grid gap-2 [align-content:start] min-w-0 pl-[14px] border-l border-l-[#273044] max-[641px]:later:pl-0 max-[641px]:later:pt-[10px] max-[641px]:later:border-l-0 max-[641px]:later:border-t max-[641px]:later:border-t-[#273044]">
-                      <label className="flex items-center gap-1 min-w-0 min-h-[38px] p-[6px_10px] border border-[#273044] rounded-[8px] [background:#080c16] text-[#9aa6c4] text-[12.5px] focus-within:border-[#8175ff] [&_input]:w-full [&_input]:min-w-0 later-3:[&_input]:p-0 later-3:[&_input]:border-0 later-2:[&_input]:[background:transparent] later-3:[&_input]:text-[#e7ebf5] [&_input]:[font-family:inherit] [&_select]:w-full [&_select]:min-w-0 later:[&_select]:p-0 later:[&_select]:border-0 later:[&_select]:[background:transparent] later:[&_select]:text-[#e7ebf5] [&_select]:[font-family:inherit] [&_input]:[font-variant-numeric:tabular-nums] later:[&_input:focus]:[outline:none] [&_select:focus]:[outline:none] [&_select_option]:[background:#0c111d] [&_select_option]:text-[#e7ebf5] later-6:[&_input]:text-[13.5px] later-3:[&_select]:text-[13.5px]" htmlFor="ap-pay-edit-value">
-                        <span className="flex-none text-[#9aa6c4] text-[12.5px]" aria-hidden="true">₱</span>
-                        <input
-                          id="ap-pay-edit-value"
-                          type="text"
-                          inputMode="decimal"
-                          autoComplete="off"
-                          placeholder="Edit Value"
-                          value={formatAmountInput(paymentTotal)}
-                          autoFocus
-                          aria-invalid={Boolean(editAmountIssue)}
-                          onChange={(e) => {
-                            setPaymentTotal(amountInputValue(e.target.value));
-                            if (totalEditError) setTotalEditError('');
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void saveTotalRequired();
-                            }
-                            if (e.key === 'Escape') {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              cancelTotalEdit();
-                            }
-                          }}
-                        />
-                      </label>
-                      <label className="flex items-center gap-1 min-w-0 min-h-[38px] p-[6px_10px] border border-[#273044] rounded-[8px] [background:#080c16] text-[#9aa6c4] text-[12.5px] focus-within:border-[#8175ff] [&_input]:w-full [&_input]:min-w-0 later-3:[&_input]:p-0 later-3:[&_input]:border-0 later-2:[&_input]:[background:transparent] later-3:[&_input]:text-[#e7ebf5] [&_input]:[font-family:inherit] [&_select]:w-full [&_select]:min-w-0 later:[&_select]:p-0 later:[&_select]:border-0 later:[&_select]:[background:transparent] later:[&_select]:text-[#e7ebf5] [&_select]:[font-family:inherit] [&_input]:[font-variant-numeric:tabular-nums] later:[&_input:focus]:[outline:none] [&_select:focus]:[outline:none] [&_select_option]:[background:#0c111d] [&_select_option]:text-[#e7ebf5] later-6:[&_input]:text-[13.5px] later-3:[&_select]:text-[13.5px]" htmlFor="ap-pay-discount">
-                        <select
-                          id="ap-pay-discount"
-                          value={discountChoice}
-                          onChange={(e) => {
-                            setDiscountChoice(e.target.value);
-                            setTotalEditError('');
-                          }}
-                        >
-                          <option value="">Select Promos/Discount</option>
-                          <option value="none">No discount</option>
-                          {DISCOUNT_PRESETS.map((preset) => (
-                            <option key={preset} value={String(preset)}>{preset}%</option>
-                          ))}
-                          <option value="custom">Custom % (input)</option>
-                        </select>
-                      </label>
-                      {discountChoice === 'custom' && (
-                        <label className="flex items-center gap-1 min-w-0 min-h-[38px] p-[6px_10px] border border-[#273044] rounded-[8px] [background:#080c16] text-[#9aa6c4] text-[12.5px] focus-within:border-[#8175ff] [&_input]:w-full [&_input]:min-w-0 later-3:[&_input]:p-0 later-3:[&_input]:border-0 later-2:[&_input]:[background:transparent] later-3:[&_input]:text-[#e7ebf5] [&_input]:[font-family:inherit] [&_select]:w-full [&_select]:min-w-0 later:[&_select]:p-0 later:[&_select]:border-0 later:[&_select]:[background:transparent] later:[&_select]:text-[#e7ebf5] [&_select]:[font-family:inherit] [&_input]:[font-variant-numeric:tabular-nums] later:[&_input:focus]:[outline:none] [&_select:focus]:[outline:none] [&_select_option]:[background:#0c111d] [&_select_option]:text-[#e7ebf5] later-6:[&_input]:text-[13.5px] later-3:[&_select]:text-[13.5px]" htmlFor="ap-pay-custom-discount">
-                          <input
-                            id="ap-pay-custom-discount"
-                            type="text"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            placeholder="Custom %"
-                            value={customDiscount}
-                            aria-invalid={Boolean(editDiscountIssue)}
-                            onChange={(e) => {
-                              setCustomDiscount(e.target.value.replace(/[^\d]/g, '').slice(0, 3));
-                              setTotalEditError('');
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void saveTotalRequired();
-                              }
-                              if (e.key === 'Escape') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                cancelTotalEdit();
-                              }
-                            }}
-                          />
-                        </label>
-                      )}
-                      <label className="flex items-center gap-1 min-w-0 min-h-[38px] p-[6px_10px] border border-[#273044] rounded-[8px] [background:#080c16] text-[#9aa6c4] text-[12.5px] focus-within:border-[#8175ff] [&_input]:w-full [&_input]:min-w-0 later-3:[&_input]:p-0 later-3:[&_input]:border-0 later-2:[&_input]:[background:transparent] later-3:[&_input]:text-[#e7ebf5] [&_input]:[font-family:inherit] [&_select]:w-full [&_select]:min-w-0 later:[&_select]:p-0 later:[&_select]:border-0 later:[&_select]:[background:transparent] later:[&_select]:text-[#e7ebf5] [&_select]:[font-family:inherit] [&_input]:[font-variant-numeric:tabular-nums] later:[&_input:focus]:[outline:none] [&_select:focus]:[outline:none] [&_select_option]:[background:#0c111d] [&_select_option]:text-[#e7ebf5] later-6:[&_input]:text-[13.5px] later-3:[&_select]:text-[13.5px]" htmlFor="ap-pay-promo-name">
-                        <input
-                          id="ap-pay-promo-name"
-                          type="text"
-                          maxLength={120}
-                          autoComplete="off"
-                          placeholder="Promo name (optional)"
-                          value={promoName}
-                          onChange={(e) => setPromoName(e.target.value)}
-                        />
-                      </label>
-                      <div className="flex flex-wrap justify-end gap-2 max-[641px]:later:[justify-content:stretch]">
-                        <button
-                          type="button"
-                          className="pay-mini-btn later:[justify-self:start] border border-[#3b4767] rounded-[7px] [background:transparent] text-[#c9d1e6] text-[10px] font-[700] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:border-[#8175ff] hover:[background:rgba(129,_117,_255,_.1)] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px] later:p-[5px_16px] max-[641px]:w-full"
-                          disabled={savingTotal}
-                          onClick={() => void saveTotalRequired()}
-                        >
-                          {savingTotal ? 'Saving…' : 'Save'}
-                        </button>
-                      </div>
-                      {(editAmountIssue || editDiscountIssue || totalEditError) && (
-                        <small className="text-[#ff9ca3] leading-[1.35] later:text-[12px]" role="alert">
-                          {editAmountIssue || editDiscountIssue || totalEditError}
-                        </small>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid flex-none grid-cols-[repeat(3,_minmax(0,_1fr))] gap-2 max-[821px]:later:grid-cols-[1fr]">
-                      <article className="grid gap-1 [align-content:start] p-[9px_11px] border border-[#273044] rounded-[10px] [background:#0c111d] min-w-0 min-h-[66px] max-[821px]:later:min-h-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[#9aa6c4] tracking-[.04em] uppercase later:text-[11.5px]">Total required</span>
-                          {canEditTotal && (
-                            <button
-                              type="button"
-                              className="pay-mini-btn later:[justify-self:start] p-[2px_10px] border border-[#3b4767] rounded-[7px] [background:transparent] text-[#c9d1e6] text-[10px] font-[700] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:border-[#8175ff] hover:[background:rgba(129,_117,_255,_.1)] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px] inline-flex items-center gap-1"
-                              title="Edit the Total required and the discount"
-                              onClick={() => setTotalEditing(true)}
-                            >
-                              <FaPen aria-hidden="true" /> Edit
-                            </button>
-                          )}
-                        </div>
-                        {paymentStage?.has_total_required ? (
-                          <>
-                            <div className="flex items-center flex-wrap gap-[6px] min-w-0">
-                              <strong className="text-[#f3f6ff] leading-[1.2] [font-variant-numeric:tabular-nums] [overflow-wrap:anywhere] later:text-[21px]">{moneyExact(paymentStage?.total_required_amount)}</strong>
-                              {stageDiscountPercent > 0 && (
-                                <span className="flex-[0_0_auto] p-[1px_7px] rounded-[999px] text-[#6fe3b6] [background:rgba(52,_211,_153,_.13)] text-[9.5px] font-[700] tracking-[.03em]">{stageDiscountPercent}% OFF</span>
-                              )}
-                            </div>
-                            {stageDiscountPercent > 0 && (
-                              <s className="text-[#7d879e] text-[10.5px] [font-variant-numeric:tabular-nums]">
-                                {moneyExact(paymentStage?.original_total_required_amount)}
-                              </s>
-                            )}
-                            {/* Saved discount snapshot: never re-derived from a promo. */}
-                            <DiscountSnapshot
-                              original={paymentStage?.original_total_required_amount}
-                              percent={stageDiscountPercent}
-                              promo={paymentStage?.promo_name}
-                              final={paymentStage?.total_required_amount}
-                              setBy={paymentStage?.discount_set_by}
-                              setAt={paymentStage?.discount_set_at}
-                            />
-                          </>
-                        ) : (
-                          <span className="self-center [justify-self:center] text-[#9ba5bd] text-[10.5px] leading-[1.4] text-center p-[4px_2px]">Total payment has not been entered yet.</span>
-                        )}
-                        {!canEditTotal && (
-                          <>
-                            {paymentStage?.package_name && <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">{paymentStage.package_name}</small>}
-                            <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">Set by Admin · view only</small>
-                          </>
-                        )}
-                      </article>
-                      <article className="grid gap-1 [align-content:start] p-[9px_11px] border border-[#273044] rounded-[10px] [background:#0c111d] min-w-0 min-h-[66px] max-[821px]:later:min-h-0">
-                        <span className="text-[#9aa6c4] tracking-[.04em] uppercase later:text-[11.5px]">Total paid</span>
-                        <strong className="text-[#f3f6ff] leading-[1.2] [font-variant-numeric:tabular-nums] [overflow-wrap:anywhere] later:text-[21px]">{moneyExact(displayPaid)}</strong>
-                        <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">
-                          {Number(paymentStage?.entry_count) || 0} saved payment{(Number(paymentStage?.entry_count) || 0) === 1 ? '' : 's'}
-                          {reportPreviewActive ? ' · preview includes the Sales Report' : ''}
-                        </small>
-                      </article>
-                      <article className="grid gap-1 [align-content:start] p-[9px_11px] border border-[#273044] rounded-[10px] [background:#0c111d] min-w-0 min-h-[66px] max-[821px]:later:min-h-0">
-                        <span className="text-[#9aa6c4] tracking-[.04em] uppercase later:text-[11.5px]">Remaining balance</span>
-                        <strong className="text-[#f3f6ff] leading-[1.2] [font-variant-numeric:tabular-nums] [overflow-wrap:anywhere] later:text-[21px]">{moneyExact(displayBalance)}</strong>
-                        <span className={`[justify-self:start] p-[1px_8px] rounded-[999px] text-[10px] font-[700] pay-badge-${displayStatus}`}>
-                          {displayStatusLabel}
-                        </span>
-                      </article>
-                    </div>
-                  </>
-                )}
-
-                <div className="flex flex-none items-center justify-between gap-2 text-[#9aa6c4] text-[12px] later-3:[&_strong]:text-[#e7ebf5] later-2:[&_strong]:text-[12px] [&_strong]:[font-variant-numeric:tabular-nums]">
-                  <small>{reportPreviewActive ? 'Payment progress (preview)' : 'Payment progress (saved payments)'}</small>
-                  <strong>{displayProgress}%</strong>
-                </div>
-                <div
-                  className="flex-none h-[4px] rounded-[999px] [background:rgba(255,_255,_255,_.07)] overflow-hidden [&>span]:block [&>span]:h-full later:[&>span]:rounded-[999px] later:[&>span]:[background:linear-gradient(90deg,_#8175ff,_#34d399)] later:[&>span]:[transition:width_.25s_ease]"
-                  role="progressbar"
-                  aria-label={`Payment progress: ${displayProgress}%`}
-                  aria-valuenow={displayProgress}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <span style={{ width: `${Math.min(100, Math.max(0, displayProgress))}%` }} />
-                </div>
-
-                {reportPreviewActive && (
-                  <small className="flex-none text-[#ffdf9e] later:text-[12.5px] later:leading-[1.5]" role="status">
-                    Preview only — the payment below is NOT saved yet. Click SAVE APPLICANT to save it,
-                    or close this modal to leave the Sales Report pending.
-                  </small>
-                )}
-                {/* Role action panel, FULL WIDTH (shared layout): Admin = the Sales Report (only while one waits); Sales = the Add payment form. Nothing is rendered otherwise. */}
-                {paySideVisible && (
-                <div className="pay-action-panel grid gap-[10px] min-w-0 p-[12px_14px] border border-[#273044] rounded-[11px] [background:#0d1320] overflow-visible [&_.pay-side-head_h3]:text-[15px] [&_.pay-detail-list]:p-[10px_14px] [&_.pay-detail-list]:text-[13.5px] [&_.pay-detail-list_dt]:text-[13.5px] [&_.pay-detail-list_dd]:text-[13.5px] max-w-full">
-                  {isAdminRole && (
-                    <div className="grid gap-2 [.pay-action-panel_&]:grid [.pay-action-panel_&]:gap-[10px] [.pay-action-panel_&]:min-w-0">
-                      <div className="pay-side-head later-3:[&_h3]:m-0 later-2:[&_h3]:text-[#edf0fa] later:[&_h3]:font-[700] later:[&_h3]:tracking-[.06em] [&_h3]:uppercase flex flex-none items-center justify-between gap-2 later-7:[&_h3]:text-[16px]">
-                        <h3>Sales report</h3>
-                        {pendingReport?.requested_at && <small className="text-[#9aa6c4] text-[10px] [.pay-action-panel_&]:text-[12.5px]">{formatDate(pendingReport.requested_at)}</small>}
-                      </div>
-                      {pendingReport ? (
-                        reportExpanded ? (
-                          <div className="grid flex-none gap-[7px] p-[10px] border border-[#3b4767] rounded-[10px] [background:#0c111d] [.pay-action-panel_&]:gap-[10px] [.pay-action-panel_&]:p-[14px] [.pay-action-panel_&]:max-h-[none] [.pay-action-panel_&]:overflow-visible">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="grid gap-[1px] later-5:[&_strong]:text-[#edf0fa] later-4:[&_strong]:text-[12px]">
-                                <span className="text-[#9db2ff] text-[9px] font-[800] tracking-[.1em] uppercase [.pay-action-panel_&]:text-[12.5px]">Payment submission</span>
-                                <strong>{pendingReport.action_label}</strong>
-                              </div>
-                              <button
-                                type="button"
-                                className="inline-grid flex-none w-[22px] h-[22px] p-0 place-items-center border border-transparent rounded-[7px] [background:transparent] text-[#aab4c8] text-[12px] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] later-5:hover:text-[#fff] hover:[background:#1a2133] hover:border-[#303a50] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px]"
-                                aria-label="Collapse Sales Report"
-                                onClick={() => setReportExpanded(false)}
-                              >
-                                <FaXmark aria-hidden="true" />
-                              </button>
-                            </div>
-                            <dl className="pay-detail-list grid m-0 p-[7px_9px] border border-[#222b40] rounded-[8px] [background:#101521] gap-1 later:[&>div]:flex [&>div]:items-baseline [&>div]:justify-between later:[&>div]:gap-[10px] [&>div]:text-[11px] [&_dt]:flex-none later-3:[&_dt]:text-[#8f99b1] [&_dd]:m-0 later:[&_dd]:text-[#edf0fa] [&_dd]:text-right [&_dd]:[font-variant-numeric:tabular-nums] [&_dd]:[overflow-wrap:anywhere]">
-                              <div>
-                                <dt>Received by</dt>
-                                <dd>{pendingReport.received_by || pendingReport.requested_by || 'Sales'}</dd>
-                              </div>
-                            </dl>
-                            {pendingReport.action === 'create' && (pendingReport.entries || []).map((entry, index) => (
-                              <dl key={`report-entry-${index}`} className="pay-detail-list grid m-0 p-[7px_9px] border border-[#222b40] rounded-[8px] [background:#101521] gap-1 later:[&>div]:flex [&>div]:items-baseline [&>div]:justify-between later:[&>div]:gap-[10px] [&>div]:text-[11px] [&_dt]:flex-none later-3:[&_dt]:text-[#8f99b1] [&_dd]:m-0 later:[&_dd]:text-[#edf0fa] [&_dd]:text-right [&_dd]:[font-variant-numeric:tabular-nums] [&_dd]:[overflow-wrap:anywhere]">
-                                <div>
-                                  <dt>Amount paid</dt>
-                                  <dd>{moneyExact(entry.amount)}</dd>
-                                </div>
-                                <div>
-                                  <dt>Payment type</dt>
-                                  <dd>{entry.payment_type_label || paymentTypeLabel(entry.payment_type)}</dd>
-                                </div>
-                                <div>
-                                  <dt>Payment method</dt>
-                                  <dd>{entry.payment_method_label || paymentMethodLabel(entry.payment_method)}</dd>
-                                </div>
-                                <div>
-                                  <dt>Date of payment</dt>
-                                  <dd>{formatDate(entry.payment_date)}</dd>
-                                </div>
-                                {entry.remarks && (
-                                  <div>
-                                    <dt>Remarks</dt>
-                                    <dd>{entry.remarks}</dd>
-                                  </div>
-                                )}
-                              </dl>
-                            ))}
-
-                            {pendingReport.action === 'update' && (
-                              <div className="grid p-[7px_9px] border border-[#222b40] rounded-[8px] [background:#101521] text-[#c8d1e6] text-[11px] gap-[3px] [&_p]:m-0 later-2:[&_span]:text-[#9aa6c4] [&_span]:font-[600]">
-                                <p>
-                                  <span>Current:</span>
-                                  {pendingReport.target
-                                    ? ` ${formatDate(pendingReport.target.payment_date)} · ${moneyExact(pendingReport.target.amount)} · ${pendingReport.target.payment_type_label}`
-                                    : ' Entry no longer available.'}
-                                </p>
-                                <p>
-                                  <span>Requested:</span>
-                                  {pendingReport.changes
-                                    ? ` ${formatDate(pendingReport.changes.payment_date)} · ${moneyExact(pendingReport.changes.amount)} · ${pendingReport.changes.payment_type_label}`
-                                    : ' No changes.'}
-                                </p>
-                              </div>
-                            )}
-
-                            {pendingReport.action === 'delete' && (
-                              <div className="grid p-[7px_9px] border border-[#222b40] rounded-[8px] [background:#101521] text-[#c8d1e6] text-[11px] gap-[3px] [&_p]:m-0 later-2:[&_span]:text-[#9aa6c4] [&_span]:font-[600]">
-                                <p>
-                                  <span>Delete:</span>
-                                  {pendingReport.target
-                                    ? ` ${formatDate(pendingReport.target.payment_date)} · ${moneyExact(pendingReport.target.amount)} · ${pendingReport.target.payment_type_label}`
-                                    : ' Entry no longer available.'}
-                                </p>
-                              </div>
-                            )}
-
-                            <div className="flex flex-none flex-wrap items-center justify-end gap-2 [.pay-action-panel_&_.pay-mini-btn]:text-[13px] [.pay-action-panel_&_.pay-mini-btn]:p-[7px_14px] [.pay-action-panel_&_button]:text-[13px] [.pay-action-panel_&_button]:p-[7px_14px]">
-                              <button
-                                type="button"
-                                className="p-[6px_12px] border border-[#3b4767] rounded-[9px] [background:transparent] text-[#c9d1e6] text-[11px] font-[600] cursor-pointer [transition:color_.15s_ease,_border-color_.15s_ease,_background_.15s_ease] [&:hover:not(:disabled)]:text-[#fff] [&:hover:not(:disabled)]:border-[#8175ff] [&:hover:not(:disabled)]:[background:rgba(129,_117,_255,_.08)] disabled:opacity-[.5] disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px]"
-                                disabled={!paymentStage?.can_return || acting || saving}
-                                title={paymentStage?.can_return
-                                  ? 'Reject the pending Sales Report and send it back to Sales with a note.'
-                                  : 'Return unlocks while a Sales Report is awaiting confirmation.'}
-                                onClick={() => setReturnForm({ note: '' })}
-                              >
-                                Return to Sales
-                              </button>
-                              {!reportPreviewActive && (
-                                <button
-                                  type="button"
-                                  className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] later:p-[6px_12px] later:text-[11px]"
-                                  disabled={acting || saving}
-                                  onClick={confirmReportPreview}
-                                >
-                                  Confirm Payment
-                                </button>
-                              )}
-                            </div>
-                            {reportPreviewActive && (
-                              <span className="text-[#6fe3b6] text-[10.5px] leading-[1.35] [.pay-action-panel_&]:text-[12.5px]">Preview loaded — click SAVE APPLICANT to save it.</span>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="relative mt-1 flex flex-none items-start gap-[9px] w-full p-[9px_10px] border border-[#273044] rounded-[10px] [background:#0c111d] cursor-pointer text-left [transition:border-color_.15s_ease,_background_.15s_ease] hover:border-[#3b4767] hover:[background:#10192c] focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px] [.pay-action-panel_&]:p-[12px_14px]"
-                            aria-expanded={reportExpanded}
-                            onClick={() => setReportExpanded(true)}
-                          >
-                            <span className="grid flex-none w-[26px] h-[26px] place-items-center rounded-[50%] [background:linear-gradient(135deg,_#8175ff,_#6a5ed6)] text-[#fff] text-[9px] font-[700] tracking-[.03em] [.pay-action-panel_&]:w-[32px] [.pay-action-panel_&]:h-[32px] [.pay-action-panel_&]:text-[12px]" aria-hidden="true">{reportInitials}</span>
-                            <span className="pay-report-meta grid min-w-0 gap-[2px] later-5:[&_strong]:text-[#edf0fa] later-3:[&_strong]:text-[11.5px] [&_strong]:leading-[1.3] later:[&_strong]:[overflow-wrap:anywhere] [.pay-action-panel_&_strong]:text-[14px]">
-                              <strong>{pendingReport.requested_by || 'Sales'}</strong>
-                              <small className="[.pay-report-meta_&]:text-[#9db2ff] [.pay-report-meta_&]:text-[10px] [.pay-report-meta_&]:leading-[1.3] [.pay-action-panel_.pay-report-meta_&]:text-[12.5px]">Sales turned over this payment</small>
-                              <small className="[.pay-report-meta_&]:text-[#9ba5bd] [.pay-report-meta_&]:text-[9px] [.pay-report-meta_&]:tracking-[.03em] [.pay-report-meta_&]:uppercase later:[.pay-action-panel_&]:text-[12.5px]">{pendingReport.action_label} request</small>
-                            </span>
-                            {!reportPreviewActive && <span className="absolute -top-[3px] -right-[3px] w-[9px] h-[9px] rounded-[50%] [background:#ff5f6d] border-[2px] border-[#101521]" aria-hidden="true" />}
-                          </button>
-                        )
-                      ) : (
-                        <div className="grid flex-none place-items-center gap-[5px] p-[22px_12px] border border-dashed border-[#273044] rounded-[10px] text-[#9ba5bd] text-center later-3:[&_svg]:text-[#4b5570] later:[&_svg]:text-[16px] later-6:[&_strong]:text-[#c9d1e6] later-5:[&_strong]:text-[11.5px] later-4:[&_small]:text-[10.5px] [&_small]:leading-[1.35] later:[.pay-action-panel_&_small]:text-[12.5px]">
-                          <FaClipboardCheck aria-hidden="true" />
-                          <strong>No report to review</strong>
-                          <small>Sales has not sent any payment request for this stage yet.</small>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {isSalesRole && paymentStage?.can_add_entry && (
-                    <div className="grid gap-2 [.pay-action-panel_&]:grid [.pay-action-panel_&]:gap-[10px] [.pay-action-panel_&]:min-w-0">
-                      {pendingReport && (
-                        <p
-                          className="m-0 p-[7px_10px] border border-[rgba(129,_117,_255,_.3)] rounded-[8px] text-[#c9d1e6] [background:rgba(129,_117,_255,_.07)] text-[10.5px] leading-[1.4] [cursor:help] [.pay-action-panel_&]:text-[12.5px]"
-                          title="Sales Report pending. Your payment is not saved in the applicant record until Admin clicks SAVE APPLICANT."
-                        >
-                          Waiting for Admin confirmation. Not saved in the payment record yet.
-                        </p>
-                      )}
-                      <div className="pay-entry grid flex-none gap-2 p-[10px] border border-[#273044] rounded-[10px] [background:#0c111d] [&_label]:grid later:[&_label]:gap-1 later:[&_label]:text-[#9aa6c4] [&_input]:w-full later:[&_input]:min-h-[30px] later-4:[&_input]:p-[6px_9px] later-4:[&_input]:border later-3:[&_input]:border-[#273044] later-2:[&_input]:rounded-[7px] later-3:[&_input]:[background:#080c16] later-3:[&_input]:text-[#e7ebf5] later-4:[&_input]:text-[12px] [&_select]:w-full [&_select]:min-h-[30px] later-2:[&_select]:p-[6px_9px] later-2:[&_select]:border later:[&_select]:border-[#273044] later:[&_select]:rounded-[7px] later-2:[&_select]:[background:#080c16] later:[&_select]:text-[#e7ebf5] later-2:[&_select]:text-[12px] later:[&_input:focus]:[outline:none] later-3:[&_input:focus]:border-[#8175ff] later-2:[&_input:focus]:[box-shadow:0_0_0_2px_rgba(129,_117,_255,_.12)] [&_select:focus]:[outline:none] later-2:[&_select:focus]:border-[#8175ff] later:[&_select:focus]:[box-shadow:0_0_0_2px_rgba(129,_117,_255,_.12)] [&_.ap-pay-card-note]:text-[#9ba5bd] [&_.ap-pay-card-note]:text-[10px] later-2:[&_label]:text-[13.5px] [.pay-action-panel_&]:grid-cols-[repeat(auto-fit,_minmax(180px,_1fr))] [.pay-action-panel_&]:[align-items:end] [.pay-action-panel_&]:gap-[12px_14px] [.pay-action-panel_&]:p-3 [.pay-action-panel_&_.pay-side-head]:col-span-full [.pay-action-panel_&_label]:text-[12.5px] [.pay-action-panel_&_input]:min-h-[36px] [.pay-action-panel_&_input]:text-[13.5px] [.pay-action-panel_&_select]:min-h-[36px] [.pay-action-panel_&_select]:text-[13.5px]">
-                        <div className="pay-side-head later-3:[&_h3]:m-0 later-2:[&_h3]:text-[#edf0fa] later:[&_h3]:font-[700] later:[&_h3]:tracking-[.06em] [&_h3]:uppercase flex flex-none items-center justify-between gap-2 later-7:[&_h3]:text-[16px]">
-                          <h3>Add payment</h3>
-                          {paymentEntry?.id && <span className="text-[#9db2ff] text-[10px] leading-[1.3] [.pay-action-panel_&]:text-[12.5px]">Edit payment (request Admin approval)</span>}
-                        </div>
-                        <label htmlFor="ap-pay-entry-date">
-                          Date paid
-                          <input
-                            id="ap-pay-entry-date"
-                            type="date"
-                            max={localDateInputValue()}
-                            value={entryDraft.payment_date || ''}
-                            onChange={(e) => setPaymentEntry({ ...entryDraft, payment_date: e.target.value })}
-                          />
-                        </label>
-                        <label htmlFor="ap-pay-entry-amount">
-                          Amount
-                          <input
-                            id="ap-pay-entry-amount"
-                            ref={entryAmountRef}
-                            type="text"
-                            inputMode="decimal"
-                            autoComplete="off"
-                            placeholder={entryMaxAmount > 0 ? `Up to ${moneyExact(entryMaxAmount)}` : '—'}
-                            title={entryMaxAmount > 0
-                              ? `Any amount above ₱0, up to ${moneyExact(entryMaxAmount)}.`
-                              : 'Nothing is left to pay on this record.'
-                            }
-                            aria-invalid={Boolean(entryAmountIssue)}
-                            value={formatAmountInput(entryDraft.amount)}
-                            onChange={onEntryAmountChange}
-                          />
-                          {entryAmountIssue && String(entryDraft.amount ?? '').trim() !== '' && (
-                            <small className="text-[#ff9ca3] leading-[1.35] later:text-[12px]">{entryAmountIssue}</small>
-                          )}
-                          {!paymentEntry?.id && entryType === 'downpayment' && (
-                            <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">Minimum downpayment: {moneyExact(downpaymentCents)} — you may pay more.</small>
-                          )}
-                          {!paymentEntry?.id && entryType === 'installment_payment' && installmentBase != null && (
-                            <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">Minimum installment: {moneyExact(installmentCents)} — you may pay more (advance).</small>
-                          )}
-                        </label>
-                        <label htmlFor="ap-pay-entry-type">
-                          Type of payment
-                          <select
-                            id="ap-pay-entry-type"
-                            value={entryType}
-                            disabled={entrySettlesBalance || availableEntryTypes.length <= 1}
-                            onChange={(e) => {
-                              const type = e.target.value;
-                              setPaymentEntry({
-                                ...entryDraft,
-                                payment_type: type,
-                                // Picking a type fills its fixed expected amount.
-                                amount: String(expectedAmountForType(type)),
-                              });
-                            }}
-                          >
-                            {availableEntryTypes.map((type) => (
-                              <option key={type} value={type}>{paymentTypeLabel(type)}</option>
-                            ))}
-                          </select>
-                          {entrySettlesBalance && (
-                            <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">Set automatically — this amount pays the whole remaining balance.</small>
-                          )}
-                          {!entrySettlesBalance && entrySettlesWithOneInstallment && (
-                            <small className="text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]">The remaining balance is at or below the minimum installment, so Full Payment is the only option.</small>
-                          )}
-                        </label>
-                        <label htmlFor="ap-pay-entry-method">
-                          Payment method
-                          <select
-                            id="ap-pay-entry-method"
-                            value={entryDraft.payment_method || 'cash'}
-                            onChange={(e) => setPaymentEntry({ ...entryDraft, payment_method: e.target.value })}
-                          >
-                            {PAYMENT_METHOD_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                        {/* Received by: session-derived. The server stores the user
-                            and role ids itself, never anything sent from here. */}
-                        <label htmlFor="ap-pay-entry-received">
-                          Received by
-                          <select id="ap-pay-entry-received" value="session" disabled title="Filled from the signed-in account">
-                            <option value="session">{receivedByLabel}</option>
-                          </select>
-                        </label>
-                        <div className="flex flex-wrap gap-2 [.pay-action-panel_.pay-entry_&]:col-span-full">
-                          <button
-                            type="button"
-                            className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] later:p-[6px_12px] later:text-[11px]"
-                            disabled={acting || !entryDraft.payment_date || Boolean(entryAmountIssue)}
-                            title={entryAmountIssue || undefined}
-                            onClick={() => void savePaymentEntry()}
-                          >
-                            {paymentEntry?.id ? 'Save changes' : 'ADD PAYMENT'}
-                          </button>
-                          {paymentEntry?.id && (
-                            <button
-                              type="button"
-                              className="p-[6px_12px] border border-[#3b4767] rounded-[9px] [background:transparent] text-[#c9d1e6] text-[11px] cursor-pointer [&:hover:not(:disabled)]:border-[#8175ff] [&:hover:not(:disabled)]:text-[#fff] disabled:opacity-[.5] disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:1px]"
-                              disabled={acting}
-                              onClick={() => setPaymentEntry(null)}
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                )}
-                {/* Installment plan (Phase 4): minimums, due dates, estimates. */}
-                {paymentStage?.has_total_required && Number(paymentStage?.total_required_amount) > 0 && (
-                  <InstallmentPlanPanel
-                    installment={paymentStage?.installment}
-                    pendingAmount={paymentStage?.pending_amount}
-                    canSetSchedule={Boolean(paymentStage?.can_set_schedule)}
-                    busy={acting}
-                    onSave={savePaymentSchedule}
-                  />
-                )}
-                <h4 className="m-[2px_0_0] flex-none text-[#edf0fa] font-[700] tracking-[.05em] uppercase later:text-[12.5px] later:mt-[6px]">Payment record</h4>
-
-                <div className="flex flex-col min-w-0 overflow-auto [overscroll-behavior:contain] border border-[#273044] rounded-[10px] [background:#0c111d] [&::-webkit-scrollbar]:w-[7px] [&::-webkit-scrollbar]:h-[7px] [&::-webkit-scrollbar-thumb]:[background:#39435b] [&::-webkit-scrollbar-thumb]:rounded-[99px] [&_table]:w-full [&_table]:[border-collapse:collapse] [&_th]:border-b [&_th]:border-b-[#222b40] [&_th]:text-left [&_th]:[vertical-align:top] [&_td]:border-b [&_td]:border-b-[#222b40] [&_td]:text-left [&_td]:[vertical-align:top] [&_thead_th]:top-0 [&_thead_th]:z-1 [&_thead_th]:[background:#0c111d] [&_thead_th]:border-b [&_thead_th]:border-b-[#273044] [&_thead_th]:text-[#9aa6c4] [&_thead_th]:font-[700] [&_thead_th]:tracking-[.05em] [&_thead_th]:uppercase [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_tr:hover_td]:[background:rgba(129,_117,_255,_.04)] later-2:max-h-[none] later:min-h-0 later:overflow-x-auto later:[overflow-y:visible] later:flex-none later:[&_table]:min-w-[760px] later-2:[&_table]:text-[13.5px] later:[&_th]:p-[10px_14px] later:[&_td]:p-[10px_14px] later:[&_thead_th]:static later:[&_thead_th]:text-[12px] [&_td:first-child]:whitespace-nowrap [&_th:first-child]:whitespace-nowrap [&_td:nth-child(2)]:whitespace-nowrap [&_td:nth-child(2)]:[font-variant-numeric:tabular-nums] max-[821px]:later-2:max-h-[none]">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date paid</th>
-                        <th>Amount</th>
-                        <th>Payment type</th>
-                        <th>Payment method</th>
-                        {isSalesRole && <th>Action</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hasPaymentRows ? (
-                        <>
-                          {(paymentStage?.entries || []).map((entry) => {
-                            const previewUpdate = reportPreviewActive
-                              && pendingReport?.action === 'update'
-                              && Number(pendingReport.payment_id) === Number(entry.id);
-                            const previewDelete = reportPreviewActive
-                              && pendingReport?.action === 'delete'
-                              && Number(pendingReport.payment_id) === Number(entry.id);
-                            const shown = previewUpdate && pendingReport.changes
-                              ? { ...entry, ...pendingReport.changes }
-                              : entry;
-                            // Sales' edit/delete request is still waiting for Admin.
-                            const pendingChange = isSalesRole && pendingReport
-                              && Number(pendingReport.payment_id) === Number(entry.id)
-                              && ['update', 'delete'].includes(pendingReport.action);
-                            return (
-                              <tr key={entry.id} className={previewDelete ? '[&_td]:text-[#fb7185]' : undefined}>
-                                <td>
-                                  {formatDate(shown.payment_date)}
-                                  {previewUpdate && <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Preview change</span>}
-                                  {previewDelete && <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Will be deleted</span>}
-                                  {pendingChange && <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Pending</span>}
-                                </td>
-                                <td>{moneyExact(shown.amount)}</td>
-                                <td>
-                                  <span className="text-[#d5ddef]">{shown.payment_type_label || paymentTypeLabel(shown.payment_type)}</span>
-                                  {shown.remarks && <small className="block mt-[2px] text-[#8f99b1] text-[10px] leading-[1.3] [overflow-wrap:anywhere]">{shown.remarks}</small>}
-                                </td>
-                                <td>{shown.payment_method_label || paymentMethodLabel(shown.payment_method)}</td>
-                                {isSalesRole && (
-                                  <td>
-                                    {entry.editable ? (
-                                      <div className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative flex flex-wrap later:gap-2">
-                                        <button
-                                          type="button"
-                                          className="ap-text-button"
-                                          disabled={acting}
-                                          onClick={() => setPaymentEntry({
-                                            id: entry.id,
-                                            payment_date: entry.payment_date || '',
-                                            amount: String(entry.amount ?? ''),
-                                            payment_type: entry.payment_type || 'downpayment',
-                                            remarks: entry.remarks || '',
-                                          })}
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="text-[#ff8d94]"
-                                          disabled={acting}
-                                          onClick={() => void removePaymentEntry(entry)}
-                                        >
-                                          Delete
-                                        </button>
-                                      </div>
-                                    ) : '—'}
-                                  </td>
-                                )}
-                              </tr>
-                            );
-                          })}
-
-                          {isSalesRole && paymentDrafts.map((draft, index) => (
-                            <tr key={`draft-${index}`} className="[background:rgba(109,_124,_255,_.06)]">
-                              <td>
-                                {formatDate(draft.payment_date)}
-                                <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Draft</span>
-                              </td>
-                              <td>{moneyExact(draft.amount)}</td>
-                              <td>
-                                <span className="text-[#d5ddef]">{paymentTypeLabel(draft.payment_type)}</span>
-                              </td>
-                              <td>{paymentMethodLabel(draft.payment_method)}</td>
-                              <td>
-                                <button type="button" className="text-[#ff8d94]" disabled={acting} onClick={() => removePaymentDraft(index)}>
-                                  Remove
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-
-                          {previewCreateEntries.map((entry, index) => (
-                            <tr key={`preview-${index}`} className="[background:rgba(109,_124,_255,_.06)]">
-                              <td>
-                                {formatDate(entry.payment_date)}
-                                <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Preview</span>
-                              </td>
-                              <td>{moneyExact(entry.amount)}</td>
-                              <td>
-                                <span className="text-[#d5ddef]">{entry.payment_type_label || paymentTypeLabel(entry.payment_type)}</span>
-                              </td>
-                              <td>{entry.payment_method_label || paymentMethodLabel(entry.payment_method)}</td>
-                              {isSalesRole && <td>—</td>}
-                            </tr>
-                          ))}
-
-                          {/* Sales' own submitted report: kept visible (and after a
-                              refresh) while Admin has not confirmed it yet. */}
-                          {salesPendingEntries.map((entry, index) => (
-                            <tr key={`pending-${index}`} className="[background:rgba(109,_124,_255,_.06)]">
-                              <td>
-                                {formatDate(entry.payment_date)}
-                                <span className="border-[#273044] rounded-[999px] font-[700] tracking-[.03em] uppercase ml-[6px] later:p-[1px_6px] later:border-0 later:text-[#a5b4fc] [background:rgba(109,_124,_255,_.16)] later:text-[9px] later:cursor-default">Pending</span>
-                              </td>
-                              <td>{moneyExact(entry.amount)}</td>
-                              <td>
-                                <span className="text-[#d5ddef]">{entry.payment_type_label || paymentTypeLabel(entry.payment_type)}</span>
-                              </td>
-                              <td>{entry.payment_method_label || paymentMethodLabel(entry.payment_method)}</td>
-                              {isSalesRole && <td>—</td>}
-                            </tr>
-                          ))}
-                        </>
-                      ) : (
-                        <tr>
-                          <td colSpan={isSalesRole ? 5 : 4} className="p-[18px_12px]">
-                            <div className="grid [justify-items:center] gap-1 text-[#8f99b1] text-center later-2:[&_svg]:text-[#6d7a99] [&_svg]:text-[18px] later-4:[&_strong]:text-[#cfd6ea] later-3:[&_strong]:text-[11.5px] later:[&_strong]:font-[600] later-5:[&_small]:text-[#8f99b1] later-4:[&_small]:text-[10.5px]">
-                              <FaClipboardCheck aria-hidden="true" />
-                              <strong>No payment records yet</strong>
-                              <small>
-                                {isSalesRole
-                                  ? 'Add the first payment to start this record.'
-                                  : 'Payments appear here once Sales reports them.'}
-                              </small>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                  {isAdminRole && paymentStage?.state === 'for_review' && !reportPreviewActive && (
-                  <small className="pay-muted-line flex-none text-[#9ba5bd] later:text-[12.5px] later:leading-[1.5]" role="status">
-                    Click Confirm Payment on the Sales Report card to fill this view, then SAVE APPLICANT to save it.
-                  </small>
-                )}
-                </div>
-
-                </div>
-              </section>
+            {editRequiredOpen && editing?.payment_record && (
+              <EditRequiredPaymentsModal
+                applicant={editing}
+                record={editing.payment_record}
+                busy={acting}
+                onCancel={() => setEditRequiredOpen(false)}
+                onSave={saveRequiredPayments}
+              />
             )}
 
             {stage === 'payment_submitted' && doneSections}
 
             {/* Later stages (For Approval / Approved / Active Franchise): the
-                payment record is read-only. The numbers come from the same
-                derived payload the Payment Record stage uses. */}
-            {paymentsVisible && !paymentAdvancedUi && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
-              <PaymentRecordPanel editing={editing} readOnly busy={false} onSetAmount={() => {}} onSubmitEntry={() => {}} onVerify={() => {}} onReturn={() => {}} onError={setActionError} />
-            )}
-            {paymentsVisible && paymentAdvancedUi && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
-              <section className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#101521] [#update-applicant-form_&]:[box-shadow:none] ap-payment-ledger" aria-labelledby="ap-payment-ledger-title">
-                <div className="[&_h3]:m-0 [&_h3]:text-[0.78rem] [&_h3]:tracking-[0.09em] [&_h3]:uppercase flex later:items-center justify-between gap-3 later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap later:mb-[15px] [#update-applicant-form_&]:mb-[11px]">
-                  <h3 id="ap-payment-ledger-title">Payment Record</h3>
-                  {paymentStage?.state_label && <small className="p-[3px_9px] border border-[#303749] rounded-[999px] text-[#9aa6c4] text-[10px] font-[700] tracking-[.04em] uppercase">{paymentStage.state_label}</small>}
-                </div>
-                <div className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[10px] max-[761px]:later:grid-cols-[1fr]">
-                  <article className="grid gap-[6px] [align-content:start] p-[11px_13px] border border-[#303749] rounded-[11px] [background:#0c111d]">
-                    <span className="text-[#9aa6c4] text-[10px] tracking-[.05em] uppercase">Total required</span>
-                    <strong className="text-[#edf0fa] text-[17px] [font-variant-numeric:tabular-nums]">{moneyExact(paymentStage?.total_required_amount)}</strong>
-                    {paymentStage?.package_name && <small className="ap-pay-card-note text-[#9ba5bd] text-[10px] leading-[1.4]">{paymentStage.package_name}</small>}
-                  </article>
-                  <article className="grid gap-[6px] [align-content:start] p-[11px_13px] border border-[#303749] rounded-[11px] [background:#0c111d]">
-                    <span className="text-[#9aa6c4] text-[10px] tracking-[.05em] uppercase">Total paid</span>
-                    <strong className="text-[#edf0fa] text-[17px] [font-variant-numeric:tabular-nums]">{moneyExact(paymentStage?.total_paid_amount)}</strong>
-                    <small className="ap-pay-card-note text-[#9ba5bd] text-[10px] leading-[1.4]">{moneyExact(paymentStage?.verified_amount)} verified</small>
-                  </article>
-                  <article className="grid gap-[6px] [align-content:start] p-[11px_13px] border border-[#303749] rounded-[11px] [background:#0c111d]">
-                    <span className="text-[#9aa6c4] text-[10px] tracking-[.05em] uppercase">Remaining balance</span>
-                    <strong className="text-[#edf0fa] text-[17px] [font-variant-numeric:tabular-nums]">{moneyExact(paymentStage?.balance_including_pending)}</strong>
-                    <span className={`[justify-self:start] p-[2px_8px] rounded-[999px] text-[10px] font-[700] ap-pay-badge-${paymentStage?.payment_status || 'unpaid'}`}>
-                      {paymentStage?.payment_status_label || 'Unpaid'}
-                    </span>
-                  </article>
-                </div>
-
-                {/* Applicant record: the saved discount snapshot. */}
-                <DiscountSnapshot
-                  compact
-                  original={paymentStage?.original_total_required_amount}
-                  percent={paymentStage?.discount_percent}
-                  promo={paymentStage?.promo_name}
-                  final={paymentStage?.has_total_required ? paymentStage?.total_required_amount : null}
-                  setBy={paymentStage?.discount_set_by}
-                  setAt={paymentStage?.discount_set_at}
-                />
-
-                {(paymentStage?.entries || []).length ? (
-                  <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer ap-pay-record-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date paid</th>
-                          <th>Amount</th>
-                          <th>Payment type</th>
-                          <th>Payment method</th>
-                          <th>Received by</th>
-                        </tr>
-                      </thead>
-                      <tbody>{paymentStage.entries.map((entry) => (
-                        <tr key={entry.id}>
-                          <td>{formatDate(entry.payment_date)}</td>
-                          <td>{moneyExact(entry.amount)}</td>
-                          <td>{entry.payment_type_label || paymentTypeLabel(entry.payment_type)}</td>
-                          <td>{entry.payment_method_label || paymentMethodLabel(entry.payment_method)}</td>
-                          <td>{entry.received_by || '—'}</td>
-                        </tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
-                ) : <p className="m-0 italic later:text-[#9ba5bd] later:text-[12px]">No payment records yet.</p>}
-                {paymentStage?.fully_paid_on && (
-                  <p className="m-0 italic later:text-[#9ba5bd] later:text-[12px]">Fully paid on {formatDate(paymentStage.fully_paid_on)}.</p>
-                )}
-              </section>
+                payment record is read-only. */}
+            {paymentsVisible && stage !== 'payment_submitted' && PAYMENT_PANEL_FROM.includes(stage) && (
+              <PaymentRecordPanel editing={editing} isAdminRole={isAdminRole} readOnly busy={false} onError={setActionError} />
             )}
 
           </form>
@@ -5319,52 +4261,6 @@ export default function Applicants() {
       )}
 
       {/* Admin: return a turned-over payment to Sales. The note is required. */}
-      {returnForm && editing && createPortal(
-        <div
-          className="fixed inset-0 later:z-2147483001 grid place-items-center later:p-[18px] later:[background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)]"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setReturnForm(null); }}
-        >
-          <div className="[&_label]:grid [&_label]:gap-[6px] [&_label]:text-[0.78rem] [&_label]:font-[600] [&_label]:text-[color:var(--ap-muted)] [&_input]:[box-sizing:border-box] [&_input]:w-full later:[&_input]:p-[10px_12px] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later:[&_input]:text-[0.9rem] later:[&_input]:text-[color:var(--ap-text)] later:[&_input]:[background:var(--ap-bg)] later:[&_input]:[border:1px_solid_var(--ap-border-2)] [&_input]:rounded-[10px] [&_input:focus]:[outline:2px_solid_rgba(123,_136,_255,_0.5)] [&_input:focus]:[outline-offset:1px] grid gap-[14px] [border:1px_solid_var(--ap-border-2)] later:w-[min(100%,_390px)] p-[22px] later:border later:border-[#343b50] rounded-[16px] later:[background:#111624] text-[#edf0fa] later:[box-shadow:0_22px_70px_rgba(0,0,0,.5)] later:[&_h3]:m-[0_0_18px] later-3:[&_h3]:text-[15px] [&.ap-record-card]:relative [&.ap-record-card]:w-[min(100%,_440px)] [&.ap-record-card]:max-h-[calc(100dvh_-_36px)] [&.ap-record-card]:p-0 [&.ap-record-card]:overflow-x-hidden [&.ap-record-card]:overflow-y-auto [&.ap-record-card]:border [&.ap-record-card]:border-[#2a3550] [&.ap-record-card]:rounded-[14px] [&.ap-record-card]:[background:linear-gradient(180deg,_#131b2e_0%,_#0f1626_100%)] later-5:[&.ap-record-card]:text-[#e7ebf5] [&.ap-record-card]:[box-shadow:0_24px_64px_rgba(2,_6,_18,_.6),_0_0_0_1px_rgba(129,_117,_255,_.05)] ap-record-card [&::before]:[content:''] [&::before]:absolute [&::before]:inset-[0_0_auto_0] [&::before]:h-[2px] [&::before]:[background:linear-gradient(90deg,_#5b6cff,_#8175ff_55%,_#3b82f6)] [&::before]:opacity-[.9] later:[&:has(.ap-pay-split)]:w-[min(100%,_960px)] [&_.ap-subform-actions]:[border-top:1px_dashed_#2a3550] [&_.ap-subform-actions]:[background:rgba(8,_12,_22,_.45)] max-[481px]:[&_.ap-subform-actions]:p-[12px_16px] max-[481px]:[&_.ap-subform-actions]:flex-wrap" role="dialog" aria-modal="true" aria-labelledby="ap-return-title">
-            <header className="flex items-center gap-3 p-[20px_22px_16px] [border-bottom:1px_dashed_#2a3550] max-[481px]:later:p-[16px_16px_14px]">
-              <span className="grid flex-none place-items-center w-[36px] h-[36px] rounded-[10px] border border-[rgba(129,_117,_255,_.28)] [background:rgba(129,_117,_255,_.12)] text-[#aeb6ff] text-[15px]" aria-hidden="true"><FaClipboardCheck /></span>
-              <div className="flex-1 min-w-0 [.ap-record-card_&_h3]:m-[3px_0_0] [.ap-record-card_&_h3]:text-[#f1f3fb] [.ap-record-card_&_h3]:text-[15px] [.ap-record-card_&_h3]:leading-[1.3] [.ap-record-card_&_h3]:[overflow-wrap:anywhere]">
-                <span className="block text-[#8f9bbd] text-[10px] font-[700] tracking-[.14em] uppercase">Return payment</span>
-                <h3 id="ap-return-title">Return to Sales — {editing.full_name}</h3>
-              </div>
-            </header>
-            <dl className="m-0 p-[6px_22px] [.ap-pay-split_&]:p-0 max-[481px]:later:p-[4px_16px]">
-              <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Record</dt><dd>Goes back to Collecting. Sales can edit the entries again.</dd></div>
-              <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1">
-                <dt><label htmlFor="ap-return-note">Note to Sales</label></dt>
-                <dd>
-                  <textarea
-                    id="ap-return-note"
-                    autoFocus
-                    rows={3}
-                    value={returnForm.note}
-                    placeholder="What Sales has to correct"
-                    onChange={(e) => setReturnForm({ ...returnForm, note: e.target.value })}
-                  />
-                </dd>
-              </div>
-            </dl>
-            <p className="m-0 p-[4px_22px_16px] text-[#7f8aa8] text-[10.5px] leading-[1.5] max-[481px]:later:p-[4px_16px_14px]">The note is shown to Sales on the Payment Record stage.</p>
-            <footer className="ap-subform-actions [&_.spacer]:flex-1 flex items-center gap-2 later:mt-5">
-              <span className="flex-1" />
-              <button type="button" onClick={() => setReturnForm(null)}>Cancel</button>
-              <button
-                type="button"
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
-                disabled={acting || !returnForm.note.trim()}
-                onClick={() => void returnPaymentToSales()}
-              >
-                Return to Sales
-              </button>
-            </footer>
-          </div>
-        </div>,
-        document.body,
-      )}
 
       {/* LOI image lightbox. The blob URL is created by the attachment row and
           revoked here when the preview closes. */}
@@ -5609,9 +4505,7 @@ export default function Applicants() {
                 <dl className="m-0 p-[6px_22px] [.ap-pay-split_&]:p-0 max-[481px]:later:p-[4px_16px]">
                   <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Applicant</dt><dd>{editing.full_name}</dd></div>
                   <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Brand</dt><dd>{editing.preferred_brand?.name || 'No brand'}</dd></div>
-                  <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Total required</dt><dd>{money(editing.payment_summary?.total_required_amount)}</dd></div>
-                  <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Total paid</dt><dd className="later:inline-flex items-center later:gap-2 font-[600] [&_svg]:flex-none [&_svg]:text-[#45d991]">{money(editing.payment_summary?.verified_amount)}</dd></div>
-                  <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Remaining balance</dt><dd>{money(editing.payment_summary?.remaining_balance)}</dd></div>
+                  <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Payments</dt><dd>{editing.payment_record?.required_count ? `${editing.payment_record.verified_count} of ${editing.payment_record.required_count} required payments verified` : (editing.payment_record?.legacy_confirmed ? 'Confirmed (older record)' : '—')}</dd></div>
                   <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1"><dt>Approved by</dt><dd className="later:inline-flex items-center later:gap-2 font-[600] [&_svg]:flex-none [&_svg]:text-[#45d991]"><FaUserCheck aria-hidden="true" /> {authName || titleCase(role)}</dd></div>
                   <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1">
                     <dt><label htmlFor="ap-approve-remarks">Remarks</label></dt>
