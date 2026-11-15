@@ -26,6 +26,7 @@ import useRemote from '../lib/useRemote';
 import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase as baseTitleCase } from '../lib/format';
 import RequirementFileDrop from '../components/RequirementFileDrop';
 import { occupancyLabel } from '../lib/scheduleSessions';
+import { completedCount, TABLE_FOOTER, tableRows } from '../lib/activityTable';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, ProgressBar, StatusBadge } from '../components/ApiUi';
 import ScheduleWindowFields from '../components/ScheduleActivityFields';
 import {
@@ -128,7 +129,7 @@ function allMilestonesDone(group) {
   return trackedTypes.every((type) => activityDone(group, type));
 }
 
-/** Hide the person from the data table once all three tracked activities are done. */
+/** Hide the person from the data table once both tracked activities (Orientation/Tasting and Training) are done. */
 function isFullyAccomplished(group) {
   return allMilestonesDone(group);
 }
@@ -767,6 +768,8 @@ export default function Activities() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [activityFilter, setActivityFilter] = useState('');
+  // Off by default: fully done people (both activities done) leave the table; on brings them back.
+  const [showCompleted, setShowCompleted] = useState(false);
   // Page for the "All activities" list inside the read panel (8 rows per page).
   const [activityPage, setActivityPage] = useState(1);
 
@@ -808,7 +811,7 @@ export default function Activities() {
   const remote = useRemote(async () => {
     const [groups, table, applicants, brands] = await Promise.all([
       // Full history: the read panel, calendar and deep links still need people
-      // who already finished all three tracked activities.
+      // who already finished both tracked activities.
       api.get('/activities/grouped', { include_completed: 1 }),
       // Data panel list: the backend already excludes completed applicants.
       api.get('/activities/grouped'),
@@ -833,14 +836,19 @@ export default function Activities() {
   // Rows the backend returned for the Data panel. Completed applicants are
   // already absent here, so counts and pagination never include hidden rows.
   const tableSource = useMemo(
-    () => (remote.data?.tableGroups || []).map((group) => ({ ...group, current: currentActivity(group) })),
-    [remote.data?.tableGroups],
+    () => tableRows({ tableGroups: remote.data?.tableGroups || [], allGroups: remote.data?.groups || [], showCompleted, isArchived: isGroupArchived })
+      .map((group) => ({ ...group, current: currentActivity(group) })),
+    [remote.data?.tableGroups, remote.data?.groups, showCompleted],
+  );
+  const hiddenCompleted = useMemo(
+    () => completedCount({ tableGroups: remote.data?.tableGroups || [], allGroups: remote.data?.groups || [], isArchived: isGroupArchived }),
+    [remote.data?.tableGroups, remote.data?.groups],
   );
 
   // People shown in the "Schedule per person" table.
   // - Archived applicants leave this table right away (they live in the
   //   Applicant pipeline's Archive section and Admin settings, and can be restored there).
-  // - Someone who finished all three tracked activities is already filtered by
+  // - Someone who finished both tracked activities is already filtered by
   //   the backend, so new completions disappear on the next reload.
   const tableGroups = useMemo(
     () => tableSource.filter((group) => !isGroupArchived(group)
@@ -1386,6 +1394,10 @@ export default function Activities() {
                 {trackedTypes.map((type) => <option key={type} value={type}>{titleCase(type)}</option>)}
               </select>
             </div>
+            <label className="inline-flex items-center gap-2 flex-none whitespace-nowrap text-[13px] text-muted cursor-pointer" title="People with both activities done are hidden from this table">
+              <input type="checkbox" checked={showCompleted} onChange={(event) => { setPage(1); setShowCompleted(event.target.checked); }} />
+              Show completed{hiddenCompleted ? ` (${hiddenCompleted})` : ''}
+            </label>
           </>
         )}
 
@@ -1949,7 +1961,7 @@ export default function Activities() {
 
       {view === 'table' && (
         <p className="muted-note text-muted text-[8px] leading-[1.6] [.activities-page_&]:mt-[14px]">
-          <FaUsers aria-hidden="true" /> A person leaves this table only when all three activities are done, when Admin archives them, or when Admin cancels with zero completed activities.
+          <FaUsers aria-hidden="true" /> {TABLE_FOOTER}
         </p>
       )}
     </div>

@@ -376,3 +376,32 @@ test('History reads a value an older script stored as a JSON string as JSON', as
   assert.equal(row.old_values.orientation.status, 'completed');
   assert.equal(row.new_values.orientation.status, 'confirmed');
 });
+
+test('Activities & Schedules table: fully done people leave it; include_completed (Show completed) brings them back', async () => {
+  const done = await applicant();
+  const pending = await applicant();
+  const orientation = await started(done);
+  const completed = await complete(orientation, orientationForm({ brandId: brandA.id }));
+  await viewAll(call, admin, orientation, completed.json.data.proof_documents);
+  assert.equal((await call('POST', `/activities/${orientation}/attended`, { token: admin })).status, 200);
+  const training = await call('POST', `/applicants/${done}/activities/set-again`, { token: admin, body: { starts_at: nextSlot(), duration_minutes: 60 } });
+  assert.equal(training.status, 201, JSON.stringify(training.json));
+  await q(`update activity_schedules set starts_at = now() - interval '2 hours', ends_at = now() - interval '1 hour' where id = $1`, [training.json.data.id]);
+  const trainingForm = orientationForm({ attendance: 0, brandDocs: 0 });
+  trainingForm.set('proof', pdf('training.pdf'));
+  assert.equal((await complete(training.json.data.id, trainingForm)).status, 200);
+  assert.equal((await call('GET', '/activities/grouped', { token: admin })).json.data.some((g: any) => g.applicant_id === done), true, 'Training submitted, not attended yet: still listed');
+  assert.equal((await call('POST', `/activities/${training.json.data.id}/attended`, { token: admin })).status, 200);
+  await started(pending);
+
+  const table = (await call('GET', '/activities/grouped', { token: admin })).json.data;
+  assert.equal(table.some((g: any) => g.applicant_id === done), false, 'both activities done: out of the table');
+  assert.equal(table.some((g: any) => g.applicant_id === pending), true);
+  const all = (await call('GET', '/activities/grouped?include_completed=1', { token: admin })).json.data;
+  assert.equal(all.some((g: any) => g.applicant_id === done), true, 'Show completed brings them back');
+  // A cancelled-only person (zero completed) is not listed either way.
+  const cancelled = await applicant();
+  const c = await call('POST', '/activities', { token: admin, body: { applicant_id: cancelled, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: nextSlot(), duration_minutes: 60, venue: 'Virtual' } });
+  assert.equal((await call('DELETE', `/activities/${c.json.data.id}`, { token: admin })).status, 200);
+  assert.equal((await call('GET', '/activities/grouped?include_completed=1', { token: admin })).json.data.some((g: any) => g.applicant_id === cancelled), false);
+});
