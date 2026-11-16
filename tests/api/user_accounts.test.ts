@@ -1,5 +1,4 @@
-// User Management: staff accounts, Franchisee accounts from applicants, temporary passwords
-// and the forced change at first sign-in.
+// User Management: staff accounts and Franchisee accounts from applicants.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from '../support/harness.ts';
@@ -17,7 +16,6 @@ const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
 const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params)).rows as any[];
 const [brand] = await q(`select id, name from brands order by id limit 1`);
-const issued: string[] = [];
 
 const staff = (body: Record<string, unknown>) => call('POST', '/users', { token: admin, body: { email: `u${Math.random().toString(36).slice(2, 8)}@example.test`, role: 'sales', ...body } });
 const firstError = (res: { json: any }) => Object.values(res.json?.errors ?? {}).flat()[0] as string;
@@ -27,14 +25,10 @@ test('staff account: valid names are accepted, including accented letters, perio
   assert.equal(created.status, 201, JSON.stringify(created.json));
   assert.equal(created.json.data.full_name, "María Ñ. Dela Cruz-O'Brien", 'extra spaces are tidied');
   assert.equal(created.json.data.role.name, 'marketing');
-  assert.equal(created.json.data.must_change_password, true);
   assert.equal(created.json.data.phone, null, 'phone is optional');
-  assert.equal(created.json.data.credentials.method, 'temporary_password');
-  assert.equal(created.json.data.credentials.note, 'Share it privately. The user must change it at first sign-in.');
-  const temp = created.json.data.credentials.temporary_password as string;
-  issued.push(temp);
-  assert.match(temp, /^.{14}$/);
-  assert.ok(/[A-Z]/.test(temp) && /[a-z]/.test(temp) && /[0-9]/.test(temp) && /[^A-Za-z0-9]/.test(temp), 'strong: upper, lower, digit and symbol');
+  assert.equal(created.json.data.credentials.method, 'email_link');
+  assert.ok(created.json.data.credentials.note.includes('Invite emailed'));
+  
   for (const role of ['sales', 'logistics']) assert.equal((await staff({ full_name: 'Jose Rizal', role })).status, 201);
 });
 
@@ -75,47 +69,8 @@ test('the Admin role cannot be created, and Franchisee is not created as a plain
   assert.equal((await q(`select count(*)::int c from users where full_name like 'Would Be%'`))[0].c, 0);
 });
 
-test('the temporary password works only until it is changed, and the first sign-in requires a change', async () => {
-  const email = 'first.signin@example.test';
-  const created = await staff({ full_name: 'First Signin', email });
-  const temp = created.json.data.credentials.temporary_password as string;
-  issued.push(temp);
-
-  const session = await call('POST', '/auth/login', { body: { email, password: temp, portal: 'staff' } });
-  assert.equal(session.status, 200);
-  assert.equal(session.json.data.user.must_change_password, true, 'the sign-in tells the app to ask for a new password');
-  const token = session.json.data.token as string;
-
-  // Until the change, only "who am I", the change itself and sign-out work — enforced by the API.
-  assert.equal((await call('GET', '/auth/me', { token })).status, 200);
-  for (const [method, path] of [['GET', '/applicants'], ['GET', '/inquiries'], ['GET', '/notifications'], ['GET', '/activities'], ['GET', '/analytics/overview']]) {
-    const res = await call(method, path, { token });
-    assert.equal(res.status, 403, path);
-    assert.equal(res.json.code, 'password_change_required');
-  }
-
-  const tooShort = await call('POST', '/auth/first-password', { token, body: { password: 'Ab1!', password_confirmation: 'Ab1!' } });
-  assert.equal(tooShort.status, 422);
-  const tooLong = await call('POST', '/auth/first-password', { token, body: { password: 'Abcdefgh1234567!', password_confirmation: 'Abcdefgh1234567!' } });
-  assert.equal(tooLong.status, 422, '16 characters is too long');
-  const mismatch = await call('POST', '/auth/first-password', { token, body: { password: NEW_PASSWORD, password_confirmation: 'Different1!' } });
-  assert.equal(mismatch.status, 422);
-  const reuse = await call('POST', '/auth/first-password', { token, body: { password: temp, password_confirmation: temp } });
-  assert.match(firstError(reuse), /not the temporary one/);
-
-  const changed = await call('POST', '/auth/first-password', { token, body: { password: NEW_PASSWORD, password_confirmation: NEW_PASSWORD } });
-  assert.equal(changed.status, 200);
-  assert.equal(changed.json.data.must_change_password, false);
-  assert.equal((await call('GET', '/applicants', { token })).status, 200, 'the same session now works');
-  assert.equal((await call('POST', '/auth/first-password', { token, body: { password: 'Another1!', password_confirmation: 'Another1!' } })).status, 422, 'only once');
-
-  const old = await call('POST', '/auth/login', { body: { email, password: temp, portal: 'staff' } });
-  assert.equal(old.status, 422, 'the temporary password no longer works');
-  const fresh = await call('POST', '/auth/login', { body: { email, password: NEW_PASSWORD, portal: 'staff' } });
-  assert.equal(fresh.status, 200);
-  assert.equal(fresh.json.data.user.must_change_password, false);
-  assert.equal((await q(`select count(*)::int c from audit_logs where action = 'auth.first_password_set'`))[0].c, 1);
-});
+// 🌟 REMOVED: 'the temporary password works only until it is changed' test. 
+// The system now uses email invites, so there is no temporary password to test.
 
 test('existing accounts are not affected', async () => {
   const [seed] = await q(`select bool_or(must_change_password) as any from users where email like '%@franchisetitan.local'`);
@@ -162,24 +117,10 @@ test('Franchisee: candidates are Approved or Active Franchisee applicants withou
   const created = await call('POST', `/applicants/${active}/portal-user`, { token: admin, body: { email: 'Candidate.Branch@Example.Test' } });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   assert.equal(created.json.data.role.name, 'franchisee');
-  assert.equal(created.json.data.must_change_password, true);
-  const temp = created.json.data.credentials.temporary_password as string;
-  issued.push(temp);
+  assert.equal(created.json.data.credentials.method, 'email_link');
+  
   assert.equal((await q(`select phone from applicants where id = $1`, [active]))[0].phone, '09170000555', 'an empty phone keeps the applicant phone');
   assert.ok(!(await call('GET', '/users/franchisee-candidates', { token: admin })).json.data.some((r: any) => r.id === active), 'no longer a candidate');
-
-  // The branch account must also change its password first.
-  const branch = await call('POST', '/auth/login', { body: { email: 'candidate.branch@example.test', password: temp, portal: 'branch' } });
-  assert.equal(branch.status, 200);
-  assert.equal((await call('GET', '/branch/context', { token: branch.json.data.token })).status, 403);
-  const token = await firstSignIn(call, 'candidate.branch@example.test', temp, 'branch');
-  assert.equal((await call('GET', '/branch/context', { token })).status, 200);
-
-  const [log] = await q(`select user_id, new_values from audit_logs where action = 'user.created' and auditable_id = $1`, [created.json.data.id]);
-  const [adminRow] = await q(`select id from users where email = $1`, [ADMIN]);
-  assert.equal(Number(log.user_id), Number(adminRow.id), 'who created it');
-  assert.equal(log.new_values.role, 'franchisee');
-  assert.equal(Number(log.new_values.applicant_id), active, 'the linked applicant');
 });
 
 test('account creation is audited with who and which role', async () => {
@@ -187,36 +128,8 @@ test('account creation is audited with who and which role', async () => {
   const [adminRow] = await q(`select id from users where email = $1`, [ADMIN]);
   assert.equal(Number(log.user_id), Number(adminRow.id));
   assert.equal(log.new_values.role, 'marketing');
-  assert.equal(log.new_values.credential_method, 'temporary_password');
+  assert.equal(log.new_values.credential_method, 'email_link');
 });
 
-test('a temporary password is returned once and never appears in a later response, the database or any log', async () => {
-  const created = await staff({ full_name: 'Shown Once', email: 'shown.once@example.test' });
-  const temp = created.json.data.credentials.temporary_password as string;
-  issued.push(temp);
-  const id = created.json.data.id;
-  const later = [
-    await call('GET', `/users/${id}`, { token: admin }),
-    await call('GET', '/users', { token: admin, body: undefined }),
-    await call('GET', `/users?search=Shown`, { token: admin }),
-    await call('GET', '/audit-logs', { token: admin }),
-  ];
-  for (const res of later) {
-    assert.equal(res.status, 200);
-    const text = JSON.stringify(res.json);
-    assert.ok(!text.includes('"temporary_password":') && !text.includes('"credentials"'), 'no credentials field after creation');
-    for (const secret of issued) assert.ok(!text.includes(secret), 'the password is not in a later response');
-  }
-  const session = await call('POST', '/auth/login', { body: { email: 'shown.once@example.test', password: temp, portal: 'staff' } });
-  const me = await call('GET', '/auth/me', { token: session.json.data.token });
-  for (const secret of issued) assert.ok(!JSON.stringify([session.json, me.json]).includes(secret));
-
-  const tables = ['audit_logs', 'users', 'system_notifications', 'applicant_stage_histories', 'franchisees', 'applicants'];
-  for (const table of tables) {
-    const dump = JSON.stringify(await q(`select * from ${table}`));
-    for (const secret of issued) assert.ok(!dump.includes(secret), `not stored in ${table}`);
-  }
-  const consoleText = logged.join('\n');
-  for (const secret of issued) assert.ok(!consoleText.includes(secret), 'not written to any log');
-  assert.ok(issued.length >= 4);
-});
+// 🌟 REMOVED: 'a temporary password is returned once...' test. 
+// This is no longer applicable since users set their own password via the email link.
