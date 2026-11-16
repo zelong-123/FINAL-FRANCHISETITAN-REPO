@@ -75,6 +75,11 @@ completely clean, `HEAD` equals `origin/main`, the library and API tests pass, a
 already on the database. After deploying it downloads the live source and checks that every file
 equals `HEAD`. Do not run `npx supabase functions deploy` by hand against the live project.
 
+The script stamps the deploy with its commit and the git tree hash of `supabase/functions/api`;
+`GET /api/v1/health` returns them (`commit`, `api_tree`, `deployed_at`). Admins see a warning banner
+when the live API code differs from the API code the app was built against ("Live API is older
+than this app — tell the team"), or when the API was deployed some other way (no stamp).
+
 - Work on a branch, open a pull request; CI (`.github/workflows/ci.yml`) runs `test:lib`, `test:api`
   and the build on every PR and on main.
 - Database changes: `npx supabase db push --linked --dry-run`, review, then push — before deploying.

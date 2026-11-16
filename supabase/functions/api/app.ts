@@ -25,6 +25,7 @@ import { profitTrackRoutes } from './routes/profittrack.ts';
 import { forecastRoutes } from './routes/estimatedRequirement.ts';
 import { analyticsRoutes } from './routes/analytics.ts';
 import { locationReference } from './services/psgc.ts';
+import { BUILD } from './build-info.ts';
 
 export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   const app = new Hono<AppEnv>().basePath('/api/v1');
@@ -48,6 +49,10 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
       database,
       time: new Date().toISOString(),
       version: '3.0.0',
+      // The deployed code (set by npm run deploy:api; null = deployed another way). Read by the app's version banner.
+      commit: BUILD.commit,
+      api_tree: BUILD.api_tree,
+      deployed_at: BUILD.deployed_at,
     }, database === 'ok' ? 200 : 503);
   });
 
