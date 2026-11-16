@@ -37,7 +37,7 @@ function ToastNotice({ type, children }) {
   const Icon = noticeIcons[type] || FaCircleInfo;
   if (closed) return null;
   return createPortal(
-    <div style={{ zIndex: 2147483600 }} className={`fixed right-[20px] bottom-[20px] max-w-[min(420px,_calc(100vw_-_40px))] flex items-start gap-[10px] p-[12px_14px] border rounded-[12px] text-[13px] leading-[1.45] [box-shadow:var(--shadow-md)] [animation:noticeIn_.25s_ease_both] ${type === 'error' ? 'border-[rgba(255,_107,_107,_.45)] text-[#ff9ca3] [background:#22151a]' : 'border-[rgba(69,_217,_145,_.45)] text-[#45d991] [background:#0f1f19]'}`} role={type === 'error' ? 'alert' : 'status'}>
+    <div style={{ zIndex: 2147483600 }} className={`fixed right-[20px] bottom-[20px] max-w-[min(420px,_calc(100vw_-_40px))] flex items-start gap-[10px] p-[12px_14px] border rounded-[12px] text-[13px] leading-[1.45] [box-shadow:var(--shadow-md)] [animation:noticeIn_.25s_ease_both] ${type === 'error' ? 'border-[rgba(255,_107,_107,_.45)] text-[#ff9ca3] [background:#22151a] light:text-[#b42318] light:[background:#fef3f2] light:border-[rgba(180,_35,_24,_.35)]' : 'border-[rgba(69,_217,_145,_.45)] text-[#45d991] [background:#0f1f19] light:text-[#067647] light:[background:#ecfdf3] light:border-[rgba(6,_118,_71,_.35)]'}`} role={type === 'error' ? 'alert' : 'status'}>
       <Icon aria-hidden="true" className="flex-[0_0_auto] mt-[3px]" />
       <span className="flex-1 min-w-0">{children}</span>
       <button type="button" aria-label="Close notification" className="flex-[0_0_auto] bg-transparent border-0 p-0 text-inherit cursor-pointer opacity-70 hover:opacity-100" onClick={() => setClosed(true)}><FaXmark aria-hidden="true" /></button>

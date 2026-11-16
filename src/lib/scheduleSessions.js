@@ -4,17 +4,17 @@
  * rule; nothing here blocks a save on its own except obvious missing fields.
  */
 
+/** Orientation and Product Tasting are one activity: Orientation/Tasting (stored key 'orientation'). */
 export const ACTIVITY_TYPES = [
-  { value: 'orientation', label: 'Orientation' },
-  { value: 'product_tasting', label: 'Product Tasting' },
+  { value: 'orientation', label: 'Orientation/Tasting' },
   { value: 'training', label: 'Training' },
 ];
 
 /** Activities whose brand must match every participant's brand preference. */
-export const BRANDED_TYPES = ['product_tasting', 'training'];
+export const BRANDED_TYPES = ['training'];
 
-/** Mirrors config/franchise.php schedule.default_duration_minutes (editable per session). */
-export const DEFAULT_DURATION_MINUTES = { orientation: 120, product_tasting: 120, training: 180 };
+/** Mirrors the API's default durations (editable per session). */
+export const DEFAULT_DURATION_MINUTES = { orientation: 120, training: 180 };
 
 export const SESSION_STATUSES = [
   { value: 'pending', label: 'Pending' },
@@ -39,7 +39,11 @@ export const VENUE_OPTIONS = ['Main Office (In-person)', 'Virtual'];
 
 export const NO_BRAND_PREFERENCE = 'Itakda muna ang brand preference ng applicant.';
 
-export const activityLabel = (value) => ACTIVITY_TYPES.find((item) => item.value === value)?.label || value;
+// Older Product Tasting rows read as Orientation/Tasting.
+export const activityLabel = (value) => (value === 'product_tasting' ? 'Orientation/Tasting' : ACTIVITY_TYPES.find((item) => item.value === value)?.label || value);
+
+/** "2/5", or "5/5 · Full" when no seat is left. */
+export const occupancyLabel = (taken, capacity) => `${taken}/${capacity}${capacity > 0 && taken >= capacity ? ' · Full' : ''}`;
 export const statusLabel = (value) => SESSION_STATUSES.find((item) => item.value === value)?.label || value;
 
 const TZ = 'Asia/Manila';

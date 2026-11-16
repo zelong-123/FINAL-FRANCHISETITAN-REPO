@@ -5,7 +5,7 @@ import type { Db, Row } from '../../lib/db.ts';
 import { insertRow, updateRow, abort, RawError } from '../../lib/http.ts';
 import { logEvent } from '../applicantStage.ts';
 import { activityDone, activityLabel } from '../pipeline.ts';
-import { evaluate, isAdmin, isLive, mergeReasons, SESSION_RELATIONS } from './conflict.ts';
+import { defaultHandlerId, evaluate, isAdmin, isLive, mergeReasons, SESSION_RELATIONS } from './conflict.ts';
 import { acquireDayLocks, addMinutes, iso8601, MINUTE, parseLocal, sessionCapacity } from './rules.ts';
 import { mirror, updateActivity } from './sync.ts';
 
@@ -102,6 +102,11 @@ async function seat(tx: Db, session: Row, applicantId: number, actor: Row, event
 
 async function addApplicants(tx: Db, session: Row, ids: number[], actor: Row) {
   const active = await activeParticipants(tx, session.id);
+  // A session without a handler takes the assigned Sales user of everyone in it.
+  if (!session.handler_id) {
+    const handler = await defaultHandlerId(tx, session.activity_type, [...active.map((p: Row) => Number(p.applicant_id)), ...ids.map(Number)]);
+    if (handler) session = (await updateRow(tx, 'schedule_sessions', session.id, { handler_id: handler }))!;
+  }
   const evaluation = await evaluate(tx, {
     activity_type: session.activity_type, brand_id: session.brand_id, start_at: session.start_at, end_at: session.end_at, handler_id: session.handler_id, venue: session.venue,
     applicant_ids: ids, existing_count: active.length, max_capacity: session.max_capacity, ignore_session_ids: [session.id], check_applicant_gates: true, check_window: false,
@@ -142,7 +147,7 @@ export function createSession(db: Db, data: Row, actor: Row) {
     const choice = resolveChoice(evaluation, data, actor);
     const session = await createSessionRow(tx, {
       activity_type: proposal.activity_type, brand_id: evaluation.proposal.brand_id, start_at: parseLocal(evaluation.proposal.start_at), end_at: parseLocal(evaluation.proposal.end_at),
-      handler_id: proposal.handler_id, venue: proposal.venue, meeting_link: data.meeting_link ?? null, status: isAdmin(actor) ? 'confirmed' : 'pending',
+      handler_id: evaluation.proposal.handler_id, venue: proposal.venue, meeting_link: data.meeting_link ?? null, status: isAdmin(actor) ? 'confirmed' : 'pending',
       merge_suggested: choice.merge_suggested, max_capacity: proposal.max_capacity, remarks: data.remarks ?? null, created_by: actor.id,
     });
     await history(tx, session.id, 'created', null, snapshot(session), actor, data.remarks ?? null);
@@ -176,7 +181,7 @@ export function updateSession(db: Db, current: Row, data: Row, actor: Row, actio
     }, actor);
     const choice = resolveChoice(evaluation, data, actor);
     const saved = (await updateRow(tx, 'schedule_sessions', session.id, {
-      brand_id: evaluation.proposal.brand_id, start_at: start, end_at: end, handler_id: handlerId, venue,
+      brand_id: evaluation.proposal.brand_id, start_at: start, end_at: end, handler_id: evaluation.proposal.handler_id ?? handlerId, venue,
       meeting_link: 'meeting_link' in data ? data.meeting_link : session.meeting_link, max_capacity: capacity,
       remarks: 'remarks' in data ? data.remarks : session.remarks, status: isAdmin(actor) ? session.status : 'pending',
       merge_suggested: session.merge_suggested || choice.merge_suggested,
@@ -330,7 +335,7 @@ export async function setAgain(db: Db, current: Row, applicantId: number, data: 
     const choice = resolveChoice(evaluation, data, actor);
     const fresh = await createSessionRow(tx, {
       activity_type: session.activity_type, brand_id: session.brand_id, start_at: parseLocal(evaluation.proposal.start_at), end_at: parseLocal(evaluation.proposal.end_at),
-      handler_id: proposal.handler_id, venue: proposal.venue, meeting_link: session.meeting_link, status: isAdmin(actor) ? 'confirmed' : 'pending',
+      handler_id: evaluation.proposal.handler_id, venue: proposal.venue, meeting_link: session.meeting_link, status: isAdmin(actor) ? 'confirmed' : 'pending',
       merge_suggested: choice.merge_suggested, max_capacity: sessionCapacity(session.activity_type), remarks: data.remarks ?? null, created_by: actor.id,
     });
     await history(tx, fresh.id, 'created', null, { ...snapshot(fresh), split_from_session_id: session.id }, actor, 'Set Again');

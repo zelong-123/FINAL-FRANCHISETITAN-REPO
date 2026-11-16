@@ -23,7 +23,10 @@ import { FaXmark } from 'react-icons/fa6';
 import { initialsOf } from '../lib/initials';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
-import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase } from '../lib/format';
+import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase as baseTitleCase } from '../lib/format';
+import RequirementFileDrop from '../components/RequirementFileDrop';
+import { occupancyLabel } from '../lib/scheduleSessions';
+import { completedCount, TABLE_FOOTER, tableRows } from '../lib/activityTable';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, ProgressBar, StatusBadge } from '../components/ApiUi';
 import ScheduleWindowFields from '../components/ScheduleActivityFields';
 import {
@@ -40,16 +43,21 @@ import useScheduleConfig from '../lib/useScheduleConfig';
 import MasterSchedule from './MasterSchedule';
 import { activitiesView } from '../lib/navigation';
 
-// Phase 1: "Others" is gone — only the three tracked activities can be scheduled.
-const activityTypes = ['orientation', 'product_tasting', 'training'];
-// The three tracked milestones get their own progress chart in the read panel.
-const trackedTypes = ['orientation', 'product_tasting', 'training'];
+// Orientation and Product Tasting are one activity: Orientation/Tasting (stored key 'orientation').
+const activityTypes = ['orientation', 'training'];
+// The two tracked milestones get their own progress chart in the read panel.
+const trackedTypes = ['orientation', 'training'];
+/** Activity names: 'orientation' (and older 'product_tasting' rows) read as Orientation/Tasting. */
+const titleCase = (value) => (value === 'orientation' || value === 'product_tasting' ? 'Orientation/Tasting' : baseTitleCase(value));
+// Orientation/Tasting completion files: the same types and size as the requirement uploads.
+const PROOF_ACCEPT = '.pdf,.jpg,.jpeg,.png';
+const proofProblem = (file) => (!/\.(pdf|jpe?g|png)$/i.test(file.name) ? `${file.name}: PDF, JPG or PNG only.`
+  : file.size > 10 * 1024 * 1024 ? `${file.name} is larger than 10 MB.` : '');
 
 // The applicant milestone that proves each tracked activity is DONE (Sales
 // Complete AND Admin Attended saved). The fixed order drives every gate.
 const ACTIVITY_MILESTONE = {
   orientation: 'orientation_attended',
-  product_tasting: 'product_tasting_attended',
   training: 'training_completed',
 };
 
@@ -107,7 +115,7 @@ function parseAttendees(raw, fallback) {
   return fallback ? [fallback] : [];
 }
 
-/** True once the person has completed every tracked milestone (orientation, product tasting, training). */
+/** True once the person has completed every tracked milestone (Orientation/Tasting, Training). */
 /** A tracked activity is DONE only when Sales completed it AND Admin saved Attended. */
 function activityDone(group, type) {
   if (!ACTIVITY_MILESTONE[type]) return false;
@@ -121,7 +129,7 @@ function allMilestonesDone(group) {
   return trackedTypes.every((type) => activityDone(group, type));
 }
 
-/** Hide the person from the data table once all three tracked activities are done. */
+/** Hide the person from the data table once both tracked activities (Orientation/Tasting and Training) are done. */
 function isFullyAccomplished(group) {
   return allMilestonesDone(group);
 }
@@ -178,7 +186,7 @@ function currentActivity(group) {
   return activities[activities.length - 1] || null;
 }
 
-/** Tracks status per milestone category, e.g. "Orientation done, Training —, Product tasting —". */
+/** Tracks status per milestone category, e.g. "Orientation/Tasting done, Training —". */
 function typeProgress(activities) {
   return trackedTypes.map((type) => {
     const held = activities.filter((item) => item.activity_type === type && item.status !== 'cancelled');
@@ -212,7 +220,7 @@ function CalendarNav({ cursor, onChange, compact = false }) {
   const shift = (amount) => onChange(new Date(year, month + amount, 1));
 
   return (
-    <div className={`cal-nav [.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:gap-[6px] [.activities-page_&]:flex-nowrap [.activities-page_&]:shrink-[0] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:p-[5px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-control)] [.activities-page_&]:[background:var(--act-cell)] [.activities-page_&.is-compact]:flex [.activities-page_&.is-compact]:w-full [.activities-page_&.is-compact]:m-[0_0_18px] [.activities-page_&.is-compact_.cal-nav-select]:flex-1 [.activities-page_&.is-compact_.cal-nav-select]:min-w-0 [.activities-page_&.is-compact_.cal-nav-select]:text-[12.5px] [.activities-page_&.is-compact_.cal-nav-select:first-child]:flex-[1.5] max-[721px]:[.activities-page_&]:w-full max-[721px]:[.activities-page_&]:justify-between ${compact ? ' is-compact' : ''}`}>
+    <div className={`cal-nav [.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:gap-[6px] [.activities-page_&]:flex-nowrap [.activities-page_&]:shrink-[0] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:p-[5px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-control)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&.is-compact]:flex [.activities-page_&.is-compact]:w-full [.activities-page_&.is-compact]:m-[0_0_18px] [.activities-page_&.is-compact_.cal-nav-select]:flex-1 [.activities-page_&.is-compact_.cal-nav-select]:min-w-0 [.activities-page_&.is-compact_.cal-nav-select]:text-[12.5px] [.activities-page_&.is-compact_.cal-nav-select:first-child]:flex-[1.5] max-[721px]:[.activities-page_&]:w-full max-[721px]:[.activities-page_&]:justify-between ${compact ? ' is-compact' : ''}`}>
       <button type="button" className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:w-[32px] [.activities-page_&]:h-[32px] [.activities-page_&]:p-0 [.activities-page_&]:border [.activities-page_&]:border-transparent [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:transparent] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:text-[12px] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:background_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.activities-page_&:hover]:[background:rgba(123,_136,_255,_0.18)] [.activities-page_&:hover]:border-[rgba(123,_136,_255,_0.4)] [.activities-page_&:hover]:text-[color:var(--accent,_#aeb6ff)] [.activities-page_&:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&:focus-visible]:[outline-offset:2px]" onClick={() => shift(-1)} aria-label="Previous month" title="Previous month">
         <FaChevronLeft aria-hidden="true" />
       </button>
@@ -313,7 +321,7 @@ export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEven
 
   return (
     <div className="big-calendar-split [.activities-page_&]:grid [.activities-page_&]:grid-cols-[minmax(0,_7fr)_minmax(300px,_3fr)] [.activities-page_&]:gap-0 [.activities-page_&]:items-stretch [.activities-page_&]:border [.activities-page_&]:border-[#2a3350] [.activities-page_&]:rounded-[14px] [.activities-page_&]:overflow-hidden max-[1101px]:later:[.activities-page_&]:grid-cols-[1fr]">
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] [.activities-page_.big-calendar-split>&]:border-0 [.activities-page_.big-calendar-split>&]:border-r [.activities-page_.big-calendar-split>&]:border-r-[#2a3350] [.activities-page_.big-calendar-split>&]:rounded-[0] max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-r-0 max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b-[#2a3350]">
+    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] [.activities-page_.big-calendar-split>&]:border-0 [.activities-page_.big-calendar-split>&]:[background:#05070d] [.activities-page_.big-calendar-split>&]:border-r [.activities-page_.big-calendar-split>&]:border-r-[#2a3350] [.activities-page_.big-calendar-split>&]:rounded-[0] max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-r-0 max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b-[#2a3350]">
       <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px] [.activities-page_.data-panel_&]:[box-sizing:border-box] [.activities-page_.data-panel_&]:p-[18px_var(--act-pad)] [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-4 [.activities-page_&]:flex-wrap">
         <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
           <h2>{cursor.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h2>
@@ -328,14 +336,14 @@ export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEven
         <div key={`${year}-${month}`} className={`[.activities-page_&]:grid [.activities-page_&]:grid-cols-[repeat(5,_minmax(0,_1fr))] [.activities-page_&]:gap-2 [.activities-page_&]:min-w-[560px] ${slideDir < 0 ? '[.activities-page_&]:animate-cal-slide-from-left' : '[.activities-page_&]:animate-cal-slide-from-right'}`} aria-label="Month calendar of activities">
           {weekdayLabels.map((label, index) => <span className="[.activities-page_&]:p-[0_0_4px] [.activities-page_&]:text-center [.activities-page_&]:text-[11px] [.activities-page_&]:font-[750] [.activities-page_&]:tracking-[0.06em] [.activities-page_&]:uppercase [.activities-page_&]:text-[color:var(--muted,_#8590a8)]" key={`${label}-${index}`}>{label}</span>)}
           {cells.map((day, index) => {
-            if (day === null) return <span className="big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:var(--act-cell)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] is-empty" key={`empty-${index}`} />;
+            if (day === null) return <span className="big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] is-empty" key={`empty-${index}`} />;
             const dayEvents = eventsByDay.get(day) || [];
             const isToday = isCurrentMonth && day === today.getDate();
             // Non-working day per the one scheduling window (default Sat/Sun).
             const isWeekendDay = !isWorkingDay(new Date(year, month, day));
             return (
               <div
-                className={`big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:var(--act-cell)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] ${isToday ? ' is-today' : ''}${canManage && !isWeekendDay ? ' is-clickable' : ''}${isWeekendDay ? ' is-weekend' : ''}`}
+                className={`big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] ${isToday ? ' is-today' : ''}${canManage && !isWeekendDay ? ' is-clickable' : ''}${isWeekendDay ? ' is-weekend' : ''}`}
                 key={day}
                 data-calendar-day={day}
                 onDragOver={(event) => { if (canEdit && !isWeekendDay) event.preventDefault(); }}
@@ -437,15 +445,15 @@ export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEven
         const items = monthEvents.filter((item) => item.activity_type === type);
         return (
           <div className="[.activities-page_&]:mb-3 [.activities-page_&]:p-[14px] [.activities-page_&]:border [.activities-page_&]:border-[#2a3350] [.activities-page_&]:rounded-[14px] [.activities-page_&]:[background:#151c2c] [.activities-page_&_h3]:m-[0_0_8px] [.activities-page_&_h3]:text-[12px] [.activities-page_&_h3]:tracking-[.04em] [.activities-page_&_ul]:[list-style:none] [.activities-page_&_ul]:m-0 [.activities-page_&_ul]:p-0 [.activities-page_&_ul]:grid [.activities-page_&_ul]:gap-2 [.activities-page_&_li]:grid [.activities-page_&_li]:grid-cols-[40px_1fr] [.activities-page_&_li]:gap-[2px_12px] [.activities-page_&_li]:items-center [.activities-page_&_li_small]:col-[2] [.activities-page_&_li_small]:text-[#9ba5bd] [.activities-page_&_li_small]:text-[11px]" key={type}>
-            <h3>{titleCase(type)}</h3>
+            <h3 className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between">{titleCase(type)} <span className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:min-w-[22px] [.activities-page_&]:h-[20px] [.activities-page_&]:px-[7px] [.activities-page_&]:rounded-full [.activities-page_&]:bg-[rgba(123,136,255,0.16)] [.activities-page_&]:text-[#c5c9ff] [.activities-page_&]:text-[11px] [.activities-page_&]:font-[750]">{items.length}</span></h3>
             <div className="[.activities-page_&]:h-[1px] [.activities-page_&]:[background:#2a3350] [.activities-page_&]:mb-2" aria-hidden="true" />
             {items.length ? (
               <ul>
                 {items.map((item) => (
-                  <li key={item.id}>
-                    <span className="[.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:justify-center [.activities-page_&]:w-[40px] [.activities-page_&]:h-[40px] [.activities-page_&]:rounded-[50%] [.activities-page_&]:[background:#1a2133] [.activities-page_&]:border [.activities-page_&]:border-[#353e57] [.activities-page_&]:text-[12px] [.activities-page_&]:font-[700] [.activities-page_&]:text-[#c5c9ff]" aria-hidden="true">{initialsOf(item.person)}</span>
+                  <li key={item.id} role="button" tabIndex={0} onClick={() => onOpenEvent?.(item)} onKeyDown={(event) => { if (event.key === 'Enter') onOpenEvent?.(item); }} className="[.activities-page_&]:p-[10px_12px] [.activities-page_&]:rounded-[12px] [.activities-page_&]:border [.activities-page_&]:border-[#2a3350] [.activities-page_&]:bg-[#1b2336] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:border-color_.15s_ease,_background_.15s_ease] [.activities-page_&:hover]:border-[#7b88ff] [.activities-page_&:hover]:bg-[#212b43]">
+                    <span className="drawer-avatar flex-none w-[40px] h-[40px] grid place-items-center rounded-[50%] font-[700] text-[0.8rem] text-[#d4d9ff] [background:radial-gradient(circle_at_25%_20%,_rgba(123,_136,_255,_0.45),_transparent_70%),_rgba(123,_136,_255,_0.12)] border border-[rgba(123,_136,_255,_0.45)] [box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.08),_0_4px_12px_rgba(123,_136,_255,_0.18)]" aria-hidden="true">{initialsOf(item.person)}</span>
                     <span className="[.activities-page_&]:text-[15px] [.activities-page_&]:font-[700]">{item.person}</span>
-                    <small>{formatTimeRange(item)}</small>
+                    <small>{formatDate(item.starts_at)} · {formatTimeRange(item)}</small>
                   </li>
                 ))}
               </ul>
@@ -503,8 +511,11 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
 
   // Opened from the applicant pipeline (Set Schedule / Set Again): only that
   // applicant is listed and the picker is locked.
+  // Editing (Adjust) keeps the activity and applicant fixed: only date, time, duration and venue change.
+  const fixedPerson = Boolean(editing) || Boolean(lockedApplicantId);
   const eligible = (applicants || []).filter((item) => !blockReason(item, form.activity_type)
-    && (!lockedApplicantId || String(item.id) === String(lockedApplicantId)));
+    && (!lockedApplicantId || String(item.id) === String(lockedApplicantId))
+    && (!editing || String(item.id) === String(form.applicant_id)));
   const selectedMany = form.applicant_ids.map(byId).filter(Boolean);
 
   // Training sessions already booked at the chosen date/time (merge suggestion only).
@@ -579,10 +590,10 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
 
   return (
     <>
-      <Field label="Activity" required full hint="Activities go in order: Orientation, then Product Tasting, then Training.">
+      <Field label="Activity" required full hint="Activities go in order: Orientation/Tasting, then Training (after Admin verifies Orientation/Tasting).">
         <select
           required
-          disabled={Boolean(lockedApplicantId)}
+          disabled={fixedPerson}
           value={form.activity_type}
           onChange={(e) => changeActivity(e.target.value)}
         >
@@ -608,7 +619,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         <Field label="Applicant" full required hint={applicantHint}>
           <select
             required
-            disabled={!hasActivity || Boolean(lockedApplicantId)}
+            disabled={!hasActivity || fixedPerson}
             className={highlightApplicant ? 'later-2:[.activities-modal-root_select&]:border-[color:var(--act-accent,_#7b88ff)] later:[.activities-modal-root_select&]:[background-color:rgba(123,_136,_255,_0.16)] later:[.activities-modal-root_select&]:[box-shadow:0_0_0_2px_rgba(123,_136,_255,_0.45)] [.activities-modal-root_select&]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_select&]:font-[650] [.activities-modal-root_select&]:[animation:applicant-select-blink_0.8s_ease-in-out_4] motion-reduce:later:[.activities-modal-root_select&]:[animation:none]' : undefined}
             value={form.applicant_id}
             onChange={(e) => changeApplicant(e.target.value)}
@@ -708,7 +719,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
           ) : (
             <span className="muted-note text-muted text-[8px] leading-[1.6]">No applicants selected yet.</span>
           )}
-          <p className="font-[700] text-[#39ffb0]" role="status">{selectedMany.length}/{CAPACITY[form.activity_type] || 0}</p>
+          <p className="font-[700] text-[#39ffb0]" role="status">{occupancyLabel(selectedMany.length, CAPACITY[form.activity_type] || 0)}</p>
         </Field>
       )}
     </>
@@ -760,6 +771,8 @@ export default function Activities() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [activityFilter, setActivityFilter] = useState('');
+  // Off by default: fully done people (both activities done) leave the table; on brings them back.
+  const [showCompleted, setShowCompleted] = useState(false);
   // Page for the "All activities" list inside the read panel (8 rows per page).
   const [activityPage, setActivityPage] = useState(1);
 
@@ -799,15 +812,16 @@ export default function Activities() {
   const preselectHandled = useRef(false);
 
   const remote = useRemote(async () => {
-    const [groups, table, applicants] = await Promise.all([
+    const [groups, table, applicants, brands] = await Promise.all([
       // Full history: the read panel, calendar and deep links still need people
-      // who already finished all three tracked activities.
+      // who already finished both tracked activities.
       api.get('/activities/grouped', { include_completed: 1 }),
       // Data panel list: the backend already excludes completed applicants.
       api.get('/activities/grouped'),
       ['admin', 'sales'].includes(role) ? api.get('/applicants', { per_page: 100 }) : Promise.resolve({ data: [] }),
+      role === 'sales' ? api.get('/brands').catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
     ]);
-    return { groups: groups.data, tableGroups: table.data, applicants: applicants.data };
+    return { groups: groups.data, tableGroups: table.data, applicants: applicants.data, brands: brands.data || [] };
   }, [role]);
 
   const groups = useMemo(() => remote.data?.groups || [], [remote.data?.groups]);
@@ -825,14 +839,19 @@ export default function Activities() {
   // Rows the backend returned for the Data panel. Completed applicants are
   // already absent here, so counts and pagination never include hidden rows.
   const tableSource = useMemo(
-    () => (remote.data?.tableGroups || []).map((group) => ({ ...group, current: currentActivity(group) })),
-    [remote.data?.tableGroups],
+    () => tableRows({ tableGroups: remote.data?.tableGroups || [], allGroups: remote.data?.groups || [], showCompleted, isArchived: isGroupArchived })
+      .map((group) => ({ ...group, current: currentActivity(group) })),
+    [remote.data?.tableGroups, remote.data?.groups, showCompleted],
+  );
+  const hiddenCompleted = useMemo(
+    () => completedCount({ tableGroups: remote.data?.tableGroups || [], allGroups: remote.data?.groups || [], isArchived: isGroupArchived }),
+    [remote.data?.tableGroups, remote.data?.groups],
   );
 
   // People shown in the "Schedule per person" table.
   // - Archived applicants leave this table right away (they live in the
   //   Applicant pipeline's Archive section and Admin settings, and can be restored there).
-  // - Someone who finished all three tracked activities is already filtered by
+  // - Someone who finished both tracked activities is already filtered by
   //   the backend, so new completions disappear on the next reload.
   const tableGroups = useMemo(
     () => tableSource.filter((group) => !isGroupArchived(group)
@@ -1161,7 +1180,12 @@ export default function Activities() {
         body.append('actual_started_at', fromManilaInput(completeForm.actual_started_at));
         body.append('handler_name', completeForm.handler_name.trim());
         body.append('result_notes', completeForm.result_notes.trim());
-        if (completeForm.proof) body.append('proof', completeForm.proof);
+        if (completing.activity_type === 'orientation') {
+          completeForm.attendance.forEach((file) => body.append('attendance', file));
+          completeForm.brand_docs.forEach((file) => body.append('brand_document', file));
+          body.append('selected_brand_id', completeForm.selected_brand_id);
+          body.append('keep_document_ids', completeForm.saved.map((doc) => doc.id).join(','));
+        } else if (completeForm.proof) body.append('proof', completeForm.proof);
       } else {
         body.append('no_show_reason', completeForm.no_show_reason.trim());
       }
@@ -1347,8 +1371,8 @@ export default function Activities() {
 
       {/* Unified toolbar: the view tabs, the search field and the activity filter
           all live inside one bordered box (same structure as Applicant pipeline). */}
-      <div className="unified-toolbar-container flex items-center flex-nowrap gap-[10px] w-full [box-sizing:border-box] m-0 p-[10px_14px] border border-[#252b3b] rounded-[14px] [background:#101421] max-[721px]:later:flex-wrap max-[721px]:later:gap-2 max-[721px]:later:p-[8px_10px] max-[721px]:later:rounded-[12px] [.activities-page_&]:m-0">
-        <div className="flex items-center flex-[0_1_auto] min-w-0 gap-[2px] p-1 overflow-x-auto border border-[#1f2638] rounded-[10px] [background:#0b0f19] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>button]:flex-[0_0_auto] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-[7px] [&>button]:min-h-[34px] [&>button]:p-[7px_15px] later-2:[&>button]:border later-2:[&>button]:border-transparent later-2:[&>button]:rounded-[8px] [&>button]:[background:transparent] [&>button]:text-[#8a94a6] [&>button]:[font-family:inherit] [&>button]:[font-style:inherit] later-2:[&>button]:text-[13px] later-2:[&>button]:font-[600] later:[&>button]:leading-[1.2] [&>button]:whitespace-nowrap later:[&>button]:cursor-pointer [&>button]:[transition:background_.15s_ease,_color_.15s_ease,_border-color_.15s_ease] [&>button:hover:not(.active):not([aria-selected='true'])]:text-[#d7ddf5] [&>button:hover:not(.active):not([aria-selected='true'])]:[background:rgba(255,_255,_255,_.04)] [&>button:hover:not(.active):not([aria-selected='true'])]:border-transparent [&>button.active]:[background:#252e42] [&>button.active]:text-[#fff] [&>button.active]:font-[600] [&>button.active]:border-transparent [&>button.active]:[box-shadow:none] later:[&>button[aria-selected='true']]:[background:#252e42] [&>button[aria-selected='true']]:text-[#fff] [&>button[aria-selected='true']]:font-[600] [&>button[aria-selected='true']]:border-transparent [&>button[aria-selected='true']]:[box-shadow:none] later:[&>button:focus-visible]:[outline:2px_solid_#8175ff] later:[&>button:focus-visible]:[outline-offset:2px] [&>button_svg]:flex-[0_0_auto] [&>button_svg]:text-[12px] max-[721px]:later:flex-[1_1_100%]" role="group" aria-label="Schedule view">
+      <div className="unified-toolbar-container flex items-center flex-nowrap gap-[10px] w-full [box-sizing:border-box] m-0 p-[10px_14px] border border-[#252b3b] rounded-[14px] [background:#101421] light:border-line light:[background:var(--panel)] max-[721px]:later:flex-wrap max-[721px]:later:gap-2 max-[721px]:later:p-[8px_10px] max-[721px]:later:rounded-[12px] [.activities-page_&]:m-0">
+        <div className="flex items-center flex-[0_1_auto] min-w-0 gap-[2px] p-1 overflow-x-auto border border-[#1f2638] rounded-[10px] [background:#0b0f19] light:border-line light:[background:var(--panel-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>button]:flex-[0_0_auto] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-[7px] [&>button]:min-h-[34px] [&>button]:p-[7px_15px] later-2:[&>button]:border later-2:[&>button]:border-transparent later-2:[&>button]:rounded-[8px] [&>button]:[background:transparent] [&>button]:text-[#8a94a6] light:[&>button]:text-muted [&>button]:[font-family:inherit] [&>button]:[font-style:inherit] later-2:[&>button]:text-[13px] later-2:[&>button]:font-[600] later:[&>button]:leading-[1.2] [&>button]:whitespace-nowrap later:[&>button]:cursor-pointer [&>button]:[transition:background_.15s_ease,_color_.15s_ease,_border-color_.15s_ease] [&>button:hover:not(.active):not([aria-selected='true'])]:text-[#d7ddf5] light:[&>button:hover:not(.active):not([aria-selected='true'])]:text-text [&>button:hover:not(.active):not([aria-selected='true'])]:[background:rgba(255,_255,_255,_.04)] [&>button:hover:not(.active):not([aria-selected='true'])]:border-transparent [&>button.active]:[background:#252e42] light:[&>button.active]:[background:var(--active)] [&>button.active]:text-[#fff] light:[&>button.active]:text-accent-text [&>button.active]:font-[600] [&>button.active]:border-transparent [&>button.active]:[box-shadow:none] later:[&>button[aria-selected='true']]:[background:#252e42] light:[&>button[aria-selected='true']]:[background:var(--active)] [&>button[aria-selected='true']]:text-[#fff] light:[&>button[aria-selected='true']]:text-accent-text [&>button[aria-selected='true']]:font-[600] [&>button[aria-selected='true']]:border-transparent [&>button[aria-selected='true']]:[box-shadow:none] later:[&>button:focus-visible]:[outline:2px_solid_#8175ff] later:[&>button:focus-visible]:[outline-offset:2px] [&>button_svg]:flex-[0_0_auto] [&>button_svg]:text-[12px] max-[721px]:later:flex-[1_1_100%]" role="group" aria-label="Schedule view">
           <button type="button" className={view === 'table' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} onClick={() => changeView('table')} aria-pressed={view === 'table'}>
             <FaTableList aria-hidden="true" /> Table
           </button>
@@ -1373,6 +1397,10 @@ export default function Activities() {
                 {trackedTypes.map((type) => <option key={type} value={type}>{titleCase(type)}</option>)}
               </select>
             </div>
+            <label className="inline-flex items-center gap-2 flex-none whitespace-nowrap text-[13px] text-muted cursor-pointer" title="People with both activities done are hidden from this table">
+              <input type="checkbox" checked={showCompleted} onChange={(event) => { setPage(1); setShowCompleted(event.target.checked); }} />
+              Show completed{hiddenCompleted ? ` (${hiddenCompleted})` : ''}
+            </label>
           </>
         )}
 
@@ -1478,10 +1506,10 @@ export default function Activities() {
                                       onClick={() => setAgain(group, setAgainType)}
                                       title={`Schedule the next step: ${titleCase(setAgainType)}`}
                                     >
-                                      <FaRotateRight aria-hidden="true" /> Set Again · {titleCase(setAgainType)}
+                                      <FaRotateRight aria-hidden="true" /> Set again – {titleCase(setAgainType)}
                                     </button>
                                   ) : finishedAll ? (
-                                    // Orientation, Product tasting and Training are all done:
+                                    // Orientation/Tasting and Training are both done:
                                     // no more scheduling, go back to the applicant pipeline.
                                     <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.activities-page_.row-actions_&]:inline-flex [.activities-page_.row-actions_&]:items-center [.activities-page_.row-actions_&]:gap-2 [.activities-page_.row-actions_&]:whitespace-nowrap" onClick={() => navigate(APPLICANTS_ROUTE)}>
                                       <FaArrowLeft aria-hidden="true" /> Back to Status
@@ -1509,7 +1537,18 @@ export default function Activities() {
                                             result_notes: '',
                                             no_show_reason: '',
                                             proof: null,
+                                            attendance: [],
+                                            brand_docs: [],
+                                            saved: [],
+                                            selected_brand_id: '',
                                           });
+                                          // A returned Orientation/Tasting: the files already sent can be kept.
+                                          if (activity.activity_type === 'orientation' && activity.review_status === 'returned') {
+                                            api.get(`/activities/${activity.id}`).then((res) => {
+                                              const current = (res.data?.proof_documents || []).filter((doc) => !doc.replaced_at);
+                                              setCompleteForm((f) => (f ? { ...f, saved: current, selected_brand_id: res.data?.selected_brand_id ? String(res.data.selected_brand_id) : f.selected_brand_id } : f));
+                                            }).catch(() => {});
+                                          }
                                         }}
                                       >
                                         Complete
@@ -1699,9 +1738,48 @@ export default function Activities() {
                 <Field label="Notes" full required hint="At least 10 characters: attendance, feedback, next steps.">
                   <textarea required minLength="10" value={completeForm.result_notes} onChange={(e) => setCompleteForm({ ...completeForm, result_notes: e.target.value })} placeholder="What happened during the activity." />
                 </Field>
-                <Field label="Attendance proof" full required hint="Sign-in sheet or photo (PDF, JPG or PNG).">
-                  <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setCompleteForm({ ...completeForm, proof: e.target.files?.[0] || null })} />
-                </Field>
+                {completing.activity_type === 'orientation' ? (
+                  <>
+                    <RequirementFileDrop
+                      label="Attendance proof (1–10 files)"
+                      required
+                      multiple
+                      replaceable
+                      max={10}
+                      accept={PROOF_ACCEPT}
+                      validate={proofProblem}
+                      hint="Sign-in sheet or photos of the session. PDF, JPG or PNG, up to 10 MB each."
+                      files={completeForm.attendance}
+                      onChange={(files) => setCompleteForm((f) => ({ ...f, attendance: files }))}
+                      saved={completeForm.saved.filter((doc) => doc.type === 'attendance_proof')}
+                      onSavedChange={(kept) => setCompleteForm((f) => ({ ...f, saved: [...f.saved.filter((doc) => doc.type !== 'attendance_proof'), ...kept] }))}
+                    />
+                    <RequirementFileDrop
+                      label="Brand selection document (1–2 files)"
+                      required
+                      multiple
+                      replaceable
+                      max={2}
+                      accept={PROOF_ACCEPT}
+                      validate={proofProblem}
+                      hint="The signed brand selection form. PDF, JPG or PNG, up to 10 MB each."
+                      files={completeForm.brand_docs}
+                      onChange={(files) => setCompleteForm((f) => ({ ...f, brand_docs: files }))}
+                      saved={completeForm.saved.filter((doc) => doc.type === 'brand_selection')}
+                      onSavedChange={(kept) => setCompleteForm((f) => ({ ...f, saved: [...f.saved.filter((doc) => doc.type !== 'brand_selection'), ...kept] }))}
+                    />
+                    <Field label="Selected brand" full required hint="Admin sets the applicant's brand to this one when verifying.">
+                      <select required value={completeForm.selected_brand_id} onChange={(e) => setCompleteForm({ ...completeForm, selected_brand_id: e.target.value })}>
+                        <option value="">Choose the brand…</option>
+                        {(remote.data?.brands || []).map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                      </select>
+                    </Field>
+                  </>
+                ) : (
+                  <Field label="Attendance proof" full required hint="Sign-in sheet or photo (PDF, JPG or PNG).">
+                    <input type="file" required accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setCompleteForm({ ...completeForm, proof: e.target.files?.[0] || null })} />
+                  </Field>
+                )}
               </>
             ) : (
               <Field label="No Show reason" full required hint="At least 5 characters. Use Set Again afterwards to reschedule this activity.">
@@ -1886,7 +1964,7 @@ export default function Activities() {
 
       {view === 'table' && (
         <p className="muted-note text-muted text-[8px] leading-[1.6] [.activities-page_&]:mt-[14px]">
-          <FaUsers aria-hidden="true" /> A person leaves this table only when all three activities are done, when Admin archives them, or when Admin cancels with zero completed activities.
+          <FaUsers aria-hidden="true" /> {TABLE_FOOTER}
         </p>
       )}
     </div>

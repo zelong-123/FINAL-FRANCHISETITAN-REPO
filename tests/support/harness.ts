@@ -41,8 +41,7 @@ export async function setup() {
   await linkSeedUsers(db, auth, PASSWORD);
   const files = memoryFiles();
   // Costing stays off like production; a test flips deps.costingEnabled to see the cost fields.
-  // The advanced payment features stay off like production; a test flips deps.paymentAdvanced.
-  const deps = { db, auth, files, costingEnabled: false, paymentAdvanced: false };
+  const deps = { db, auth, files, costingEnabled: false };
   const app = createApp(deps);
   let ip = 0;
 

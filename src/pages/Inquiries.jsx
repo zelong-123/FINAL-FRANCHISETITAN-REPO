@@ -13,6 +13,9 @@ import { can } from '../lib/roleAccess';
 import RecordCode from '../components/RecordCode';
 import FollowUpLog from '../components/FollowUpLog';
 import { downloadCsv, downloadPdf } from '../lib/export';
+import LocationPicker from '../components/LocationPicker';
+import { locationInput, locationPlain } from '../lib/locations';
+import LocationValue from '../components/LocationValue';
 
 const initialForm = {
   first_name: '',
@@ -22,8 +25,8 @@ const initialForm = {
   phone: '',
   viber_number: '',
   preferred_brand_id: '', // shown to users as "Concept"
-  current_city: '',
-  preferred_franchise_location: '',
+  residence_location: {},  // Province -> City/Municipality -> Barangay -> Street (all optional)
+  preferred_location: {},  // Province -> City/Municipality -> Barangay/area (all optional)
   remarks: '',
 };
 
@@ -372,8 +375,8 @@ export default function Inquiries() {
       phone: digitsOnly(inquiry.phone),
       viber_number: digitsOnly(inquiry.viber_number),
       preferred_brand_id: String(inquiry.preferred_brand_id ?? inquiry.preferred_brand?.id ?? ''),
-      current_city: inquiry.current_city || '',
-      preferred_franchise_location: inquiry.preferred_franchise_location || '',
+      residence_location: inquiry.residence_location || {},
+      preferred_location: inquiry.preferred_location || {},
       remarks: inquiry.remarks || '',
     });
     setEditingId(inquiry.id);
@@ -422,8 +425,11 @@ export default function Inquiries() {
   const postInquiry = async (duplicateReasonText = null) => {
     const firstName = form.first_name.trim();
     const lastName = form.last_name.trim();
+    const { residence_location: residence, preferred_location: preferred, ...fields } = form;
     const payload = {
-      ...form,
+      ...fields,
+      residence_location: locationInput(residence),
+      preferred_location: locationInput(preferred),
       first_name: firstName,
       last_name: lastName,
       // Kept so the existing backend validation on lead_name keeps working.
@@ -447,8 +453,11 @@ export default function Inquiries() {
     await remote.reload();
   };
 
-  const submitCreate = async (event) => {
-    event.preventDefault();
+  // "No preferred franchise location yet?" — asked when saving without a City/Municipality.
+  const [askNoPreferred, setAskNoPreferred] = useState(null); // 'form' | 'drawer'
+
+  const submitCreate = async (event, confirmedNoLocation = false) => {
+    event?.preventDefault();
     if (saving) return;
     setActionError('');
     setSuccess('');
@@ -456,6 +465,10 @@ export default function Inquiries() {
     const validationError = validateForm();
     if (validationError) {
       setActionError(validationError);
+      return;
+    }
+    if (!confirmedNoLocation && !form.preferred_location?.city_code) {
+      setAskNoPreferred('form');
       return;
     }
 
@@ -533,7 +546,7 @@ export default function Inquiries() {
       email: current.email.trim() ? current.email : (row.email || ''),
       phone: current.phone.trim() ? current.phone : digitsOnly(row.phone),
       viber_number: current.viber_number.trim() ? current.viber_number : digitsOnly(row.viber_number),
-      current_city: current.current_city.trim() ? current.current_city : (row.current_city || ''),
+      residence_location: current.residence_location?.city_code ? current.residence_location : (row.residence_location || {}),
     }));
     setSuggestField(null);
     setSuggestions([]);
@@ -561,7 +574,7 @@ export default function Inquiries() {
     return (
       <ul className="absolute top-[calc(100%_+_4px)] left-0 right-0 z-20 m-0 p-1 [list-style:none] max-h-[232px] overflow-y-auto [background:#0d1220] border border-[#1f2842] rounded-[10px]" role="listbox" aria-label="Existing contacts">
         {suggestions.map((row, index) => {
-          const details = [row.phone, row.email, row.current_city].filter(Boolean).join(' · ');
+          const details = [row.phone, row.email, locationPlain(row.residence_location, row.current_city)].filter(Boolean).join(' · ');
           return (
             <li
               key={row.id}
@@ -630,9 +643,10 @@ export default function Inquiries() {
         all.push(...(result.data || []));
         if (!result.meta || p >= Number(result.meta.last_page || 1)) break;
       }
-      const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
+      const headers = ['Lead ID', 'Name', 'Email', 'Phone', 'Concept', 'Current residence', 'Preferred franchise location', 'Source', 'Inquiry date', 'Status', 'Days in status', 'Overdue', 'Follow-ups', 'Next follow-up'];
       const rows = all.map((r) => [
-        r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '', titleCase(r.source || ''),
+        r.lead_code || '', leadDisplayName(r), r.email || '', r.phone || '', r.preferred_brand?.name || '',
+        locationPlain(r.residence_location, r.current_city), locationPlain(r.preferred_location, r.preferred_franchise_location, r.no_preferred_location), titleCase(r.source || ''),
         r.inquiry_date ? formatDate(r.inquiry_date) : '', titleCase(r.status || ''), r.days_in_status ?? '', r.overdue ? 'Yes' : 'No',
         r.follow_up_count ?? 0, r.next_follow_up_at ? formatDate(r.next_follow_up_at, true) : '',
       ]);
@@ -835,7 +849,7 @@ export default function Inquiries() {
       phone: digitsOnly(shown.phone),
       email: shown.email || '',
       preferred_brand_id: String(shown.preferred_brand_id ?? shown.preferred_brand?.id ?? ''),
-      preferred_franchise_location: shown.preferred_franchise_location || '',
+      preferred_location: shown.preferred_location || {},
       remarks: shown.remarks || '',
     });
     setDrawerError('');
@@ -853,7 +867,7 @@ export default function Inquiries() {
     setDrawerError('');
   }, [selectedId]);
 
-  const saveDrawerEdit = async () => {
+  const saveDrawerEdit = async (confirmedNoLocation = false) => {
     if (!shown || !drawerForm || drawerSaving) return;
     const f = drawerForm;
     if (!f.first_name.trim() || !f.last_name.trim()) {
@@ -868,6 +882,10 @@ export default function Inquiries() {
       setDrawerError('Please choose a concept (brand).');
       return;
     }
+    if (!confirmedNoLocation && !f.preferred_location?.city_code) {
+      setAskNoPreferred('drawer');
+      return;
+    }
     setDrawerSaving(true);
     setDrawerError('');
     setSuccess('');
@@ -877,14 +895,13 @@ export default function Inquiries() {
         source: shown.source,
         // For Viber leads the phone number is the Viber number, so keep them in sync.
         viber_number: shown.source === 'viber' ? (f.phone || null) : (shown.viber_number || null),
-        current_city: shown.current_city || '',
         first_name: f.first_name.trim(),
         last_name: f.last_name.trim(),
         lead_name: `${f.first_name.trim()} ${f.last_name.trim()}`.trim(),
         email: f.email.trim(),
         phone: f.phone,
         preferred_brand_id: f.preferred_brand_id ? Number(f.preferred_brand_id) : null,
-        preferred_franchise_location: f.preferred_franchise_location.trim(),
+        preferred_location: locationInput(f.preferred_location),
         remarks: f.remarks,
       });
       setDrawerEditing(false);
@@ -1177,7 +1194,7 @@ export default function Inquiries() {
       <ModalPortal>
         <aside
           ref={drawerRef}
-          className={`inquiry-drawer [--drawer-bg:#0a0e18] [--drawer-border:#1a2133] [--drawer-text:#e6e9f2] [--drawer-muted:#8590a8] [--drawer-accent:#7b88ff] [--drawer-accent-2:#38bdf8] fixed top-[var(--drawer-top,_var(--header-height,_76px))] right-0 bottom-0 z-40 w-[min(440px,_100vw)] flex flex-col [background:radial-gradient(circle_at_100%_0%,_color-mix(in_srgb,_var(--drawer-accent)_16%,_transparent),_transparent_22%),_radial-gradient(circle_at_100%_100%,_color-mix(in_srgb,_var(--drawer-accent-2)_10%,_transparent),_transparent_20%),_var(--drawer-bg)] text-[color:var(--drawer-text)] [border-left:1px_solid_var(--drawer-border)] [box-shadow:-24px_0_48px_rgba(0,_0,_0,_0.35)] [transform:translate3d(100%,_0,_0)] [visibility:hidden] [will-change:transform] [transition:transform_0.5s_cubic-bezier(0.32,_0.72,_0,_1),_visibility_0s_linear_0.5s] [&.open]:[transform:translate3d(0,_0,_0)] [&.open]:[visibility:visible] [&.open]:[transition-delay:0s] motion-reduce:later:[transition:none] ${selected ? ' open' : ''}`}
+          className={`inquiry-drawer [--drawer-bg:#0a0e18] [--drawer-border:#1a2133] [--drawer-text:#e6e9f2] [--drawer-muted:#8590a8] [--drawer-accent:#7b88ff] [--drawer-accent-2:#38bdf8] light:[--drawer-bg:#ffffff] light:[--drawer-border:#dfe5f0] light:[--drawer-text:#172033] light:[--drawer-muted:#5f6b84] light:[--drawer-accent:#4869eb] light:[--drawer-accent-2:#7654dd] fixed top-[var(--drawer-top,_var(--header-height,_76px))] right-0 bottom-0 z-40 w-[min(440px,_100vw)] flex flex-col [background:radial-gradient(circle_at_100%_0%,_color-mix(in_srgb,_var(--drawer-accent)_16%,_transparent),_transparent_22%),_radial-gradient(circle_at_100%_100%,_color-mix(in_srgb,_var(--drawer-accent-2)_10%,_transparent),_transparent_20%),_var(--drawer-bg)] text-[color:var(--drawer-text)] [border-left:1px_solid_var(--drawer-border)] [box-shadow:-24px_0_48px_rgba(0,_0,_0,_0.35)] light:[box-shadow:-24px_0_48px_rgba(26,_42,_75,_0.14)] [transform:translate3d(100%,_0,_0)] [visibility:hidden] [will-change:transform] [transition:transform_0.5s_cubic-bezier(0.32,_0.72,_0,_1),_visibility_0s_linear_0.5s] [&.open]:[transform:translate3d(0,_0,_0)] [&.open]:[visibility:visible] [&.open]:[transition-delay:0s] motion-reduce:later:[transition:none] ${selected ? ' open' : ''}`}
           aria-label="Inquiry details"
           aria-hidden={!selected}
         >
@@ -1190,14 +1207,14 @@ export default function Inquiries() {
           {shown && (
             <>
               <header className="flex-none flex items-center gap-4 p-[24px_20px_20px_28px] [border-bottom:1px_solid_var(--drawer-border)] [background:linear-gradient(180deg,_rgba(123,_136,_255,_0.08),_transparent)] [&_h2]:m-0 later:[&_h2]:text-[1.2rem] [&_h2]:leading-[1.25] [&_h2]:[overflow-wrap:anywhere] later:[&_p]:m-[4px_0_0] later:[&_p]:text-[0.85rem] later:[&_p]:text-[color:var(--drawer-muted)] max-[521px]:later:p-[18px_14px_16px_18px] max-[521px]:later:gap-3">
-                <span className="drawer-avatar flex-none w-[54px] h-[54px] grid place-items-center rounded-[50%] font-[700] text-[1.05rem] text-[#d4d9ff] [background:radial-gradient(circle_at_25%_20%,_color-mix(in_srgb,_var(--drawer-accent)_45%,_transparent),_transparent_70%),_color-mix(in_srgb,_var(--drawer-accent-2)_12%,_transparent)] border border-[rgba(123,_136,_255,_0.45)] [box-shadow:0_0_0_4px_rgba(123,_136,_255,_0.08),_0_6px_18px_rgba(123,_136,_255,_0.18)]" aria-hidden="true">{initialsOf(shownName)}</span>
+                <span className="drawer-avatar flex-none w-[54px] h-[54px] grid place-items-center rounded-[50%] font-[700] text-[1.05rem] text-[#d4d9ff] light:text-[#3e5fd3] [background:radial-gradient(circle_at_25%_20%,_color-mix(in_srgb,_var(--drawer-accent)_45%,_transparent),_transparent_70%),_color-mix(in_srgb,_var(--drawer-accent-2)_12%,_transparent)] border border-[rgba(123,_136,_255,_0.45)] light:border-[rgba(72,_105,_235,_0.35)] [box-shadow:0_0_0_4px_rgba(123,_136,_255,_0.08),_0_6px_18px_rgba(123,_136,_255,_0.18)]" aria-hidden="true">{initialsOf(shownName)}</span>
                 <div className="min-w-0 flex-[1_1_auto]">
                   <h2>{shownName}</h2>
                   <LeadIds inquiry={shown} />
                 </div>
                 <div className="flex-none ml-auto flex items-center gap-2">
                   {canEdit && !shown.archived_at && !drawerEditing && (
-                    <button type="button" className="flex-none inline-flex items-center gap-[6px] h-[34px] p-[0_12px] rounded-[8px] [border:1px_solid_var(--drawer-border)] [background:transparent] text-[#fde68a] text-[0.85rem] cursor-pointer [transition:background-color_0.2s_ease,_border-color_0.2s_ease] hover:[background:rgba(253,_230,_138,_0.08)] hover:border-[rgba(253,_230,_138,_0.4)] focus-visible:[outline:2px_solid_var(--drawer-accent)] focus-visible:[outline-offset:2px]" onClick={startDrawerEdit} title="Edit inquiry">
+                    <button type="button" className="flex-none inline-flex items-center gap-[6px] h-[34px] p-[0_12px] rounded-[8px] [border:1px_solid_var(--drawer-border)] [background:transparent] text-[#fde68a] light:text-[#8a5a00] text-[0.85rem] cursor-pointer [transition:background-color_0.2s_ease,_border-color_0.2s_ease] hover:[background:rgba(253,_230,_138,_0.08)] light:hover:[background:rgba(138,_90,_0,_0.08)] hover:border-[rgba(253,_230,_138,_0.4)] focus-visible:[outline:2px_solid_var(--drawer-accent)] focus-visible:[outline-offset:2px]" onClick={startDrawerEdit} title="Edit inquiry">
                       <FaPen aria-hidden="true" /> Edit
                     </button>
                   )}
@@ -1207,7 +1224,7 @@ export default function Inquiries() {
                   </button>
                 </div>
               </header>
-              <div className="drawer-body flex-[1_1_auto] min-h-0 overflow-y-auto [overscroll-behavior:contain] p-[8px_28px_32px] [&_section]:p-[20px_0_6px] [&_section+section]:[border-top:1px_solid_var(--drawer-border)] [&_h3]:m-[0_0_14px] [&_h3]:text-[0.74rem] [&_h3]:font-[700] [&_h3]:tracking-[0.09em] [&_h3]:uppercase [&_h3]:text-[color:var(--drawer-muted)] [&_dl]:m-0 max-[521px]:later:pl-[18px] max-[521px]:later:pr-[18px]">
+              <div className="drawer-body flex-[1_1_auto] min-h-0 overflow-y-auto [overscroll-behavior:contain] p-[8px_28px_32px] [&_section]:p-[20px_0_6px] [&_section+section]:[border-top:1px_solid_var(--drawer-border)] [&_h3]:m-[0_0_14px] [&_h3]:text-[0.74rem] [&_h3]:font-[700] [&_h3]:tracking-[0.09em] [&_h3]:uppercase [&_h3]:text-[color:var(--drawer-muted)] [&_dl]:m-0 light:[&_a]:text-[#3e5fd3] max-[521px]:later:pl-[18px] max-[521px]:later:pr-[18px]">
                 {drawerEditing && drawerForm ? (
                   <section className="drawer-edit [&_label]:grid [&_label]:gap-[6px] [&_label]:mb-[14px] [&_label>span]:text-[0.8rem] [&_label>span]:font-[600] [&_label>span]:text-[color:var(--drawer-muted)] [&_input]:w-full [&_input]:[box-sizing:border-box] [&_select]:w-full [&_select]:[box-sizing:border-box] [&_textarea]:w-full [&_textarea]:[box-sizing:border-box] [&_textarea]:[resize:vertical] [.inquiry-drawer_.drawer-body_section&]:grid [.inquiry-drawer_.drawer-body_section&]:grid-cols-[repeat(2,_minmax(0,_1fr))] [.inquiry-drawer_.drawer-body_section&]:gap-x-[14px] [.inquiry-drawer_.drawer-body_section&]:gap-y-4 [.inquiry-drawer_.drawer-body_section&]:p-[20px_0_18px] [.inquiry-drawer_.drawer-body_section&>h3]:col-span-full [.inquiry-drawer_.drawer-body_section&>h3]:m-0 [.inquiry-drawer_.drawer-body_section&>div]:col-span-full [.inquiry-drawer_.drawer-body_section&>div]:m-0 [.inquiry-drawer_.drawer-body_section&>label]:grid [.inquiry-drawer_.drawer-body_section&>label]:col-span-full [.inquiry-drawer_.drawer-body_section&>label]:[align-content:start] [.inquiry-drawer_.drawer-body_section&>label]:gap-[7px] [.inquiry-drawer_.drawer-body_section&>label]:min-w-0 [.inquiry-drawer_.drawer-body_section&>label]:m-0 [.inquiry-drawer_.drawer-body_section&>label:nth-of-type(-n+4)]:col-[span_1] [.inquiry-drawer_.drawer-body_section&>label>span]:block [.inquiry-drawer_.drawer-body_section&>label>span]:text-[0.78rem] [.inquiry-drawer_.drawer-body_section&>label>span]:font-[650] [.inquiry-drawer_.drawer-body_section&>label>span]:tracking-[0.02em] [.inquiry-drawer_.drawer-body_section&>label>span]:text-[color:var(--drawer-muted,_#8590a8)] [.inquiry-drawer_.drawer-body_section&_input]:block [.inquiry-drawer_.drawer-body_section&_input]:w-full [.inquiry-drawer_.drawer-body_section&_input]:[box-sizing:border-box] [.inquiry-drawer_.drawer-body_section&_input]:min-h-[42px] [.inquiry-drawer_.drawer-body_section&_input]:p-[10px_12px] [.inquiry-drawer_.drawer-body_section&_input]:[border:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section&_input]:rounded-[8px] [.inquiry-drawer_.drawer-body_section&_input]:[background-color:rgba(255,_255,_255,_0.03)] [.inquiry-drawer_.drawer-body_section&_input]:text-[color:var(--drawer-text,_#e6e9f2)] [.inquiry-drawer_.drawer-body_section&_input]:[font-family:inherit] [.inquiry-drawer_.drawer-body_section&_input]:[font-weight:inherit] [.inquiry-drawer_.drawer-body_section&_input]:[font-style:inherit] [.inquiry-drawer_.drawer-body_section&_input]:text-[0.9rem] [.inquiry-drawer_.drawer-body_section&_input]:leading-[1.3] [.inquiry-drawer_.drawer-body_section&_input]:[color-scheme:dark] [.inquiry-drawer_.drawer-body_section&_input]:[transition:border-color_0.15s_ease,_box-shadow_0.15s_ease,_background-color_0.15s_ease] [.inquiry-drawer_.drawer-body_section&_select]:block [.inquiry-drawer_.drawer-body_section&_select]:w-full [.inquiry-drawer_.drawer-body_section&_select]:[box-sizing:border-box] [.inquiry-drawer_.drawer-body_section&_select]:min-h-[42px] [.inquiry-drawer_.drawer-body_section&_select]:p-[10px_12px] [.inquiry-drawer_.drawer-body_section&_select]:[border:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section&_select]:rounded-[8px] [.inquiry-drawer_.drawer-body_section&_select]:[background-color:rgba(255,_255,_255,_0.03)] [.inquiry-drawer_.drawer-body_section&_select]:text-[color:var(--drawer-text,_#e6e9f2)] [.inquiry-drawer_.drawer-body_section&_select]:[font-family:inherit] [.inquiry-drawer_.drawer-body_section&_select]:[font-weight:inherit] [.inquiry-drawer_.drawer-body_section&_select]:[font-style:inherit] [.inquiry-drawer_.drawer-body_section&_select]:text-[0.9rem] [.inquiry-drawer_.drawer-body_section&_select]:leading-[1.3] [.inquiry-drawer_.drawer-body_section&_select]:[color-scheme:dark] [.inquiry-drawer_.drawer-body_section&_select]:[transition:border-color_0.15s_ease,_box-shadow_0.15s_ease,_background-color_0.15s_ease] [.inquiry-drawer_.drawer-body_section&_textarea]:block [.inquiry-drawer_.drawer-body_section&_textarea]:w-full [.inquiry-drawer_.drawer-body_section&_textarea]:[box-sizing:border-box] [.inquiry-drawer_.drawer-body_section&_textarea]:p-[10px_12px] [.inquiry-drawer_.drawer-body_section&_textarea]:[border:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section&_textarea]:rounded-[8px] [.inquiry-drawer_.drawer-body_section&_textarea]:[background-color:rgba(255,_255,_255,_0.03)] [.inquiry-drawer_.drawer-body_section&_textarea]:text-[color:var(--drawer-text,_#e6e9f2)] [.inquiry-drawer_.drawer-body_section&_textarea]:[font-family:inherit] [.inquiry-drawer_.drawer-body_section&_textarea]:[font-weight:inherit] [.inquiry-drawer_.drawer-body_section&_textarea]:[font-style:inherit] [.inquiry-drawer_.drawer-body_section&_textarea]:text-[0.9rem] [.inquiry-drawer_.drawer-body_section&_textarea]:leading-[1.3] [.inquiry-drawer_.drawer-body_section&_textarea]:[color-scheme:dark] [.inquiry-drawer_.drawer-body_section&_textarea]:[transition:border-color_0.15s_ease,_box-shadow_0.15s_ease,_background-color_0.15s_ease] [.inquiry-drawer_.drawer-body_section&_select]:cursor-pointer later:[.inquiry-drawer_.drawer-body_section&_textarea]:min-h-[104px] [.inquiry-drawer_.drawer-body_section&_textarea]:[resize:vertical] [.inquiry-drawer_.drawer-body_section&_input::placeholder]:text-[color:var(--drawer-muted,_#8590a8)] [.inquiry-drawer_.drawer-body_section&_input::placeholder]:opacity-[0.7] [.inquiry-drawer_.drawer-body_section&_textarea::placeholder]:text-[color:var(--drawer-muted,_#8590a8)] [.inquiry-drawer_.drawer-body_section&_textarea::placeholder]:opacity-[0.7] [.inquiry-drawer_.drawer-body_section&_input:hover]:border-[rgba(123,_136,_255,_0.45)] [.inquiry-drawer_.drawer-body_section&_select:hover]:border-[rgba(123,_136,_255,_0.45)] [.inquiry-drawer_.drawer-body_section&_textarea:hover]:border-[rgba(123,_136,_255,_0.45)] [.inquiry-drawer_.drawer-body_section&_input:focus]:[outline:none] later:[.inquiry-drawer_.drawer-body_section&_input:focus]:border-[color:var(--drawer-accent,_#7b88ff)] [.inquiry-drawer_.drawer-body_section&_input:focus]:[box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.22)] [.inquiry-drawer_.drawer-body_section&_input:focus]:[background-color:rgba(123,_136,_255,_0.05)] [.inquiry-drawer_.drawer-body_section&_select:focus]:[outline:none] later:[.inquiry-drawer_.drawer-body_section&_select:focus]:border-[color:var(--drawer-accent,_#7b88ff)] [.inquiry-drawer_.drawer-body_section&_select:focus]:[box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.22)] [.inquiry-drawer_.drawer-body_section&_select:focus]:[background-color:rgba(123,_136,_255,_0.05)] [.inquiry-drawer_.drawer-body_section&_textarea:focus]:[outline:none] later:[.inquiry-drawer_.drawer-body_section&_textarea:focus]:border-[color:var(--drawer-accent,_#7b88ff)] [.inquiry-drawer_.drawer-body_section&_textarea:focus]:[box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.22)] [.inquiry-drawer_.drawer-body_section&_textarea:focus]:[background-color:rgba(123,_136,_255,_0.05)] max-[521px]:later:[.inquiry-drawer_.drawer-body_section&>label:nth-of-type(-n+4)]:col-span-full">
                     <h3>Edit details</h3>
@@ -1242,20 +1259,20 @@ export default function Inquiries() {
                         {brandOptions.map((brand) => <option key={brand.id} value={brand.id} style={{ color: brandColor(brand.name) }}>{brand.name}</option>)}
                       </select>
                     </label>
-                    <label>
-                      <span>Preferred franchise location</span>
-                      <input
-                        value={drawerForm.preferred_franchise_location}
-                        onChange={(e) => setDrawerForm({ ...drawerForm, preferred_franchise_location: e.target.value })}
-                      />
-                    </label>
+                    <h3>Preferred franchise location</h3>
+                    <LocationPicker
+                      value={drawerForm.preferred_location}
+                      onChange={(next) => setDrawerForm({ ...drawerForm, preferred_location: next })}
+                      labels={{ barangay: 'Barangay/area' }}
+                      barangayPlaceholder="Barangay/area (Optional)"
+                    />
                     <label>
                       <span>Remarks</span>
                       <textarea rows={4} value={drawerForm.remarks} onChange={(e) => setDrawerForm({ ...drawerForm, remarks: e.target.value })} />
                     </label>
                     <div className="flex justify-end gap-2 p-[6px_0_14px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:flex [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:justify-end [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:gap-[10px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:mt-1 [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:p-[16px_0_0] [.inquiry-drawer_.drawer-body_section.drawer-edit_&]:[border-top:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:min-h-[40px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:p-[0_18px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:rounded-[8px] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[font-family:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[font-style:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:[line-height:inherit] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:text-[0.88rem] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:font-[650] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button]:cursor-pointer [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[border:1px_solid_var(--drawer-border,_#1a2133)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[background:transparent] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:text-[color:var(--drawer-muted,_#b4bdd4)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button)]:[transition:background-color_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.05)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:border-[rgba(123,_136,_255,_0.45)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:not(.primary-button):hover:not(:disabled)]:text-[color:var(--drawer-text,_#e6e9f2)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:disabled]:opacity-[0.55] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:disabled]:cursor-not-allowed [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:focus-visible]:[outline:2px_solid_var(--drawer-accent,_#7b88ff)] [.inquiry-drawer_.drawer-body_section.drawer-edit_&_button:focus-visible]:[outline-offset:2px]">
                       <button type="button" onClick={cancelDrawerEdit} disabled={drawerSaving}>Cancel</button>
-                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={saveDrawerEdit} disabled={drawerSaving}>
+                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => saveDrawerEdit()} disabled={drawerSaving}>
                         {drawerSaving ? 'Saving…' : 'Save changes'}
                       </button>
                     </div>
@@ -1282,9 +1299,8 @@ export default function Inquiries() {
                       <h3>Franchise interest</h3>
                       <dl>
                         <DetailRow label="Concept">{shownConcept ? <BrandText name={shownConcept} /> : null}</DetailRow>
-                        <DetailRow label="Current city of residence">{shown.current_city}</DetailRow>
-                        <DetailRow label="Preferred franchise location">{shown.preferred_franchise_location}</DetailRow>
-                        {shown.address && <DetailRow label="Address (previous record)">{shown.address}</DetailRow>}
+                        <DetailRow label="Current residence"><LocationValue loc={shown.residence_location} legacy={shown.current_city || shown.address} /></DetailRow>
+                        <DetailRow label="Preferred franchise location"><LocationValue loc={shown.preferred_location} legacy={shown.preferred_franchise_location} noneMarked={shown.no_preferred_location} /></DetailRow>
                       </dl>
                     </section>
                   </>
@@ -1382,12 +1398,19 @@ export default function Inquiries() {
                   {brandOptions.map((brand) => <option key={brand.id} value={brand.id} style={{ color: brandColor(brand.name) }}>{brand.name}</option>)}
                 </select>
               </Field>
-              <Field label="Current city of residence">
-                <input value={form.current_city} onChange={(e) => setForm({ ...form, current_city: e.target.value })} />
-              </Field>
-              <Field label="Preferred franchise location">
-                <input value={form.preferred_franchise_location} onChange={(e) => setForm({ ...form, preferred_franchise_location: e.target.value })} />
-              </Field>
+              <h4 className="col-span-full m-[6px_0_0] text-[11px] font-[760] tracking-[.08em] uppercase text-text-secondary">Current residence</h4>
+              <LocationPicker
+                value={form.residence_location}
+                onChange={(next) => setForm((current) => ({ ...current, residence_location: next }))}
+                street
+              />
+              <h4 className="col-span-full m-[6px_0_0] text-[11px] font-[760] tracking-[.08em] uppercase text-text-secondary">Preferred franchise location</h4>
+              <LocationPicker
+                value={form.preferred_location}
+                onChange={(next) => setForm((current) => ({ ...current, preferred_location: next }))}
+                labels={{ barangay: 'Barangay/area' }}
+                barangayPlaceholder="Barangay/area (Optional)"
+              />
               {/* Logged By is never typed: it is the signed-in user, or the
                   person who encoded the record when editing. */}
               <Field label="Logged By" full>
@@ -1440,6 +1463,28 @@ export default function Inquiries() {
                 </div>
               )}
             </form>
+          </Modal>
+        </ModalPortal>
+      )}
+
+      {askNoPreferred && (
+        <ModalPortal>
+          <Modal
+            title="No preferred franchise location yet?"
+            onClose={() => setAskNoPreferred(null)}
+            size="small"
+            footer={(
+              <>
+                <button type="button" onClick={() => setAskNoPreferred(null)}>Go back</button>
+                <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760]"
+                  onClick={() => { const from = askNoPreferred; setAskNoPreferred(null); if (from === 'drawer') saveDrawerEdit(true); else submitCreate(null, true); }}>
+                  Yes, no location yet
+                </button>
+              </>
+            )}
+          >
+            <p className="m-0 text-[14px] leading-[1.6]">No preferred franchise location yet? The applicant can decide later.</p>
+            <p className="m-[8px_0_0] text-[13px] text-muted">It is saved as "No preferred location yet". Marketing or Sales can add it later.</p>
           </Modal>
         </ModalPortal>
       )}

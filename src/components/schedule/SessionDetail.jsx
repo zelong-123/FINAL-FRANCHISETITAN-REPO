@@ -92,7 +92,7 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
             <h3>{formatSessionRange(session.start_at, session.end_at)}</h3>
             <dl>
               <div><dt>Activity</dt><dd>{activityLabel(session.activity_type)}</dd></div>
-              <div><dt>Brand</dt><dd>{session.brand?.name || (session.activity_type === 'orientation' ? 'Any (Orientation)' : '—')}</dd></div>
+              <div><dt>Brand</dt><dd>{session.brand?.name || (session.activity_type === 'orientation' ? 'Any (Orientation/Tasting)' : '—')}</dd></div>
               <div><dt>Handler</dt><dd>{session.handler?.full_name || '—'}</dd></div>
               <div><dt>Venue</dt><dd>{session.venue || '—'}</dd></div>
               <div><dt>Applicants</dt><dd>{session.occupancy}</dd></div>

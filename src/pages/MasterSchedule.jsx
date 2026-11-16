@@ -16,7 +16,7 @@ import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
 
 /*
- * Master Schedule — every Orientation / Product Tasting / Training session on
+ * Master Schedule — every Orientation/Tasting and Training session on
  * one calendar (Month / Week / Day). Rule-based decision support: the form and
  * the session panel ask the backend what is allowed; nothing is merged,
  * cancelled or saved without the user's click and confirmation.

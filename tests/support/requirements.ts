@@ -10,6 +10,8 @@ const SAMPLE: Record<string, string> = {
   occupation: 'Restaurant manager', previous_experience: 'Ran a milk tea kiosk for two years.',
 };
 
+export const SAMPLE_LOCATION = { province_code: '1300000000', city_code: '1380200000', barangay: 'Talon Uno' };
+
 /** A complete, valid form for one requirement (every field + a file for every slot). */
 export function requirementForm(key: string, stage = 'qualification', overrides: Record<string, string | null> = {}): FormData {
   const def = requirementsOf(stage).find((r) => r.key === key);
@@ -18,7 +20,13 @@ export function requirementForm(key: string, stage = 'qualification', overrides:
   for (const field of def!.fields) {
     // An override of null leaves the field out; otherwise a sample value is used.
     const value = field.key in overrides ? overrides[field.key] : (SAMPLE[field.key] ?? 'Sample value');
-    if (value !== null) form.set(field.key, value);
+    if (value === null) continue;
+    if (field.type === 'location') {
+      // A PSGC location: Las Piñas City, Metro Manila (NCR), Barangay/St "Talon Uno".
+      for (const [k, v] of Object.entries(SAMPLE_LOCATION)) form.set(`${field.key}.${k}`, overrides[`${field.key}.${k}`] ?? v);
+      continue;
+    }
+    form.set(field.key, value);
   }
   for (const slot of def!.files) {
     if (overrides[slot.key] === null) continue;

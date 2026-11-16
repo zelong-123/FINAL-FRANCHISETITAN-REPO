@@ -20,6 +20,10 @@ import { acquireDayLocks, longDateTime, parseLocal, TRACKED_TYPES, VENUE_OPTIONS
 import { assertActivityAllowed, saveActivity } from '../services/schedule/activities.ts';
 import { assertAssignedSales, notifyAssignedSales, requireReason } from '../services/accountability.ts';
 import { scheduleJson } from './applicants.ts';
+import {
+  activityDocumentsSql, assertCount, assertUpload, ATTENDANCE_TYPE, BRAND_DOC_TYPE, currentDocuments, FILE_LIMITS, filesOf, isLegacyOrientation, keepIdsOf,
+  recordView, unviewedDocuments,
+} from '../services/orientationTasting.ts';
 
 export const activityRoutes = new Hono<AppEnv>();
 const MODEL = 'App\\Models\\ActivitySchedule';
@@ -173,7 +177,7 @@ async function resolveSessionKey(db: Db, v: Row, startsAt: Date, brandId: number
   if (!requested) return '';
   const found = await db.query(
     `select 1 from activity_schedules s where s.activity_type = $1 and s.starts_at = $2 and s.session_key = $3 and s.approval_status <> 'rejected'
-       and ($1 <> 'product_tasting' or exists (select 1 from applicants a where a.id = s.applicant_id and a.preferred_brand_id = $4::bigint)) limit 1`,
+       and $4::bigint is not distinct from $4::bigint limit 1`,
     [v.activity_type, startsAt, requested, brandId],
   );
   if (!found.length) fail('session_id', 'That session no longer exists at this date/time. Join another session or create a separate one.');
@@ -208,7 +212,7 @@ activityRoutes.post('/activities', staff, async (c) => {
     await rules.assertNoConflict(tx, applicantId, window.starts_at, window.ends_at);
     return saveActivity(tx, null, {
       applicant_id: applicantId, activity_type: v.activity_type, title: v.title, ...window, venue: v.venue ?? null, meeting_link: v.meeting_link ?? null,
-      assigned_to_user_id: v.assigned_to_user_id ?? null, session_key: sessionKey, participants: normalizeParticipants(v.participants ?? []), status: 'confirmed',
+      assigned_to_user_id: v.assigned_to_user_id ?? applicant.assigned_sales_user_id ?? null, session_key: sessionKey, participants: normalizeParticipants(v.participants ?? []), status: 'confirmed',
       scheduled_by_user_id: user.id, approval_status: roleName(c) === 'sales' ? 'pending_admin' : 'immediate',
     }, user);
   });
@@ -246,7 +250,7 @@ activityRoutes.post('/applicants/:applicant/activities/set-again', staff, async 
     await rules.assertNoConflict(tx, id, window.starts_at, window.ends_at);
     return saveActivity(tx, null, {
       applicant_id: id, activity_type: target, title: activityLabel(target), ...window, venue: v.venue ?? null, meeting_link: v.meeting_link ?? null,
-      participants: normalizeParticipants(v.participants ?? []), status: 'confirmed', assigned_to_user_id: v.assigned_to_user_id ?? null, scheduled_by_user_id: user.id,
+      participants: normalizeParticipants(v.participants ?? []), status: 'confirmed', assigned_to_user_id: v.assigned_to_user_id ?? locked.assigned_sales_user_id ?? null, scheduled_by_user_id: user.id,
       approval_status: isSales ? 'pending_admin' : 'immediate',
     }, user);
   });
@@ -263,7 +267,10 @@ activityRoutes.get('/activities/:activity', viewers, async (c) => {
   const a = await load(c);
   if (roleName(c) === 'sales' && a.applicant?.archived_at) abort(404, 'Record not found.');
   if (roleName(c) === 'franchisee' && a.applicant?.user_id !== c.get('user').id) abort(403, 'This action is unauthorized.');
-  return ok(c, await withPeople(db, a.id, 'full'));
+  // The proof files (with "viewed by me"): Admin and the assigned Sales user only.
+  const user = c.get('user');
+  const seesFiles = roleName(c) === 'admin' || (roleName(c) === 'sales' && Number(a.applicant?.assigned_sales_user_id ?? 0) === Number(user.id));
+  return ok(c, { ...(await withPeople(db, a.id, 'full')), proof_documents: seesFiles ? await proofDocuments(db, a.id, Number(user.id)) : null });
 });
 
 async function assertNoActiveType(db: Db, applicantId: number, type: string, ignoreId: number) {
@@ -325,10 +332,9 @@ activityRoutes.put('/activities/:activity/move', admin, adjust);
 
 const PROOF_MODEL = 'App\\Models\\ActivitySchedule';
 const PROOF_TYPE = 'attendance_proof';
-const proofDocuments = (db: Db, activityId: number) => db.query(
-  `select id, original_name, mime_type, size_bytes, created_at, replaced_at, (select u.full_name from users u where u.id = d.uploaded_by_user_id) as uploaded_by
-   from documents d where documentable_type = $1 and documentable_id = $2 and type = $3 order by id`, [PROOF_MODEL, activityId, PROOF_TYPE],
-);
+const proofDocuments = async (db: Db, activityId: number, userId: number) => (await db.query(
+  `select ${activityDocumentsSql('$2')} as docs from activity_schedules s where s.id = $1`, [activityId, userId],
+))[0]?.docs ?? [];
 
 /**
  * Sales completes an activity: never before its exact start time (server time), with either the
@@ -349,8 +355,10 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
   const now = new Date();
   if (now.getTime() < startsAt.getTime()) fail('complete', `Available on ${rules.availableLabel(startsAt)}.`);
 
-  const v = await validate(db, await readInput(c), {
+  const input = await readInput(c);
+  const v = await validate(db, input, {
     attended: ['required', 'in:yes,no,true,false,1,0'],
+    selected_brand_id: ['nullable', 'exists:brands,id'],
     actual_started_at: ['nullable', 'date'],
     handler_name: ['nullable', 'string', 'max:255'],
     result_notes: ['nullable', 'string', 'max:5000'],
@@ -360,6 +368,24 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
   const attended = ['yes', 'true', '1'].includes(String(v.attended));
   const type = activity.activity_type;
   const resubmitted = activity.review_status === 'returned';
+  // Orientation/Tasting: attendance proof (1–10), brand selection document (1–2) and the selected brand.
+  // On a resubmission, keep_document_ids lists the current files to keep; the others are replaced.
+  const orientation = attended && type === 'orientation' ? await (async () => {
+    if (!v.selected_brand_id) fail('selected_brand_id', 'Choose the selected brand.');
+    const uploads: Record<string, File[]> = {
+      [ATTENDANCE_TYPE]: [...filesOf(input, 'attendance'), ...(v.proof ? [v.proof as File] : [])],
+      [BRAND_DOC_TYPE]: filesOf(input, 'brand_document'),
+    };
+    for (const [docType, list] of Object.entries(uploads)) {
+      for (const file of list) await assertUpload(file, FILE_LIMITS[docType].field, FILE_LIMITS[docType].label);
+    }
+    const current = await currentDocuments(db, activity.id);
+    const keep = keepIdsOf(input);
+    if (keep.some((id) => !current.some((d) => Number(d.id) === id))) fail('keep_document_ids', 'Only files of this submission can be kept. Reload and try again.');
+    const kept = current.filter((d) => keep.includes(Number(d.id)));
+    for (const docType of [ATTENDANCE_TYPE, BRAND_DOC_TYPE]) assertCount(docType, kept.filter((d) => d.type === docType).length + uploads[docType].length);
+    return { uploads, kept, dropped: current.filter((d) => !keep.includes(Number(d.id))), brandId: Number(v.selected_brand_id) };
+  })() : null;
   let changes: Row;
   let notes: string;
   if (attended) {
@@ -368,14 +394,15 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
     // Compared to the minute: the form picks a minute, the schedule may carry seconds.
     if (actual.getTime() < Math.floor(startsAt.getTime() / 60000) * 60000) fail('actual_started_at', `The actual time cannot be before the scheduled start (${rules.availableLabel(startsAt)}).`);
     if (actual.getTime() > now.getTime()) fail('actual_started_at', 'The actual time cannot be in the future.');
-    const handler = String(v.handler_name ?? '').trim();
+    // Orientation/Tasting is run by the assigned Sales user: the handler defaults to them.
+    const handler = String(v.handler_name ?? '').trim() || (orientation ? String(user.full_name ?? '') : '');
     if (!handler) fail('handler_name', 'Enter who handled the activity.');
     notes = String(v.result_notes ?? '').trim();
     if (notes.length < 10) fail('result_notes', 'Write notes of at least 10 characters about what happened.');
-    if (!v.proof) fail('proof', 'Attach the attendance proof (sign-in sheet or photo).');
+    if (!orientation && !v.proof) fail('proof', 'Attach the attendance proof (sign-in sheet or photo).');
     changes = {
       status: 'completed', attended: true, actual_started_at: actual, handler_name: handler, result_notes: notes, no_show_reason: null,
-      ...(type === 'product_tasting' ? { tasted_brand_id: applicant?.preferred_brand_id ?? null } : {}),
+      ...(orientation ? { selected_brand_id: orientation.brandId } : {}),
     };
   } else {
     notes = requireReason(v.no_show_reason, 'no_show_reason', 'a No Show reason');
@@ -387,12 +414,19 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
   });
 
   const { saved, proof, replaced } = await db.tx(async (tx) => {
-    const previousProofs = attended ? await tx.query(
+    const previousProofs = orientation ? orientation.dropped : attended ? await tx.query(
       `select id, original_name, type from documents where documentable_type = $1 and documentable_id = $2 and type = $3 and replaced_at is null and removed_at is null`,
       [PROOF_MODEL, activity.id, PROOF_TYPE],
     ) : [];
-    const stored = attended ? await storeDocument(c, tx, v.proof, `activities/${activity.id}/proof`, { type: PROOF_MODEL, id: activity.id }, PROOF_TYPE) : null;
-    if (stored && previousProofs.length) {
+    const added: Row[] = [];
+    if (orientation) {
+      for (const [docType, list] of Object.entries(orientation.uploads)) {
+        for (const file of list) added.push(await storeDocument(c, tx, file, `activities/${activity.id}/${docType === BRAND_DOC_TYPE ? 'brand' : 'proof'}`, { type: PROOF_MODEL, id: activity.id }, docType));
+      }
+      if (previousProofs.length) await tx.query(`update documents set replaced_at = now() where id = any($1::bigint[])`, [`{${previousProofs.map((d) => d.id).join(',')}}`]);
+    }
+    const stored = attended && !orientation ? await storeDocument(c, tx, v.proof, `activities/${activity.id}/proof`, { type: PROOF_MODEL, id: activity.id }, PROOF_TYPE) : (added[0] ?? null);
+    if (stored && !orientation && previousProofs.length) {
       await tx.query(`update documents set replaced_at = now(), replaced_by_document_id = $1 where id = any($2::bigint[])`, [stored.id, `{${previousProofs.map((d) => d.id).join(',')}}`]);
     }
     const row = await saveActivity(tx, activity, changes, user);
@@ -404,8 +438,10 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
           new_values: {
             status: changes.status, attended, actual_started_at: attended ? rules.iso8601(changes.actual_started_at) : null, handler_name: changes.handler_name ?? null,
             scheduled_start: rules.iso8601(startsAt), resubmitted,
+            ...(orientation ? { selected_brand_id: orientation.brandId, attendance_files: orientation.kept.filter((d) => d.type === ATTENDANCE_TYPE).length + orientation.uploads[ATTENDANCE_TYPE].length,
+              brand_documents: orientation.kept.filter((d) => d.type === BRAND_DOC_TYPE).length + orientation.uploads[BRAND_DOC_TYPE].length } : {}),
           },
-          attachments: [fileRef(stored), ...previousProofs.map((d) => ({ ...fileRef(d), state: 'replaced' }))].filter(Boolean) as Row[],
+          attachments: [...(orientation ? added : [stored]).map(fileRef), ...previousProofs.map((d: Row) => ({ ...fileRef(d), state: 'replaced' }))].filter(Boolean) as Row[],
         });
     }
     return { saved: row, proof: stored, replaced: previousProofs };
@@ -414,10 +450,10 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
   if (applicant) {
     const what = attended ? `marked Complete with attendance proof${resubmitted ? ' (corrected and resubmitted)' : ''}` : `marked No Show: ${notes}`;
     await notifyRoles(db, ['admin'], 'applicant_activity_completed', attended ? 'Activity marked Complete' : 'Activity marked No Show',
-      `${activityLabel(type)} for ${applicant.applicant_code} was ${what}. Review the proof and mark it Attended or Return it.`, { applicant_id: applicant.id, activity_id: activity.id }, user);
+      `${activityLabel(type)} for ${applicant.applicant_code} was ${what}. ${orientation ? 'Open every file, then Verify or Return it.' : 'Review the proof and mark it Attended or Return it.'}`, { applicant_id: applicant.id, activity_id: activity.id }, user);
   }
   await audit(c, db, attended ? 'activity.completed' : 'activity.no_show', { type: MODEL, id: activity.id }, activity, { ...saved, proof_document_id: proof?.id ?? null, replaced_document_ids: replaced.map((d: Row) => d.id) });
-  return ok(c, { ...(await plain(db, activity.id)), proof_documents: await proofDocuments(db, activity.id) }, attended ? 'Activity completed — waiting for Admin to review the proof.' : 'Activity marked No Show. Use Set Again to reschedule it.');
+  return ok(c, { ...(await plain(db, activity.id)), proof_documents: await proofDocuments(db, activity.id, user.id) }, attended ? 'Activity completed — waiting for Admin to review the proof.' : 'Activity marked No Show. Use Set Again to reschedule it.');
 });
 
 /** Admin reviewed the proof and notes: Attended (the milestone is saved) — the second half of Done. */
@@ -432,12 +468,31 @@ activityRoutes.post('/activities/:activity/attended', admin, async (c) => {
   if (activity.review_status === 'accepted') return ok(c, await plain(db, activity.id), 'Already marked Attended.');
   const type = activity.activity_type;
   const key = TRACKED_ACTIVITY_MILESTONES[type];
-  if (!key) fail('activity_type', 'Only Orientation, Product Tasting and Training are tracked.');
+  if (!key) fail('activity_type', 'Only Orientation/Tasting and Training are tracked.');
   const index = ACTIVITY_ORDER.indexOf(type);
   if (index > 0) {
     const previous = ACTIVITY_ORDER[index - 1];
     if (!(await activityDone(db, applicant, previous))) fail('activity_type', `${activityLabel(previous)} must be Done before ${activityLabel(type)} can be marked Attended.`);
   }
+  // Orientation/Tasting (new flow): another Admin than the encoder, every current file opened since
+  // the latest submission, and a selected brand. Legacy (old flow, applicant past Scheduling) skips this.
+  const docs = type === 'orientation' ? await currentDocuments(db, activity.id) : [];
+  const newFlow = type === 'orientation' && !(isLegacyOrientation(activity, applicant) && !docs.some((d) => d.type === BRAND_DOC_TYPE));
+  if (newFlow) {
+    if (activity.status === 'completed' && !activity.attended) fail('status', 'Only an attended Orientation/Tasting can be verified.');
+    if (Number(activity.completion_submitted_by_user_id ?? 0) === Number(user.id)) fail('verify', 'You encoded this submission, so another Admin must verify it.');
+    if (!activity.selected_brand_id || !docs.some((d) => d.type === ATTENDANCE_TYPE) || !docs.some((d) => d.type === BRAND_DOC_TYPE)) {
+      fail('verify', 'This completion has no attendance proof, brand selection document or selected brand. Return it so Sales submits them.');
+    }
+    const unviewed = await unviewedDocuments(db, activity, user.id);
+    if (unviewed.length) fail('verify', `Open every submitted file before verifying. Not opened yet: ${unviewed.map((d) => d.original_name).join(', ')}.`);
+  }
+  const selectedBrand = newFlow ? Number(activity.selected_brand_id) : null;
+  const [brands] = selectedBrand ? await db.query(
+    `select (select name from brands where id = $1) as selected, (select name from brands where id = $2) as previous,
+       coalesce($3::bigint, (select i.preferred_brand_id from franchise_inquiries i where i.id = $4::bigint), $2::bigint) as inquiry_id`,
+    [selectedBrand, applicant.preferred_brand_id ?? null, applicant.inquiry_brand_id ?? null, applicant.inquiry_id ?? null],
+  ) : [null];
   const milestones = { ...(applicant.milestones ?? {}) };
   const details = { ...(applicant.milestone_details ?? {}) };
   const firstTime = !milestones[key];
@@ -451,13 +506,30 @@ activityRoutes.post('/activities/:activity/attended', admin, async (c) => {
     await tx.query(`update activity_schedules set review_status = 'accepted', reviewed_by_user_id = $1, reviewed_at = now() where id = $2`, [user.id, activity.id]);
     const fresh = (await tx.query(`select * from applicants where id = $1`, [applicant.id]))[0];
     await syncApplicantAttendance(tx, fresh, user.id);
+    if (selectedBrand && brands) {
+      // Verify sets the applicant's brand to the selected brand and locks it; the inquired brand is kept.
+      await tx.query(
+        `update applicants set inquiry_brand_id = coalesce(inquiry_brand_id, $2::bigint), preferred_brand_id = $3, brand_locked_at = coalesce(brand_locked_at, now()),
+           brand_locked_by_user_id = coalesce(brand_locked_by_user_id, $4) where id = $1`,
+        [applicant.id, brands.inquiry_id ?? null, selectedBrand, user.id],
+      );
+      const changed = Number(applicant.preferred_brand_id ?? 0) !== selectedBrand;
+      await logEvent(tx, applicant, 'brand_selected', user.id, { activity_id: activity.id, activity_type: type },
+        changed ? `Brand changed from ${brands.previous ?? 'none'} to ${brands.selected}.` : `Brand ${brands.selected} confirmed.`, {
+          step: type, old_values: { preferred_brand_id: applicant.preferred_brand_id ?? null, brand: brands.previous ?? null },
+          new_values: { preferred_brand_id: selectedBrand, brand: brands.selected, inquiry_brand_id: brands.inquiry_id ?? null },
+        });
+      await audit(c, tx, 'applicant.brand_selected', { type: 'App\\Models\\Applicant', id: applicant.id },
+        { preferred_brand_id: applicant.preferred_brand_id ?? null }, { preferred_brand_id: selectedBrand, activity_id: activity.id });
+    }
     await logEvent(tx, applicant, 'activity_attended', user.id, { activity_id: activity.id, activity_type: type }, null, {
       step: type, old_values: { review_status: activity.review_status ?? null, [key]: Boolean(applicant.milestones?.[key]) }, new_values: { review_status: 'accepted', [key]: true },
     });
     await audit(c, tx, 'activity.attended', { type: MODEL, id: activity.id }, { review_status: activity.review_status }, { review_status: 'accepted' });
   });
-  await notifyAssignedSales(db, applicant, 'activity_attended', 'Activity accepted', `Admin marked ${activityLabel(type)} for ${applicant.full_name} as Attended.`, { activity_id: activity.id }, user);
-  return ok(c, await plain(db, activity.id), `${activityLabel(type)} marked Attended.`);
+  await notifyAssignedSales(db, applicant, 'activity_attended', newFlow ? 'Orientation/Tasting verified' : 'Activity accepted',
+    newFlow ? `Admin verified Orientation/Tasting for ${applicant.full_name}. Selected brand: ${brands?.selected ?? '—'}.` : `Admin marked ${activityLabel(type)} for ${applicant.full_name} as Attended.`, { activity_id: activity.id }, user);
+  return ok(c, await plain(db, activity.id), newFlow ? 'Orientation/Tasting verified.' : `${activityLabel(type)} marked Attended.`);
 });
 
 /** Admin returns a completion (or No Show) to Sales with a reason; Sales corrects and submits again. */
@@ -469,7 +541,7 @@ activityRoutes.post('/activities/:activity/return', admin, async (c) => {
   const activity = stripRelation(loaded);
   if (!applicant || applicant.archived_at) fail('applicant', 'An archived applicant cannot be updated.');
   if (!['completed', 'no_show'].includes(activity.status) || !activity.completion_submitted_at) fail('status', 'Only a completion Sales submitted can be returned.');
-  if (activity.review_status === 'accepted') fail('status', 'This activity is already marked Attended and cannot be returned.');
+  if (activity.review_status === 'accepted') fail('status', 'This activity is already verified (marked Attended) and locked: it cannot be returned.');
   if (activity.status === 'no_show') {
     const [later] = await db.query(
       `select 1 from activity_schedules where applicant_id = $1 and activity_type = $2 and id <> $3 and status not in ('cancelled', 'no_show') and approval_status <> 'rejected' limit 1`,
@@ -507,7 +579,9 @@ activityRoutes.get('/activities/:activity/documents/:document/download', staff, 
     await assertAssignedSales(c, applicant);
   }
   const [d] = await db.query(`select * from documents where id = $1 and documentable_type = $2 and documentable_id = $3`, [routeId(c, 'document'), PROOF_MODEL, loaded.id]);
-  return downloadDocument(c, requireFound(d));
+  const response = await downloadDocument(c, requireFound(d));
+  if (roleName(c) === 'admin' && response.ok) await recordView(db, Number(d.id), Number(c.get('user').id));
+  return response;
 });
 
 
