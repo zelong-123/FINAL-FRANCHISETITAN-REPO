@@ -13,6 +13,7 @@ import { api, firstValidationMessage } from '../../../lib/api';
 import { formatDate, titleCase } from '../../../lib/format';
 import { getBreadcrumbs } from '../../../lib/routes';
 import { NAVIGATION } from '../../../lib/roleAccess';
+import { roleTheme } from '../../../lib/roleTheme';
 import ProfileModal from './ProfileModal';
 import { notificationTarget } from '../../../lib/notificationRoutes';
 import { useAuth } from '../../../context/AuthContext';
@@ -281,7 +282,8 @@ export default function Header({ onMenu, mobileOpen }) {
           aria-haspopup="dialog"
         >
           <span
-            className="w-[38px] h-[38px] shrink-0 grid place-items-center rounded-full border-2 border-[color:color-mix(in_srgb,_var(--accent)_35%,_transparent)] text-[#fff] text-[15px] font-bold leading-none uppercase select-none [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_6px_16px_color-mix(in_srgb,_var(--accent)_28%,_transparent)]"
+            className="w-[38px] h-[38px] shrink-0 grid place-items-center rounded-full border-2 text-[#fff] text-[15px] font-bold leading-none uppercase select-none"
+            style={{ background: roleTheme(role).avatar, borderColor: `${roleTheme(role).solid}59`, boxShadow: `0 6px 16px ${roleTheme(role).shadow}` }}
             aria-hidden="true"
           >
             {initials(user?.full_name)}

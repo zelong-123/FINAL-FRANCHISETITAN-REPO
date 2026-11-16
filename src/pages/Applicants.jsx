@@ -77,6 +77,24 @@ const PAGE_WINDOW = 4; // page numbers visible at a time
 // so a full page never ends on a half row on desktop or tablet.
 const DETAIL_PAGE_SIZE = 15;
 const DETAIL_VIEW_KEY = 'herald.applicationDetail.view';
+const PIPELINE_COLUMNS_KEY = 'ft.applicants.pipeline.columns';
+const PIPELINE_COLUMN_OPTIONS = [
+  ['applicant_id', 'Applicant ID', true],
+  ['contact', 'Contact', true],
+  ['brand', 'Brand', true],
+  ['applied', 'Applied', true],
+  ['assigned_sales', 'Assigned Sales', true],
+  ['status', 'Status', true],
+];
+function readPipelineColumns() {
+  const defaults = Object.fromEntries(PIPELINE_COLUMN_OPTIONS.map(([key, , visible]) => [key, visible]));
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(PIPELINE_COLUMNS_KEY) || 'null');
+    return saved && typeof saved === 'object' ? { ...defaults, ...saved } : defaults;
+  } catch {
+    return defaults;
+  }
+}
 
 const DETAIL_EMPTY = {
   active: { label: 'No active applicants.', detail: 'Applicants still moving through the pipeline appear here.' },
@@ -198,6 +216,42 @@ function Dialog({
       </div>
     </div>,
     document.body,
+  );
+}
+
+/* Same size rules as the real Update modal, so the skeleton matches its width. */
+function openingModalClass(stage, role) {
+  if (role === 'admin' && stage === 'converted') return 'is-qualification';
+  if (stage === 'payment_submitted' && (role === 'admin' || role === 'sales')) return 'is-payment';
+  return '';
+}
+
+/* Skeleton placeholder shown while an applicant record loads. */
+function ApplicantDetailSkeleton({ stage, isAdmin }) {
+  const bar = 'ap-skeleton block rounded-[6px]';
+  const isQualification = isAdmin && stage === 'converted';
+  const isPayment = stage === 'payment_submitted';
+  const rows = isQualification ? 4 : isPayment ? 6 : 3;
+  return (
+    <div className="flex flex-col gap-[14px]" role="status" aria-live="polite" aria-label="Loading applicant">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+        <span className={`${bar} h-[12px] w-[30%]`} />
+        <div className="flex gap-[10px]">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className={`${bar} h-[10px] flex-1`} />)}
+        </div>
+      </div>
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+        <span className={`${bar} h-[12px] w-[40%]`} />
+        {Array.from({ length: rows }, (_, i) => (
+          <span key={i} className={`${bar} h-[38px] w-full !rounded-[9px]`} />
+        ))}
+      </div>
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[10px]">
+        <span className={`${bar} h-[12px] w-[25%]`} />
+        <span className={`${bar} h-[10px] w-[70%]`} />
+        <span className={`${bar} h-[10px] w-[55%]`} />
+      </div>
+    </div>
   );
 }
 
@@ -473,9 +527,6 @@ function StatusHover({ applicant, loadDetail, children }) {
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => setPos(null), 180);
   };
-  const keepOpen = () => {
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-  };
 
   useEffect(() => {
     if (!pos) return undefined;
@@ -521,8 +572,6 @@ function StatusHover({ applicant, loadDetail, children }) {
         <div
           className={`[--ap-bg:#0a0e18] [--ap-panel:#0d1220] [--ap-card:#111827] [--ap-border:#1a2133] [--ap-border-2:#1f2842] [--ap-text:#e6e9f2] [--ap-muted:#8590a8] [--ap-accent:#7b88ff] [--ap-green:#34d399] [border:1px_solid_var(--ap-border-2)] [animation:ap-pop_0.14s_ease-out] [&::before]:[border-left:1px_solid_var(--ap-border-2)] [&::before]:[border-top:1px_solid_var(--ap-border-2)] [&.flipped::before]:[transform:rotate(225deg)] motion-reduce:later:[animation:none] fixed! z-2147483000! [box-sizing:border-box] max-w-[calc(100vw_-_16px)] later:text-[#edf0fa] light:text-[#172033] later:border later:rounded-[10px] later:[box-shadow:0_18px_48px_rgba(0,_0,_0,_.55),_0_3px_12px_rgba(0,_0,_0,_.3)] light:[box-shadow:var(--shadow-md)] later:pointer-events-auto [isolation:isolate] [&::before]:[content:''] [&::before]:absolute later:[&::before]:left-[clamp(14px,_var(--arrow-x),_calc(100%_-_14px))] later:[&::before]:-top-[7px] later:[&::before]:w-[12px] later:[&::before]:h-[12px] later:[&::before]:[background:#111624] light:[&::before]:[background:#fff] later:[&::before]:border-l later:[&::before]:border-l-[#343b50] light:[&::before]:border-l-line later:[&::before]:border-t later:[&::before]:border-t-[#343b50] light:[&::before]:border-t-line later:[&::before]:[transform:translateX(-50%)_rotate(45deg)] later:[&.flipped::before]:top-auto later:[&.flipped::before]:-bottom-[7px] [&.flipped::before]:border-0 [&.flipped::before]:border-r [&.flipped::before]:border-r-[#343b50] [&.flipped::before]:border-b [&.flipped::before]:border-b-[#343b50] ap-progress-popover later-2:p-[13px_14px_12px] later-2:[background:#111827] later-2:border-[#343e55] light:[background:#fff] light:border-line [&_.ap-status-label.ap-endorsed-label]:text-[15px]! [&_.ap-status-label.ap-endorsed-label]:tracking-[normal] [&_.ap-status-label.ap-endorsed-label]:normal-case max-[721px]:later-3:p-[11px_12px] ${pos.flipped ? ' flipped' : ''}`}
           role="tooltip"
-          onMouseEnter={keepOpen}
-          onMouseLeave={hide}
           style={{ left: pos.left, top: pos.top, width: `min(${CARD_W}px, calc(100vw - 16px))`, '--arrow-x': `${pos.arrowX}px`, zIndex: 2147483000 }}
         >
           <div className="uppercase text-[color:var(--ap-muted)] [&_small]:tracking-[0] [&_small]:normal-case flex later:items-center justify-between gap-3 later:mb-[13px] later:text-[12px] font-[700] later:tracking-[.02em] later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap [.ap-progress-popover_&]:mb-3 [.ap-progress-popover_&]:flex [.ap-progress-popover_&]:items-center [.ap-progress-popover_&]:justify-between">
@@ -1782,7 +1831,7 @@ function ScheduleSection({
           const hasLinks = state !== 'not_scheduled' && Boolean(onOpenCalendar || onView);
           return (
             <li key={tracked.type} className="ap-activity-row flex items-center gap-3 flex-wrap p-[0_0_20px] border-0 [background:none]" data-activity-type={tracked.type}>
-              <span className="w-[150px] shrink-0 mr-3 pr-3 flex items-center"><span className={`p-[4px_10px] rounded-[999px] text-[10px] font-[500] tracking-[0.04em] uppercase whitespace-nowrap later-5:[&.is-not\_scheduled]:text-[color:var(--muted,_#8b93a5)] [&.is-not\_scheduled]:[background:color-mix(in_srgb,_var(--muted,_#8b93a5)_14%,_transparent)] later-6:[&.is-pending\_admin]:text-[#ffc857] later:[&.is-pending\_admin]:[background:color-mix(in_srgb,_#ffc857_12%,_transparent)] later-7:[&.is-scheduled]:text-[#4cc9ff] later-2:[&.is-scheduled]:[background:color-mix(in_srgb,_#4cc9ff_12%,_transparent)] later-8:[&.is-completed]:text-[#7ddfff] later-3:[&.is-completed]:[background:color-mix(in_srgb,_#4cc9ff_18%,_transparent)] later-9:[&.is-attended]:text-[#39ffb0] later-4:[&.is-attended]:[background:color-mix(in_srgb,_#39ffb0_14%,_transparent)] [&.is-attended]:[box-shadow:0_0_10px_color-mix(in_srgb,_#39ffb0_25%,_transparent)] later-10:[&.is-overdue]:text-[#ffb454] later-5:[&.is-overdue]:[background:color-mix(in_srgb,_#ffb454_12%,_transparent)] [.ap-schedule-section.is-locked_&]:opacity-[.75] is-${overdue ? 'overdue' : state}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span></span>
+              <span className="w-[150px] shrink-0 mr-3 pr-3 flex items-center"><span className={`p-[4px_10px] rounded-[999px] text-[10px] font-[500] tracking-[0.04em] uppercase whitespace-nowrap later-5:[&.is-not\_scheduled]:text-[color:var(--muted,_#8b93a5)] later-6:[&.is-pending\_admin]:text-[#ffc857] later-7:[&.is-scheduled]:text-[#4cc9ff] later-8:[&.is-completed]:text-[#7ddfff] later-9:[&.is-attended]:text-[#39ffb0] [&.is-attended]:[box-shadow:0_0_10px_color-mix(in_srgb,_#39ffb0_25%,_transparent)] later-10:[&.is-overdue]:text-[#ffb454] [.ap-schedule-section.is-locked_&]:opacity-[.75] is-${overdue ? 'overdue' : state}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span></span>
               <span className="flex flex-col gap-[2px] w-[240px] shrink-0 mr-3 pr-3 later-2:[&_small]:text-[color:var(--muted,_#8b93a5)] later:[&_small]:text-[11px]">
                 <strong className="text-[15px]">{tracked.label}</strong>
                 {info.active && info.starts_at && <small>{fmtDateTime(info.starts_at)}{overdue ? ' · missed' : ''}</small>}
@@ -1850,16 +1899,39 @@ function ScheduleSection({
  * default (show/hide). The content is the same section, read-only by stage.
  */
 function DoneSection({ title, summary, children, tone = 'done', defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const bodyRef = useRef(null);
+  // Animate the body on every Show and Hide: the body is kept mounted so the slide runs each time.
+  const toggle = (event) => {
+    event.preventDefault();
+    const body = bodyRef.current;
+    if (open) {
+      const out = body?.animate(
+        [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-8px)' }],
+        { duration: 220, easing: 'ease-in' },
+      );
+      if (out) out.onfinish = () => setOpen(false);
+      else setOpen(false);
+    } else {
+      setOpen(true);
+      requestAnimationFrame(() => {
+        bodyRef.current?.animate(
+          [{ opacity: 0, transform: 'translateY(-8px)' }, { opacity: 1, transform: 'translateY(0)' }],
+          { duration: 300, easing: 'ease-out' },
+        );
+      });
+    }
+  };
   return (
-    <details className={`ap-done-section border border-[#293246] rounded-[12px] [background:#121827] [&>summary]:flex [&>summary]:items-center [&>summary]:gap-[10px] [&>summary]:p-[12px_14px] [&>summary]:cursor-pointer [&>summary]:[list-style:none] [&>summary]:text-[#e4e8f4] later:[&>summary]:text-[13px] [&>summary]:font-[700] [&>summary::-webkit-details-marker]:hidden [&>summary:focus-visible]:[outline:2px_solid_#6d8cff] [&>summary:focus-visible]:[outline-offset:2px] [&>summary:focus-visible]:rounded-[12px] [&>summary_small]:text-[#9ba5bd] [&>summary_small]:font-[500] [&.is-pending]:border-[rgba(245,_158,_11,_.45)] is-${tone}`} open={defaultOpen || undefined}>
-      <summary>
+    <details className={`ap-done-section border ${tone === 'qualification' ? 'border-[#2a3041] [background:#0C111D]' : 'border-[#293246] [background:#121827]'} rounded-[12px] [&>summary]:flex [&>summary]:items-center [&>summary]:gap-[10px] [&>summary]:p-[12px_14px] [&>summary]:cursor-pointer [&>summary]:[list-style:none] [&>summary]:text-[#e4e8f4] later:[&>summary]:text-[13px] [&>summary]:font-[700] [&>summary::-webkit-details-marker]:hidden [&>summary:focus-visible]:[outline:2px_solid_#6d8cff] [&>summary:focus-visible]:[outline-offset:2px] [&>summary:focus-visible]:rounded-[12px] [&>summary_small]:text-[#9ba5bd] [&>summary_small]:font-[500] [&.is-pending]:border-[rgba(245,_158,_11,_.45)] is-${tone}`} open={open}>
+      <summary onClick={toggle}>
         <span className="inline-flex items-center gap-2 later-4:[&_svg]:text-[#4ade80] [.ap-done-section.is-pending_&_svg]:text-[#fbbf24]">
           {tone === 'pending' ? <FaClock aria-hidden="true" /> : <FaCheck aria-hidden="true" />} {title}
         </span>
         {summary && <small>{summary}</small>}
         <span className="ml-auto text-[#9ba5bd] text-[12px] font-[600] [&::after]:[content:'Show'] [.ap-done-section[open]_&::after]:[content:'Hide']" aria-hidden="true" />
       </summary>
-      <div className="p-[0_10px_10px] [&_.ap-section]:mb-0">{children}</div>
+      <div ref={bodyRef} className="p-[0_10px_10px] [&_.ap-section]:mb-0">{children}</div>
     </details>
   );
 }
@@ -1949,7 +2021,7 @@ async function fetchApplicantDocument(applicantId, document) {
  */
 /** The assigned Sales user, or an "Unassigned" badge (Sales cannot act until Admin assigns one). */
 function AssignedSalesTag({ sales, prefix = 'Sales' }) {
-  if (sales?.full_name) return <small className="block mt-1 text-[#9aa6c4]">{prefix}: {sales.full_name}</small>;
+  if (sales?.full_name) return <small className={`block mt-1 text-[#9aa6c4] ${prefix ? '' : 'text-[13px] font-[600]'}`}>{prefix ? `${prefix}: ` : ''}{sales.full_name}</small>;
   return (
     <small className="inline-flex items-center mt-1 p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] [background:rgba(251,_191,_36,_0.1)] text-[#fbbf24] text-[11px] font-[700]" title="Admin must assign a Sales user first.">
       Unassigned
@@ -2333,8 +2405,12 @@ export default function Applicants() {
   const filterKey = JSON.stringify(filterParams);
   const [exporting, setExporting] = useState(false);
   const [detailView, setDetailView] = useState(readDetailView);
+  const [pipelineColumns, setPipelineColumns] = useState(readPipelineColumns);
+  const [pipelineColumnsOpen, setPipelineColumnsOpen] = useState(false);
+  const pipelineColumnsRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
   // Blue dots cleared in this session (the server clears them on mark-seen).
   const [seenActivityDots, setSeenActivityDots] = useState(() => new Set());
   const [actionError, setActionError] = useState('');
@@ -2342,6 +2418,8 @@ export default function Applicants() {
   const [editing, setEditing] = useState(null);
   const [openingId, setOpeningId] = useState(null);
   const [draft, setDraft] = useState(null);
+  // Snapshot of the draft as loaded; Save stays disabled until something differs from it.
+  const [baseline, setBaseline] = useState(null);
   const [mark, setMark] = useState(null); // small "accomplishment record" (date marked / marked by) dialog
   // Phase 2: schedule reveal state, LOI confirmation dialog, activation form, busy flag.
   const [scheduleRevealed, setScheduleRevealed] = useState(false);
@@ -2418,6 +2496,23 @@ export default function Applicants() {
     };
   }, [page, search, status, tab, detailFolder, filterKey]);
 
+  // Customize Columns closes on an outside click; the selection is remembered in this browser.
+  useEffect(() => {
+    if (!pipelineColumnsOpen) return undefined;
+    const close = (event) => {
+      if (!pipelineColumnsRef.current?.contains(event.target)) setPipelineColumnsOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [pipelineColumnsOpen]);
+  const togglePipelineColumn = (key) => {
+    setPipelineColumns((current) => {
+      const next = { ...current, [key]: !current[key] };
+      try { window.localStorage.setItem(PIPELINE_COLUMNS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep for this visit only */ }
+      return next;
+    });
+  };
+
   // Assigned Sales choices: Admin picks any Sales user; a Sales user filters to their own.
   const [salesChoices, setSalesChoices] = useState([]);
   useEffect(() => {
@@ -2468,9 +2563,13 @@ export default function Applicants() {
   // Only the assigned Sales user acts for an applicant (the API enforces the same).
   const isAssignedSales = isSalesRole && Boolean(editing?.assigned_sales_user_id) && Number(editing.assigned_sales_user_id) === Number(user?.id);
 
+  // Save is enabled only when the draft differs from the loaded record.
+  const hasChanges = Boolean(draft && baseline && JSON.stringify(draft) !== baseline);
+
   const closeEditor = () => {
     setEditing(null);
     setDraft(null);
+    setBaseline(null);
     setMark(null);
     setEditRequiredOpen(false);
     setLoiDraft(null);
@@ -2480,7 +2579,7 @@ export default function Applicants() {
     setQualifiedConfirm(false);
   };
 
-  const loadApplicant = async (id) => {
+  const loadApplicant = async (id, previewStatus = null) => {
     setActionError('');
     setSuccess('');
     // A freshly opened applicant starts with the schedule section hidden again:
@@ -2490,7 +2589,7 @@ export default function Applicants() {
     setReviseForm(null);
     setRejectForm(null);
     setQualifiedConfirm(false);
-    setOpeningId(id);
+    setOpeningId({ id, status: previewStatus });
     try {
       const detail = { data: await loadDetail(id) };
       setEditing(detail.data);
@@ -2511,7 +2610,7 @@ export default function Applicants() {
         // TRUE once the Admin detached the saved attachment (deleted on save).
         removeDocument: false,
       });
-      setDraft({
+      const loaded = {
         full_name: detail.data.full_name || '',
         email: detail.data.email || '',
         phone: detail.data.phone || '',
@@ -2524,7 +2623,9 @@ export default function Applicants() {
           (detail.data.milestone_state || []).map((m) => [m.key, Boolean(detail.data.milestones?.[m.key])]),
         ),
         details: { ...(detail.data.milestone_details || {}) },
-      });
+      };
+      setDraft(loaded);
+      setBaseline(JSON.stringify(loaded));
     } catch (error) {
       setActionError(firstValidationMessage(error));
     } finally {
@@ -2617,6 +2718,7 @@ export default function Applicants() {
   };
 
   const archiveApplicant = async (applicant) => {
+    setArchiveTarget(null);
     setUpdatingId(applicant.id);
     setActionError('');
     setSuccess('');
@@ -3256,7 +3358,7 @@ export default function Applicants() {
           );
         }
         return (
-          <DoneSection key={key} title="Qualification" summary={editing.requirements?.summary?.qualification?.legacy ? `Legacy checklist · ${qualificationCount} of ${QUALIFICATION_ITEMS.length} assessed` : 'Requirements accepted'}>
+          <DoneSection key={key} title="Qualification" tone="qualification" summary={editing.requirements?.summary?.qualification?.legacy ? `Legacy checklist · ${qualificationCount} of ${QUALIFICATION_ITEMS.length} assessed` : 'Requirements accepted'}>
             <RequirementsPanel editing={editing} stage="qualification" readOnly busy={false} onSubmit={() => {}} onAccept={() => {}} onReturn={() => {}} onError={setActionError} />
             {(editing.assessment_log || []).length > 0 && (
               <QualificationAssessment draft={draft} log={editing.assessment_log || []} isSalesRole={isSalesRole} readOnly onToggle={() => {}} />
@@ -3472,6 +3574,29 @@ export default function Applicants() {
           {(filters.from || filters.to || filters.brand_id || filters.assigned_sales_user_id) && (
             <button type="button" onClick={() => { setPage(1); setFilters({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' }); }}>Clear filters</button>
           )}
+          {tab === 'pipeline' && (
+            <div className="relative" ref={pipelineColumnsRef}>
+              <button
+                type="button"
+                className={filterBtn}
+                onClick={() => setPipelineColumnsOpen((open) => !open)}
+                aria-expanded={pipelineColumnsOpen}
+                aria-haspopup="true"
+              >
+                Customize Columns <FaChevronDown aria-hidden="true" className="text-[10px]" />
+              </button>
+              {pipelineColumnsOpen && (
+                <div className="absolute left-0 top-[calc(100%_+_6px)] z-[30] w-[220px] max-w-[calc(100vw_-_32px)] max-h-[min(280px,_calc(100dvh_-_180px))] overflow-y-auto grid gap-[2px] p-[6px] border border-line-strong rounded-[10px] [background:var(--panel)] [box-shadow:var(--shadow-md)]" role="group" aria-label="Visible applicant columns">
+                  {PIPELINE_COLUMN_OPTIONS.map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-[9px] p-[6px_8px] rounded-[6px] text-text text-[13px] font-[500] cursor-pointer hover:[background:var(--hover)]" style={{ display: 'flex', alignItems: 'center', minHeight: 32, padding: '6px 8px', gap: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+                      <input type="checkbox" className="[accent-color:var(--accent)]" style={{ width: 16, height: 16, minHeight: 16, flex: '0 0 16px', margin: 0, padding: 0, borderRadius: 3, cursor: 'pointer', accentColor: 'var(--accent)' }} checked={Boolean(pipelineColumns[key])} onChange={() => togglePipelineColumn(key)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <span className="flex gap-2 ml-auto">
             <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportFiltered('csv')}>Export CSV</button>
             <button type="button" className={filterBtn} disabled={exporting} onClick={() => void exportFiltered('pdf')}>Export PDF</button>
@@ -3622,7 +3747,7 @@ export default function Applicants() {
           />
         </section>
       ) : (
-        <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+        <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
           {remote.loading ? <LoadingState /> : !rows.length ? (
             <EmptyState
               label={tab === 'archived' ? 'No archived applicants.' : 'No applicants match these filters.'}
@@ -3633,23 +3758,30 @@ export default function Applicants() {
               <table>
                 <thead>
                   <tr>
-                    <th className="max-[761px]:[th&]:hidden max-[761px]:[td&]:hidden">Applicant ID</th><th>Applicant</th><th>Contact</th><th>Brand</th><th>Applied</th>
-                    <th>Status</th><th>Update</th>
+                    {pipelineColumns.applicant_id && <th className="max-[761px]:[th&]:hidden max-[761px]:[td&]:hidden">Applicant ID</th>}
+                    <th>Applicant</th>
+                    {pipelineColumns.contact && <th>Contact</th>}
+                    {pipelineColumns.brand && <th>Brand</th>}
+                    {pipelineColumns.applied && <th>Applied</th>}
+                    {pipelineColumns.assigned_sales && <th className="text-[12px] font-[850]">Assigned Sales</th>}
+                    {pipelineColumns.status && <th>Status</th>}
+                    <th>Update</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((applicant) => (
-                    <tr key={applicant.id} data-applicant-id={applicant.id} onClick={tab === 'archived' ? () => navigate(`/admin-settings?tab=applicants&applicant=${applicant.id}`) : undefined}>
+                    <tr key={applicant.id} data-applicant-id={applicant.id} onClick={tab === 'archived' ? () => navigate(`/admin-settings?tab=applicants&applicant=${applicant.id}`) : canManage ? (event) => { if (event.target.closest('button,a,input,select,textarea,label')) return; setSeenActivityDots((current) => new Set(current).add(applicant.id)); void loadApplicant(applicant.id, applicant.status); } : undefined}>
                       {/* Applicant ID only, one compact line (the source Lead ID is in the modal / full record). */}
-                      <td className="max-[761px]:[th&]:hidden max-[761px]:[td&]:hidden record-id-col [.data-panel_.table-wrap_table_th&]:w-[1%] [.data-panel_.table-wrap_table_th&]:whitespace-nowrap [.data-panel_.table-wrap_table_td&]:w-[1%] [.data-panel_.table-wrap_table_td&]:whitespace-nowrap [.data-panel_.table-wrap_table_td&_.record-code]:[vertical-align:middle]"><RecordCode code={applicant.applicant_code} label="Applicant ID" /></td>
+                      {pipelineColumns.applicant_id && <td className="max-[761px]:[th&]:hidden max-[761px]:[td&]:hidden record-id-col [.data-panel_.table-wrap_table_th&]:w-[1%] [.data-panel_.table-wrap_table_th&]:whitespace-nowrap [.data-panel_.table-wrap_table_td&]:w-[1%] [.data-panel_.table-wrap_table_td&]:whitespace-nowrap [.data-panel_.table-wrap_table_td&_.record-code]:[vertical-align:middle]"><RecordCode code={applicant.applicant_code} label="Applicant ID" /></td>}
                       <td>
-                        <span className="hidden max-[761px]:later:block max-[761px]:mb-[2px]"><RecordCode code={applicant.applicant_code} label="Applicant ID" /></span>
+                        {pipelineColumns.applicant_id && <span className="hidden max-[761px]:later:block max-[761px]:mb-[2px]"><RecordCode code={applicant.applicant_code} label="Applicant ID" /></span>}
                         <strong className="[.data-panel_.table-wrap_table_tbody_td_&]:block [.data-panel_.table-wrap_table_tbody_td_&]:text-text! [.data-panel_.table-wrap_table_tbody_td_&]:text-[1rem]! [.data-panel_.table-wrap_table_tbody_td_&]:font-[600]! [.data-panel_.table-wrap_table_tbody_td_&]:leading-[1.3]! [.data-panel_.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.data-panel_.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere] [.table-wrap_table_tbody_td_&]:block [.table-wrap_table_tbody_td_&]:text-text! [.table-wrap_table_tbody_td_&]:text-[1rem]! [.table-wrap_table_tbody_td_&]:font-[600]! [.table-wrap_table_tbody_td_&]:leading-[1.3]! [.table-wrap_table_tbody_td_&]:tracking-[-.005em] [.table-wrap_table_tbody_td_&]:[overflow-wrap:anywhere]">{applicant.full_name}</strong>
                       </td>
-                      <td>{applicant.email || '—'}<small>{applicant.phone || '—'}</small></td>
-                      <td>{applicant.preferred_brand?.name || '—'}</td>
-                      <td>{formatDate(applicant.application_date)}</td>
-                      <td>
+                      {pipelineColumns.contact && <td>{applicant.email || '—'}<small>{applicant.phone || '—'}</small></td>}
+                      {pipelineColumns.brand && <td>{applicant.preferred_brand?.name || '—'}</td>}
+                      {pipelineColumns.applied && <td>{formatDate(applicant.application_date)}</td>}
+                      {pipelineColumns.assigned_sales && <td className="ap-assigned-sales"><AssignedSalesTag sales={applicant.assigned_sales} prefix="" /></td>}
+                      {pipelineColumns.status && <td>
                         {tab === 'archived' ? (
                           <StatusBadge value={applicant.status} label={applicant.status_label} />
                         ) : (
@@ -3660,16 +3792,15 @@ export default function Applicants() {
                         {tab === 'archived' && applicant.archived_at && (
                           <small>Archived {formatDate(applicant.archived_at)}</small>
                         )}
-                        <AssignedSalesTag sales={applicant.assigned_sales} />
                         {typeof applicant.days_in_stage === 'number' && (
                           <small className="block text-[#9aa6c4]">
                             {applicant.days_in_stage} day{applicant.days_in_stage === 1 ? '' : 's'} in stage
                             {applicant.overdue && (
-                              <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_136,_142,_.5)] text-[#ff888e] text-[11px] font-[700]" title={`More than ${applicant.overdue_after_days} days in this stage`}>Overdue</span>
+                              <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_92,_102,_.6)] text-[#ff5c66] text-[11px] font-normal" title={`More than ${applicant.overdue_after_days} days in this stage`}>Overdue</span>
                             )}
                           </small>
                         )}
-                      </td>
+                      </td>}
                       <td>
                         <div className="row-actions applicant-row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative">
                           {canManage && tab === 'archived' ? (
@@ -3681,7 +3812,7 @@ export default function Applicants() {
                                 disabled={updatingId === applicant.id}
                                 onMouseEnter={() => { void loadDetail(applicant.id).catch(() => {}); }}
                                 onFocus={() => { void loadDetail(applicant.id).catch(() => {}); }}
-                                onClick={() => { setSeenActivityDots((current) => new Set(current).add(applicant.id)); void loadApplicant(applicant.id); }}
+                                onClick={() => { setSeenActivityDots((current) => new Set(current).add(applicant.id)); void loadApplicant(applicant.id, applicant.status); }}
                                 title={role === 'admin' && applicant.has_pending_payment_request
                                   ? 'Payment request waiting for your confirmation — click to review.'
                                   : role === 'sales' && applicant.has_assessment_request
@@ -3701,7 +3832,7 @@ export default function Applicants() {
                                 )}
                               </button>
                               {role === 'admin' && (
-                                <button disabled={updatingId === applicant.id} onClick={() => archiveApplicant(applicant)}>
+                                <button disabled={updatingId === applicant.id} onClick={() => setArchiveTarget(applicant)}>
                                   Archive
                                 </button>
                               )}
@@ -3719,9 +3850,43 @@ export default function Applicants() {
         </section>
       )}
 
+      {archiveTarget && (
+        <Dialog
+          title="Archive applicant?"
+          size="small"
+          onClose={() => setArchiveTarget(null)}
+          footer={(
+            <>
+              <button
+                type="button"
+                className="min-h-[36px] p-[0_16px] border border-[#2a3550] rounded-[7px] [background:transparent] text-[#c5cde0] text-[12px] font-[700] cursor-pointer hover:[background:#1a2133]"
+                onClick={() => setArchiveTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="min-h-[36px] p-[0_16px] border border-[#a94450] rounded-[7px] [background:rgba(127,_29,_45,_.35)] text-[#ffb3ba] text-[12px] font-[750] cursor-pointer hover:[background:rgba(127,_29,_45,_.55)]"
+                onClick={() => archiveApplicant(archiveTarget)}
+              >
+                Archive
+              </button>
+            </>
+          )}
+        >
+          <p className="m-0 text-[#c5cde0] text-[13px] leading-[1.5]">
+            <strong className="text-[#f1f3fb]">{archiveTarget.full_name}</strong> will move to the Archive tab. Nothing is deleted, and you can restore them later.
+          </p>
+        </Dialog>
+      )}
+
       {openingId && !editing && (
-        <Dialog title="Opening applicant…" onClose={() => setOpeningId(null)} size="small">
-          <LoadingState />
+        <Dialog
+          title="Opening applicant…"
+          onClose={() => setOpeningId(null)}
+          modalClass={openingModalClass(openingId.status, role)}
+        >
+          <ApplicantDetailSkeleton stage={openingId.status} isAdmin={isAdminRole} />
         </Dialog>
       )}
 
@@ -3761,7 +3926,7 @@ export default function Applicants() {
                   <button
                     className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] ap-modal-save"
                     form="update-applicant-form"
-                    disabled={saving || acting}
+                    disabled={saving || acting || !hasChanges}
                   >
                     {saving ? 'SAVING…' : 'SAVE APPLICANT'}
                   </button>
@@ -3797,7 +3962,7 @@ export default function Applicants() {
               {typeof editing.days_in_stage === 'number' && (
                 <p className="m-[0_0_10px] text-[14px] text-[#9aa6c4]">
                   {editing.days_in_stage} day{editing.days_in_stage === 1 ? '' : 's'} in the current stage
-                  {editing.overdue && <strong className="ml-2 text-[#ff888e]">Overdue (more than {editing.overdue_after_days} days)</strong>}
+                  {editing.overdue && <span className="ml-2 font-normal text-[#ff5c66]">Overdue (more than {editing.overdue_after_days} days)</span>}
                 </p>
               )}
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
