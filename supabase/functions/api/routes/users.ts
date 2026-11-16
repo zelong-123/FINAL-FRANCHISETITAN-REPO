@@ -1,6 +1,6 @@
 // UserController and AuditLogController. Admin only, enforced where these are mounted.
 import { Hono } from 'hono';
-import { createClient } from 'npm:@supabase/supabase-js@2'; // 👈 Added raw client
+import { createClient } from '@supabase/supabase-js';
 import type { AppEnv } from '../lib/env.ts';
 import { fail, intParam, ok, paginate, perPage, pick, routeId, updateRow, manilaToday } from '../lib/http.ts';
 import type { Row } from '../lib/db.ts';
