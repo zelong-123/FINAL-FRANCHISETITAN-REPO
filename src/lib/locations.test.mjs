@@ -8,7 +8,8 @@ import {
 } from './locations.js';
 
 // Parse the generated SQL into the same shape GET /ph-locations returns.
-const sql = readFileSync(new URL('../../supabase/migrations/20261118000002_psgc_data.sql', import.meta.url), 'utf8');
+// Line endings normalized: a Windows checkout (core.autocrlf) has CRLF, CI on Linux has LF.
+const sql = readFileSync(new URL('../../supabase/migrations/20261118000002_psgc_data.sql', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const tuples = (table) => {
   const block = sql.slice(sql.indexOf(`insert into public."${table}"`));
   const body = block.slice(block.indexOf('values') + 6, block.indexOf(';\n'));
