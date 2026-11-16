@@ -3,7 +3,7 @@
 import type { Db, Row } from '../lib/db.ts';
 import { fail, manilaToday } from '../lib/http.ts';
 
-export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select'; required?: boolean; options?: { value: string; label: string }[]; min_length?: number; not_future?: boolean };
+export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select'; required?: boolean; options?: { value: string; label: string }[]; min_length?: number; not_future?: boolean; letters_only?: boolean; show_when?: { key: string; value: string } };
 export type FileDef = { key: string; label: string; required: boolean; multiple?: boolean; accept: string };
 export type RequirementDef = { key: string; stage: string; label: string; help: string; fields: FieldDef[]; files: FileDef[] };
 
@@ -27,8 +27,10 @@ export const REQUIREMENTS: RequirementDef[] = [
       key: 'id_type', label: 'ID type', type: 'select', required: true,
       options: [
         { value: 'passport', label: 'Passport' }, { value: 'drivers_license', label: "Driver's license" }, { value: 'umid', label: 'UMID' },
-        { value: 'national_id', label: 'National ID (PhilSys)' }, { value: 'prc', label: 'PRC ID' }, { value: 'postal', label: 'Postal ID' }, { value: 'other', label: 'Other government ID' },
+        { value: 'national_id', label: 'National ID (PhilSys)' }, { value: 'prc', label: 'PRC ID' },        { value: 'postal', label: 'Postal ID' }, { value: 'other', label: 'Other government ID' },
       ],
+    }, {
+      key: 'id_type_other', label: 'Other government ID name', type: 'text', required: true, letters_only: true, show_when: { key: 'id_type', value: 'other' },
     }],
     files: [{ key: 'id_copy', label: 'ID copy', required: true, accept: DOCS }],
   },
@@ -47,7 +49,7 @@ export const REQUIREMENTS: RequirementDef[] = [
     key: 'initial_interview', stage: 'qualification', label: 'Initial interview', help: 'When the interview happened, who interviewed, what was learned, and the signed interview sheet.',
     fields: [
       { key: 'interview_date', label: 'Interview date', type: 'date', required: true, not_future: true },
-      { key: 'interviewer', label: 'Interviewer', type: 'text', required: true },
+      { key: 'interviewer', label: 'Interviewer', type: 'select', required: true, options: [] },
       { key: 'notes', label: 'Interview notes', type: 'textarea', required: true, min_length: 10 },
     ],
     files: [{ key: 'interview_sheet', label: 'Signed interview sheet', required: true, accept: DOCS }],
@@ -59,14 +61,6 @@ export const REQUIREMENTS: RequirementDef[] = [
       { key: 'ownership', label: 'Owned or leased', type: 'select', required: true, options: [{ value: 'owned', label: 'Owned' }, { value: 'leased', label: 'Leased' }] },
     ],
     files: [{ key: 'site_photos', label: 'Site photos', required: true, multiple: true, accept: IMAGES }],
-  },
-  {
-    key: 'business_background', stage: 'qualification', label: 'Business background', help: 'Current occupation and any previous business experience.',
-    fields: [
-      { key: 'occupation', label: 'Occupation', type: 'text', required: true },
-      { key: 'previous_experience', label: 'Previous business experience', type: 'textarea', required: true, min_length: 5 },
-    ],
-    files: [],
   },
   {
     key: 'franchise_agreement', stage: 'activation', label: 'Signed franchise agreement', help: 'The franchise agreement signed by the applicant.',
@@ -82,14 +76,16 @@ export const loadRequirementRows = async (db: Db, applicantId: number): Promise<
   db.query(`select * from applicant_requirements where applicant_id = $1 order by id`, [applicantId]);
 
 /** The submitted field values, checked against the config. Returns only known keys. */
-export function readFields(def: RequirementDef, input: Row): Row {
+export function readFields(def: RequirementDef, input: Row, choices: Record<string, { value: string; label: string }[]> = {}): Row {
   const data: Row = {};
   for (const field of def.fields) {
     const raw = input[field.key];
     const value = raw === undefined || raw === null ? '' : String(raw).trim();
+    if (field.show_when && String(input[field.show_when.key] ?? '').trim() !== field.show_when.value) continue;
     if (field.required && !value) fail(field.key, `${field.label} is required.`);
+    if (field.letters_only && value && !/^[A-Za-z][A-Za-z .'-]*$/.test(value)) fail(field.key, `${field.label} must contain letters only.`);
     if (!value) continue;
-    if (field.type === 'select' && !(field.options ?? []).some((o) => o.value === value)) fail(field.key, `Choose a valid ${field.label.toLowerCase()}.`);
+    if (field.type === 'select' && !(choices[field.key] ?? field.options ?? []).some((o) => o.value === value)) fail(field.key, `Choose a valid ${field.label.toLowerCase()}.`);
     if (field.type === 'date') {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) fail(field.key, `${field.label} must be a valid date.`);
       if (field.not_future && value > manilaToday()) fail(field.key, `${field.label} cannot be in the future.`);
@@ -99,6 +95,22 @@ export function readFields(def: RequirementDef, input: Row): Row {
     data[field.key] = value;
   }
   return data;
+}
+
+/** Active Sales accounts: the Interviewer choices of the initial interview. */
+export async function interviewerOptions(db: Db): Promise<{ value: string; label: string }[]> {
+  const rows = await db.query(
+    `select u.full_name from users u join roles r on r.id = u.role_id where r.name = 'sales' and u.account_status = 'active' and u.archived_at is null order by u.full_name`,
+  );
+  return rows.map((u) => ({ value: String(u.full_name), label: String(u.full_name) }));
+}
+
+/** The requirements config with the Interviewer choices filled from the database. */
+export async function requirementsConfig(db: Db): Promise<RequirementDef[]> {
+  const interviewer = await interviewerOptions(db);
+  return REQUIREMENTS.map((def) => (def.key !== 'initial_interview' ? def : {
+    ...def, fields: def.fields.map((f) => (f.key === 'interviewer' ? { ...f, options: interviewer } : f)),
+  }));
 }
 
 /** Labels of the requirements of a stage that are not Accepted yet. */

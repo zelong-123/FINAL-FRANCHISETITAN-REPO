@@ -11,7 +11,8 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, firstValidationMessage } from '../../../lib/api';
 import { formatDate, titleCase } from '../../../lib/format';
-import { getRouteTitle } from '../../../lib/routes';
+import { getBreadcrumbs } from '../../../lib/routes';
+import { NAVIGATION } from '../../../lib/roleAccess';
 import ProfileModal from './ProfileModal';
 import { notificationTarget } from '../../../lib/notificationRoutes';
 import { useAuth } from '../../../context/AuthContext';
@@ -37,7 +38,15 @@ export default function Header({ onMenu, mobileOpen }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState('checking');
-  const [routeTitle, routeSubtitle] = getRouteTitle(location.pathname);
+  const pageCrumbs = getBreadcrumbs(location.pathname, location.search);
+  // Prefix the trail with the sidebar section this page belongs to (e.g. Inquiry / Applicant pipeline).
+  const sectionGroup = (NAVIGATION[role] || []).find((group) => group.items.some((item) => item.path === location.pathname));
+  const sectionCrumb = sectionGroup
+    ? { label: sectionGroup.label, path: sectionGroup.items[0].path }
+    : null;
+  const breadcrumbs = sectionCrumb && pageCrumbs[0]?.label !== sectionCrumb.label
+    ? [sectionCrumb, ...pageCrumbs]
+    : pageCrumbs;
 
   const loadNotifications = async () => {
     setNotificationLoading(true);
@@ -166,10 +175,23 @@ export default function Header({ onMenu, mobileOpen }) {
         >
           <FaBars />
         </button>
-        <div className="min-w-0 flex flex-col gap-1 [&_strong]:overflow-hidden [&_strong]:text-text [&_strong]:text-[13px] [&_strong]:font-[790] [&_strong]:tracking-[-.01em] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_span]:overflow-hidden [&_span]:text-muted [&_span]:text-[9px] [&_span]:text-ellipsis [&_span]:whitespace-nowrap max-[681px]:[&_span]:hidden max-[451px]:later:hidden">
-          <strong>{routeTitle}</strong>
-          <span>{routeSubtitle}</span>
-        </div>
+        <nav aria-label="Breadcrumb" className="min-w-0 flex flex-col gap-1">
+          <ol className="m-0 p-0 list-none flex items-center flex-wrap min-w-0 gap-[6px] text-[13px] font-[790] tracking-[-.01em]">
+            {breadcrumbs.map((crumb, index) => {
+              const isLast = index === breadcrumbs.length - 1;
+              return (
+                <li key={`${crumb.label}-${index}`} className="flex items-center gap-[6px] min-w-0" aria-current={isLast ? 'page' : undefined}>
+                  {index > 0 && <span className="text-muted font-[600]" aria-hidden="true">/</span>}
+                  {crumb.path && !isLast ? (
+                    <button type="button" className="p-0 border-0 [background:transparent] text-muted text-[14px] font-[600] cursor-pointer hover:text-text hover:underline" onClick={() => navigate(crumb.path)}>{crumb.label}</button>
+                  ) : (
+                    <strong className="text-text text-[16px] font-[800] whitespace-nowrap overflow-hidden text-ellipsis">{crumb.label}</strong>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
       </div>
 
       <div className="header-right flex items-center gap-3 [&>*]:self-center">

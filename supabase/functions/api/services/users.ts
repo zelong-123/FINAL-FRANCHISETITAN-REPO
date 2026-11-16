@@ -92,10 +92,18 @@ export function clientIp(c: Context<AppEnv>): string | null {
 export async function createAccount(
   c: Context<AppEnv>,
   fields: Row,
-  password: string,
+  password?: string, // 🌟 Made optional so we can pass auth_user_id from an invite instead
 ): Promise<Row> {
   const { db, auth } = c.get('deps');
-  const authUserId = await auth.createUser(fields.email, password);
+  
+  let authUserId = fields.auth_user_id;
+
+  // If no auth_user_id is provided (e.g., old way with temp password), create the auth user
+  if (!authUserId) {
+    if (!password) throw new Error('Password is required to create a new Auth user.');
+    authUserId = await auth.createUser(fields.email, password);
+  }
+
   try {
     return await db.tx(async (tx) => {
       const columns = { ...fields, auth_user_id: authUserId };
@@ -108,7 +116,10 @@ export async function createAccount(
       return row;
     });
   } catch (error) {
-    await auth.deleteUser(authUserId).catch(() => {});
+    // Only delete the auth user if we just created them here, not if they were invited
+    if (!fields.auth_user_id) {
+      await auth.deleteUser(authUserId).catch(() => {});
+    }
     throw error;
   }
 }

@@ -10,6 +10,7 @@ import { resolveWorkspace } from '../services/branchAccess.ts';
 import { adjustStock, inventoryJson, stockStatus } from '../services/inventory.ts';
 import { notifyRoles } from '../services/notifications.ts';
 import { audit, publicUser } from '../services/users.ts';
+import { DELIVERED_ON, OPEN as OPEN_SUPPLY, sqlList } from '../services/supplyStatus.ts';
 
 export const portalRoutes = new Hono<AppEnv>();
 const franchisee = role('franchisee');
@@ -79,7 +80,7 @@ portalRoutes.get('/branch/dashboard', franchisee, async (c) => {
   const { db } = c.get('deps');
   const loc = await resolveLocation(c);
   const inventory = await db.query(`select current_stock, reorder_level, critical_level from inventories where location_id = $1`, [loc.id]);
-  const [{ open }] = await db.query(`select count(*)::int as open from supply_requests where location_id = $1 and status in ('draft', 'submitted', 'under_review', 'endorsed', 'preparing', 'dispatched')`, [loc.id]);
+  const [{ open }] = await db.query(`select count(*)::int as open from supply_requests where location_id = $1 and status in (${sqlList(OPEN_SUPPLY)})`, [loc.id]);
   return ok(c, {
     location: loc,
     summary: {
@@ -102,8 +103,8 @@ portalRoutes.get('/branch/fulfillment', franchisee, async (c) => {
   const { db } = c.get('deps');
   const loc = await resolveLocation(c);
   const columns = 'id, request_number, status, target_delivery_date';
-  const delivered = await db.query(`select ${columns} from supply_requests where location_id = $1 and status in ('delivered', 'completed') order by id desc`, [loc.id]);
-  const awaiting = await db.query(`select ${columns} from supply_requests where location_id = $1 and status = 'dispatched' order by id desc`, [loc.id]);
+  const delivered = await db.query(`select ${columns} from supply_requests where location_id = $1 and status in (${sqlList(DELIVERED_ON)}) and branch_received_at is not null order by id desc`, [loc.id]);
+  const awaiting = await db.query(`select ${columns} from supply_requests where location_id = $1 and status in ('dispatched', 'delivered') and branch_received_at is null order by id desc`, [loc.id]);
   const [last] = await db.query(
     `select t.id, t.type, t.quantity, t.reference_type, t.reference_id, t.transaction_date from inventory_transactions t join inventories i on i.id = t.inventory_id
      where i.location_id = $1 and t.type in ('fulfillment', 'replenishment', 'cancellation') order by t.id desc limit 1`, [loc.id],

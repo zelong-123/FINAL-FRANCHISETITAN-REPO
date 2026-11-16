@@ -14,7 +14,7 @@ import { APPLICANT_MODEL } from '../services/applicantModel.ts';
 import { fileRef, logEvent } from '../services/applicantStage.ts';
 import { assertAssignedSales, notifyAssignedSales, requireReason } from '../services/accountability.ts';
 import {
-  legacyStage, loadRequirementRows, loiRequirement, readFields, REQUIREMENT_MODEL, REQUIREMENT_STAGES, requirementDef, REQUIREMENTS,
+  interviewerOptions, legacyStage, loadRequirementRows, loiRequirement, readFields, REQUIREMENT_MODEL, REQUIREMENT_STAGES, requirementDef, requirementsConfig, REQUIREMENTS,
 } from '../services/requirements.ts';
 
 export const requirementRoutes = new Hono<AppEnv>();
@@ -57,7 +57,8 @@ export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Ro
       key: def.key, stage: def.stage, label: def.label, status: row?.status ?? 'pending', data: row?.data ?? {},
       submitted_by: row?.submitted_by ?? null, submitted_at: row?.submitted_at ?? null,
       reviewed_by: row?.reviewed_by ?? null, reviewed_at: row?.reviewed_at ?? null, return_reason: row?.return_reason ?? null,
-      files: showFiles ? files.filter((d) => row && Number(d.documentable_id) === Number(row.id)) : null,
+      // Admin sees only the current files; Sales keeps the replaced ones as history, marked Replaced.
+      files: showFiles ? files.filter((d) => row && Number(d.documentable_id) === Number(row.id) && (user.role?.name === 'sales' || !d.replaced_at)) : null,
     };
   });
   const summary: Row = {};
@@ -70,7 +71,7 @@ export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Ro
       open: a.status === REQUIREMENT_STAGES[stage].applicant_status && !a.archived_at,
     };
   }
-  return { config: { stages: REQUIREMENT_STAGES, requirements: REQUIREMENTS }, items, summary, loi: await loiRequirement(db, a), files_visible: showFiles };
+  return { config: { stages: REQUIREMENT_STAGES, requirements: await requirementsConfig(db) }, items, summary, loi: await loiRequirement(db, a), files_visible: showFiles };
 }
 
 /** Uploaded files for one file slot: one or several (`key` or `key[]`), type and size checked. */
@@ -102,14 +103,16 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key', staff, async 
   if (current?.status === 'submitted') fail('requirement', `${def.label} is waiting for Admin review.`);
 
   const input = await readInput(c);
-  const data = readFields(def, input);
+  const choices = def.key === 'initial_interview' ? { interviewer: await interviewerOptions(db) } : {};
+  const data = readFields(def, input, choices);
   const uploads = Object.fromEntries(def.files.map((slot) => [slot.key, filesFor(input, slot)]));
   const existing = current ? await db.query(
     `select id, type, original_name from documents where documentable_type = $1 and documentable_id = $2 and replaced_at is null and removed_at is null`, [REQUIREMENT_MODEL, current.id],
   ) : [];
-  // A resubmission may keep the files Admin did not object to; a slot with new files replaces them.
+  // A resubmission after a Return starts clean: the files Admin returned are not kept, so required files must be attached again.
+  const kept = current?.status === 'returned' ? [] : existing;
   for (const slot of def.files) {
-    if (slot.required && !uploads[slot.key].length && !existing.some((d) => d.type === slot.key)) fail(slot.key, `Attach the ${slot.label.toLowerCase()}.`);
+    if (slot.required && !uploads[slot.key].length && !kept.some((d) => d.type === slot.key)) fail(slot.key, `Attach the ${slot.label.toLowerCase()}.`);
   }
 
   const { row, stored } = await db.tx(async (tx) => {
@@ -119,10 +122,14 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key', staff, async 
       : await insertRow(tx, 'applicant_requirements', { applicant_id: a.id, requirement_key: def.key, stage: def.stage, status: 'submitted', data, submitted_by_user_id: user.id, submitted_at: now });
     const added: Row[] = [];
     const swapped: Row[] = [];
+    if (current?.status === 'returned' && existing.length) {
+      await tx.query(`update documents set replaced_at = now() where id = any($1::bigint[])`, [`{${existing.map((d) => d.id).join(',')}}`]);
+      swapped.push(...existing);
+    }
     for (const slot of def.files) {
       const files = uploads[slot.key];
       if (!files.length) continue;
-      const old = existing.filter((d) => d.type === slot.key);
+      const old = current?.status === 'returned' ? [] : existing.filter((d) => d.type === slot.key);
       for (const file of files) added.push(await storeDocument(c, tx, file, `applicants/${a.id}/requirements/${def.key}`, { type: REQUIREMENT_MODEL, id: saved.id }, slot.key));
       if (old.length) {
         await tx.query(`update documents set replaced_at = now(), replaced_by_document_id = $1 where id = any($2::bigint[])`, [added[added.length - 1].id, `{${old.map((d) => d.id).join(',')}}`]);
@@ -150,11 +157,13 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key/accept', staff,
   const def = loadDef(c);
   if (roleName(c) !== 'admin') abort(403, 'Only Admin can accept a requirement. Sales cannot verify its own submission.');
   const user = c.get('user');
+  const v = await validate(db, await readInput(c), { note: ['nullable', 'string', 'max:2000'] });
+  const note = v.note ? String(v.note).trim() || null : null;
   const [current] = await db.query(`select * from applicant_requirements where applicant_id = $1 and requirement_key = $2`, [a.id, def.key]);
   if (!current || current.status !== 'submitted') fail('requirement', `${def.label} has no submission waiting for review.`);
   await db.tx(async (tx) => {
     await updateRow(tx, 'applicant_requirements', current.id, { status: 'accepted', reviewed_by_user_id: user.id, reviewed_at: new Date(), return_reason: null });
-    await logEvent(tx, a, 'requirement_accepted', user.id, { requirement_key: def.key, requirement_id: current.id }, null, {
+    await logEvent(tx, a, 'requirement_accepted', user.id, { requirement_key: def.key, requirement_id: current.id }, note, {
       step: def.key, old_values: { status: 'submitted' }, new_values: { status: 'accepted' },
     });
     await audit(c, tx, 'applicant.requirement_accepted', { type: APPLICANT_MODEL, id: a.id }, { status: 'submitted' }, { requirement_key: def.key, status: 'accepted' });
@@ -183,6 +192,49 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key/return', staff,
   });
   await notifyAssignedSales(db, a, 'requirement_returned', 'Requirement returned', `Admin returned "${def.label}" for ${a.full_name}: ${reason}`, { requirement_key: def.key }, user);
   return ok(c, await requirementsPayload(db, a, user), `${def.label} returned to Sales.`);
+});
+
+/** Admin re-opens an Accepted requirement so it can be reviewed again (reason required). */
+requirementRoutes.post('/applicants/:applicant/requirements/:key/reopen', staff, async (c) => {
+  const { db } = c.get('deps');
+  const a = await loadApplicant(c);
+  const def = loadDef(c);
+  if (roleName(c) !== 'admin') abort(403, 'Only Admin can re-open a requirement.');
+  const user = c.get('user');
+  const v = await validate(db, await readInput(c), { reason: ['nullable', 'string', 'max:2000'] });
+  const [current] = await db.query(`select * from applicant_requirements where applicant_id = $1 and requirement_key = $2`, [a.id, def.key]);
+  if (!current || current.status !== 'accepted') fail('requirement', `${def.label} is not Accepted.`);
+  const reason = requireReason(v.reason, 'reason', 'a reason to re-open');
+  await db.tx(async (tx) => {
+    await updateRow(tx, 'applicant_requirements', current.id, { status: 'submitted', reviewed_by_user_id: null, reviewed_at: null });
+    await logEvent(tx, a, 'requirement_reopened', user.id, { requirement_key: def.key, requirement_id: current.id }, reason, {
+      step: def.key, old_values: { status: 'accepted' }, new_values: { status: 'submitted' },
+    });
+    await audit(c, tx, 'applicant.requirement_reopened', { type: APPLICANT_MODEL, id: a.id }, { status: 'accepted' }, { requirement_key: def.key, status: 'submitted', reason });
+  });
+  return ok(c, await requirementsPayload(db, a, user), `${def.label} re-opened for review.`);
+});
+
+/** Admin removes a requirement file. Soft delete (kept as removed) and only while the item is not Accepted. */
+requirementRoutes.delete('/applicants/:applicant/requirements/:key/documents/:document', staff, async (c) => {
+  const { db } = c.get('deps');
+  const a = await loadApplicant(c);
+  const def = loadDef(c);
+  const user = c.get('user');
+  if (!canSeeRequirementFiles(user, a)) abort(403, 'Only Admin and the assigned Sales user can remove requirement files.');
+  if (roleName(c) === 'sales') await assertAssignedSales(c, a);
+  const [current] = await db.query(`select * from applicant_requirements where applicant_id = $1 and requirement_key = $2`, [a.id, def.key]);
+  if (!current || current.status === 'accepted') fail('requirement', `${def.label} is Accepted. Re-open it before removing a file.`);
+  const [d] = await db.query(
+    `select d.* from documents d join applicant_requirements r on r.id = d.documentable_id
+     where d.id = $1 and d.documentable_type = $2 and r.applicant_id = $3 and r.requirement_key = $4`,
+    [routeId(c, 'document'), REQUIREMENT_MODEL, a.id, def.key],
+  );
+  requireFound(d);
+  if (d.removed_at) return ok(c, await requirementsPayload(db, a, user), 'File was already removed.');
+  await db.query(`update documents set removed_at = now(), removed_by_user_id = $1 where id = $2`, [user.id, d.id]);
+  await audit(c, db, 'applicant.requirement_file_removed', { type: APPLICANT_MODEL, id: a.id }, { document_id: d.id, original_name: d.original_name }, { requirement_key: def.key });
+  return ok(c, await requirementsPayload(db, a, user), `${d.original_name} removed.`);
 });
 
 /** A requirement file: Admin and the assigned Sales user only (never Marketing or the branch). */

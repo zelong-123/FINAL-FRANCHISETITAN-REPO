@@ -1,130 +1,118 @@
 import { useState } from 'react';
-import { api, firstValidationMessage } from '../../lib/api';
-import { useAuth } from '../../context/AuthContext';
-import { downloadCsv, downloadPdf } from '../../lib/export';
-import { formatNumber } from '../../lib/format';
-import { supplyStatusLabel } from '../../lib/supplyActions';
+import { api, ApiError, firstValidationMessage } from '../../lib/api';
+import { printDeliveryReceipt } from '../../lib/deliveryReceipt';
 import useRemote from '../../lib/useRemote';
 import { EmptyState, Modal, Notice } from '../ApiUi';
+import { Callout } from './supplyUi';
+import { BTN_GHOST, BTN_PRIMARY, INPUT, LABEL, qty } from './supplyStyles';
 
-const EXPORT_HEADERS = ['Category', 'Product', 'Qty', 'Unit', 'Stock before', 'Deducted', 'Stock now'];
+const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+const FIELDS = [
+  { key: 'driver_name', label: 'Driver name', type: 'text', placeholder: 'Juan Dela Cruz', hint: 'Letters, spaces and . - \' only' },
+  { key: 'driver_contact', label: 'Driver contact', type: 'tel', placeholder: '09171234567', hint: '11 digits', max: 11 },
+  { key: 'plate_number', label: 'Plate number', type: 'text', placeholder: 'ABC 1234' },
+  { key: 'departed_at', label: 'Departure', type: 'datetime-local', hint: 'Not in the future' },
+  { key: 'eta_at', label: 'ETA', type: 'datetime-local', hint: 'On or after the departure' },
+];
+/** Saturday or Sunday in Manila for a datetime-local value (entered in the browser's zone). */
+function weekendInManila(value) {
+  if (!value) return false;
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short' }).format(new Date(value));
+  return day === 'Sat' || day === 'Sun';
+}
 
 /**
- * Confirms that a request that is Preparing (status "preparing") has left the branch.
- * The stock table comes from the stored snapshot; the confirmer label is display-only.
+ * Dispatch a request that is Preparing: driver, vehicle, departure and ETA. The endorsed quantities
+ * leave the warehouse now. Afterwards the Delivery Receipt can be printed.
  */
 export default function MarkDispatchedModal({ requestId, onClose, onDispatched }) {
-  const { user } = useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  const remote = useRemote(async () => {
-    const response = await api.get(`/supply-requests/${requestId}`);
-    return response.data;
-  }, [requestId]);
-
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [done, setDone] = useState(null); // the dispatched request
+  const [form, setForm] = useState(() => ({ driver_name: '', driver_contact: '', plate_number: '', departed_at: nowLocal(), eta_at: nowLocal() }));
+  const complete = FIELDS.every((field) => String(form[field.key] || '').trim());
+  const remote = useRemote(async () => (await api.get(`/supply-requests/${requestId}`)).data, [requestId]);
   const request = remote.data;
-  const groups = request?.line_groups || [];
-  const snapshot = request?.stock_snapshot;
-  const snapshotByProduct = new Map((snapshot || []).map((line) => [line.product_id, line]));
-
-  // Export rows: same data as the on-screen table, no personal data.
-  const exportRows = groups.flatMap((group) => group.lines.map((line) => {
-    const before = snapshotByProduct.get(line.product_id);
-    return [
-      group.category_name || 'Uncategorized',
-      line.product_name,
-      formatNumber(line.requested),
-      line.unit || '',
-      before ? formatNumber(before.stock_before) : '',
-      before ? formatNumber(before.deducted) : '',
-      before ? formatNumber(before.stock_now) : '',
-    ];
-  }));
-
-  const exportCsv = () => downloadCsv(`dispatch-${request.request_number}`, EXPORT_HEADERS, exportRows);
-  const exportPdf = () => downloadPdf(`dispatch-${request.request_number}`, EXPORT_HEADERS, exportRows, `Dispatch ${request.request_number}`, 'Stock before preparing, deducted and now');
+  const items = (request?.items || []).filter((i) => Number(i.quantity_endorsed ?? i.quantity_requested) > 0);
+  const weekend = weekendInManila(form.eta_at);
 
   const confirm = async () => {
-    setSaving(true);
-    setError('');
+    setSaving(true); setError(''); setFieldErrors({});
     try {
-      await api.patch(`/supply-requests/${requestId}/status`, { status: 'dispatched' });
-      onDispatched();
-    } catch (saveError) {
-      setError(firstValidationMessage(saveError));
+      const res = await api.post(`/supply-requests/${requestId}/dispatch`, {
+        ...form, plate_number: form.plate_number.toUpperCase(),
+        departed_at: new Date(form.departed_at).toISOString(), eta_at: new Date(form.eta_at).toISOString(),
+      });
+      setDone(res.data);
+    } catch (caught) {
+      const errors = caught instanceof ApiError ? Object.fromEntries(Object.entries(caught.errors || {}).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])) : {};
+      setFieldErrors(errors);
+      setError(firstValidationMessage(caught));
     } finally {
       setSaving(false);
     }
   };
+  const print = async () => {
+    try {
+      const opened = await printDeliveryReceipt(async () => (await api.get(`/supply-requests/${requestId}/delivery-receipt`)).data);
+      if (!opened) setError('Allow pop-ups for this site to print the Delivery Receipt.');
+    } catch (caught) {
+      setError(firstValidationMessage(caught));
+    }
+  };
 
-  const footer = request ? (
+  const footer = done ? (
     <>
-      <button type="button" className="inline-flex items-center justify-center later:gap-[6px] later:min-h-[38px] p-[0_16px] later:rounded-[10px] later:[border:1px_solid_var(--sr-border-strong)] later-2:[background:transparent] later:[font-family:inherit] [font-style:inherit] [line-height:inherit] later:text-[0.92rem] later:font-[500] whitespace-nowrap cursor-pointer later:[transition:background_0.15s_ease,_border-color_0.15s_ease,_opacity_0.15s_ease] later:[&:hover:not(:disabled)]:[background:var(--sr-surface-hover)] later:[&:hover:not(:disabled)]:border-[color:var(--sr-muted)] focus-visible:[outline:2px_solid_var(--sr-accent)] focus-visible:[outline-offset:2px] disabled:opacity-[0.5] disabled:cursor-not-allowed motion-reduce:later-2:[transition:none] later-2:border-transparent later-2:text-[color:var(--sr-muted)]" onClick={exportCsv}>Export CSV</button>
-      <button type="button" className="inline-flex items-center justify-center later:gap-[6px] later:min-h-[38px] p-[0_16px] later:rounded-[10px] later:[border:1px_solid_var(--sr-border-strong)] later-2:[background:transparent] later:[font-family:inherit] [font-style:inherit] [line-height:inherit] later:text-[0.92rem] later:font-[500] whitespace-nowrap cursor-pointer later:[transition:background_0.15s_ease,_border-color_0.15s_ease,_opacity_0.15s_ease] later:[&:hover:not(:disabled)]:[background:var(--sr-surface-hover)] later:[&:hover:not(:disabled)]:border-[color:var(--sr-muted)] focus-visible:[outline:2px_solid_var(--sr-accent)] focus-visible:[outline-offset:2px] disabled:opacity-[0.5] disabled:cursor-not-allowed motion-reduce:later-2:[transition:none] later-2:border-transparent later-2:text-[color:var(--sr-muted)]" onClick={exportPdf}>Export PDF</button>
-      <button type="button" className="inline-flex items-center justify-center later:gap-[6px] later:min-h-[38px] p-[0_16px] later:rounded-[10px] later:[border:1px_solid_var(--sr-border-strong)] later-2:[background:transparent] later:text-[color:var(--sr-text)] later:[font-family:inherit] [font-style:inherit] [line-height:inherit] later:text-[0.92rem] whitespace-nowrap cursor-pointer later:[transition:background_0.15s_ease,_border-color_0.15s_ease,_opacity_0.15s_ease] focus-visible:[outline:2px_solid_var(--sr-accent)] focus-visible:[outline-offset:2px] disabled:opacity-[0.5] disabled:cursor-not-allowed motion-reduce:later-2:[transition:none] later-2:border-[color:var(--sr-accent)] later-2:font-[600] later-2:[&:hover:not(:disabled)]:[background:var(--sr-accent-soft)] later-2:[&:hover:not(:disabled)]:border-[color:var(--sr-accent)]" onClick={confirm} disabled={saving}>
-        {saving ? 'Updating…' : 'Confirm dispatched'}
-      </button>
+      <button type="button" className={BTN_GHOST} onClick={print}>Print Delivery Receipt</button>
+      <button type="button" className={BTN_PRIMARY} onClick={() => onDispatched(done)}>Done</button>
+    </>
+  ) : request ? (
+    <>
+      <button type="button" className={BTN_GHOST} onClick={onClose} disabled={saving}>Back</button>
+      <button type="button" className={BTN_PRIMARY} onClick={confirm} disabled={saving || !complete}>{saving ? 'Dispatching…' : 'Confirm dispatch'}</button>
     </>
   ) : null;
 
   return (
-    <Modal title={request ? `Dispatch ${request.request_number}` : 'Dispatch request'} onClose={onClose} size="wide" footer={footer}>
+    <Modal title={request ? `Dispatch ${request.request_number}` : 'Dispatch request'} onClose={done ? () => onDispatched(done) : onClose} footer={footer}>
       {remote.error && <Notice type="error">{remote.error}</Notice>}
-      {error && <Notice type="error">{error}</Notice>}
+      <Notice type="error">{error}</Notice>
       {!request && !remote.error && <EmptyState label="Loading request…" />}
-
-      {request && (
-        <div className="sr-detail">
-          <header className="sr-detail-head">
-            <dl>
-              <div><dt>Branch</dt><dd>{request.location?.name || '—'}</dd></div>
-              <div><dt>Status</dt><dd>{supplyStatusLabel(request.status)}</dd></div>
-              <div><dt>Confirmed by</dt><dd>{user?.full_name || 'Signed-in user'}</dd></div>
-            </dl>
-          </header>
-
-          <section className="sr-detail-section">
-            <strong>Stock before preparing</strong>
-            {!snapshot ? (
-              <EmptyState label="No snapshot recorded for this request." />
-            ) : (
-              <table className="[&_tr.is-short_td]:text-[color:var(--sr-danger,_var(--danger-text))]">
-                <thead><tr><th>Product</th><th>Stock before preparing</th><th>Deducted</th><th>Stock now</th></tr></thead>
-                <tbody>
-                  {snapshot.map((line) => (
-                    <tr key={line.product_id}>
-                      <td>{line.product_name}</td>
-                      <td>{formatNumber(line.stock_before)}</td>
-                      <td>{formatNumber(line.deducted)}</td>
-                      <td>{formatNumber(line.stock_now)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-
-          <section className="sr-detail-section">
-            <strong>Products</strong>
-            {groups.map((group) => (
-              <div key={group.category_id ?? 'none'} className="sr-detail-group">
-                <h4>{group.category_name || 'Uncategorized'}</h4>
-                <table className="[&_tr.is-short_td]:text-[color:var(--sr-danger,_var(--danger-text))]">
-                  <thead><tr><th>Product</th><th>Qty / unit</th></tr></thead>
-                  <tbody>
-                    {group.lines.map((line) => (
-                      <tr key={line.product_id}>
-                        <td>{line.product_name}</td>
-                        <td>{formatNumber(line.requested)} {line.unit}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      {done && (
+        <>
+          <Notice type="success">{done.request_number} is on the way. The warehouse stock was deducted and the branch was notified.</Notice>
+          {(done.warnings || []).map((w) => <Callout key={w}>{w}</Callout>)}
+          <p className="text-muted text-[12px]">Print the Delivery Receipt for the driver: it lists the items, driver, plate, departure, ETA and the signature lines.</p>
+        </>
+      )}
+      {request && !done && (
+        <>
+          <div className="grid grid-cols-2 gap-[12px] max-[560px]:grid-cols-1">
+            {FIELDS.map((field) => (
+              <div key={field.key}>
+                <label className={LABEL} htmlFor={`dispatch-${field.key}`}>{field.label}</label>
+                <input
+                  id={`dispatch-${field.key}`} className={INPUT} type={field.type} value={form[field.key]} placeholder={field.placeholder}
+                  maxLength={field.max || 120} max={field.key === 'departed_at' ? nowLocal() : undefined} aria-invalid={Boolean(fieldErrors[field.key])}
+                  onChange={(e) => { const value = field.key === 'plate_number' ? e.target.value.toUpperCase() : e.target.value; setForm((current) => ({ ...current, [field.key]: value })); }}
+                />
+                {fieldErrors[field.key] ? <small role="alert" className="block mt-[4px] text-danger-text text-[11.5px]">{fieldErrors[field.key]}</small> : field.hint && <small className="block mt-[4px] text-muted text-[11px]">{field.hint}</small>}
               </div>
             ))}
-          </section>
-        </div>
+          </div>
+          {weekend && <Callout>The ETA is on a weekend. Make sure the branch can receive.</Callout>}
+          <h4 className="m-[16px_0_6px] text-muted text-[10.5px] font-[800] tracking-[.14em] uppercase">Items to load (endorsed)</h4>
+          <ul className="m-0 p-0 [list-style:none] grid gap-[6px]">
+            {items.map((item) => (
+              <li key={item.id} className="flex justify-between gap-3 p-[8px_12px] border border-line rounded-[10px] text-[13px]">
+                <span className="text-text">{item.product?.name || item.product_name_snapshot}</span>
+                <b className="text-text">{qty(item.quantity_endorsed ?? item.quantity_requested)} {item.product?.unit || item.unit_snapshot}</b>
+              </li>
+            ))}
+          </ul>
+          <small className="block mt-[8px] text-muted text-[11.5px]">The prepared quantity must equal the endorsed one. If something is short, close this and use Report shortage.</small>
+        </>
       )}
     </Modal>
   );

@@ -1,15 +1,14 @@
-declare const Deno: any;
 // How a new account gets its first password, plus the shared rules for account fields.
 //
-// Staff accounts made in User Management have NO password to hand over. Supabase Auth needs
-// a password to create the sign-in, so the system gives it a random placeholder that is never
-// shown or stored anywhere, then emails the user an invitation link (emailSetPasswordLink)
-// where they create their own password. The email is sent by Supabase Auth through the custom
-// SMTP (Brevo) set in the dashboard. If it cannot be sent, the Admin can use Resend invitation.
+// Today there is no email integration, so the system generates a strong temporary password,
+// returns it ONCE to the Admin who created the account, and marks the account
+// must_change_password. Nothing stores it in plain text (Supabase Auth keeps only its hash)
+// and it is never written to the audit log.
 //
-// issueInitialCredentials() below is still used where an account is made with a temporary
-// password (Franchisee accounts created from an applicant). Nothing stores a password in plain
-// text (Supabase Auth keeps only its hash) and it is never written to the audit log.
+// A future "email a set-password link" replaces issueInitialCredentials() only: it would
+// create the sign-in with an unguessable password nobody sees, send the link, and return
+// { method: 'email_link', ... }. The routes and the form stay the same, because they only
+// pass the returned `delivery` object through.
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Row } from '../lib/db.ts';
@@ -20,8 +19,6 @@ export type CredentialDelivery =
   | { method: 'email_link'; sent_to: string; note: string };
 
 export const TEMPORARY_PASSWORD_NOTE = 'Share it privately. The user must change it at first sign-in.';
-export const SET_PASSWORD_NOTE = 'An invitation link was emailed to them. They will create their own password from it. The link expires, so ask them to open it soon, and to check spam if it does not arrive.';
-export const EMAIL_FAILED_NOTE = 'The account was created, but the invitation email could not be sent. Use Update > Resend invitation to try again.';
 export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX = 15;
 
@@ -56,48 +53,6 @@ export function generateTemporaryPassword(length = 14): string {
 export function issueInitialCredentials(_c: Context<AppEnv>, _email: string): { password: string; delivery: CredentialDelivery } {
   const password = generateTemporaryPassword();
   return { password, delivery: { method: 'temporary_password', temporary_password: password, note: TEMPORARY_PASSWORD_NOTE } };
-}
-
-/**
- * Asks Supabase Auth to email the user an invitation link (its recovery email, sent through the
- * project's custom SMTP). `redirectTo` is the page the link opens (the browser sends
- * `${origin}/reset-password`); Supabase only honours it when it is in the dashboard's Redirect
- * URLs list, otherwise it falls back to the Site URL. Without `redirectTo`, the optional secret
- * APP_URL is used. SUPABASE_URL and SUPABASE_ANON_KEY are provided to Edge Functions automatically.
- * Returns false instead of throwing, so the caller can report it.
- */
-export async function emailSetPasswordLink(email: string, redirectTo?: unknown): Promise<boolean> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  if (!supabaseUrl || !anonKey) {
-    console.error('emailSetPasswordLink: SUPABASE_URL or SUPABASE_ANON_KEY is not set.');
-    return false;
-  }
-
-  let target = '';
-  if (typeof redirectTo === 'string' && /^https?:\/\//.test(redirectTo)) target = redirectTo;
-  else if (Deno.env.get('APP_URL')) target = `${Deno.env.get('APP_URL')!.replace(/\/$/, '')}/reset-password`;
-  if (!target) {
-    console.error('emailSetPasswordLink: no redirect_to was sent and APP_URL is not set.');
-    return false;
-  }
-
-  try {
-    const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/recover?redirect_to=${encodeURIComponent(target)}`, {
-      method: 'POST',
-      headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!response.ok) {
-      console.error('emailSetPasswordLink failed', response.status, await response.text().catch(() => ''));
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error('emailSetPasswordLink error', error);
-    return false;
-  }
 }
 
 /** Letters (any language, e.g. ñ, é), spaces, period, hyphen and apostrophe. At least two letters. */

@@ -40,15 +40,19 @@ async function mirror(db: Db, location: Row, actor: Row, product: Row, quantity:
   });
 }
 
-/** Called once by the Delivered transition: credits the branch, creating missing materials. */
-export async function deliverToBranch(db: Db, request: Row, actor: Row): Promise<Row> {
+/**
+ * Confirm Receipt (supply workflow): credits only the GOOD quantity of each item to the branch,
+ * creating missing materials. `good` maps a supply_request_items id to its good quantity.
+ * Damaged and short quantities are recorded on the items, never credited nor returned.
+ */
+export async function creditReceived(db: Db, request: Row, actor: Row, good: Map<number, number>): Promise<Row> {
   if (request.branch_received_at) return { created_materials: [], credited: 0, duplicate: true };
   const [location] = await db.query(`select * from franchise_locations where id = $1`, [request.location_id]);
   if (!location) fail('location', 'The requesting branch is no longer configured.');
   const created: string[] = [];
   let credited = 0;
   for (const item of await itemsOf(db, request.id)) {
-    const quantity = Number(item.quantity_requested);
+    const quantity = round2(good.get(Number(item.id)) ?? 0);
     const product = item.product;
     if (quantity <= 0 || !product) continue;
     let material = await materialFor(db, location.id, product);
@@ -57,13 +61,10 @@ export async function deliverToBranch(db: Db, request: Row, actor: Row): Promise
       created.push(material!.name);
     }
     await ledger.creditDelivery(db, location, actor, {
-      material_id: material!.id, quantity_milli: Math.round(quantity * 1000), reason: `Delivered ${request.request_number}`, idempotency_key: `delivery-${request.id}-${product.id}`,
+      material_id: material!.id, quantity_milli: Math.round(quantity * 1000), reason: `Received ${request.request_number}`, idempotency_key: `receipt-${request.id}-${product.id}`,
     });
     await mirror(db, location, actor, product, quantity, request);
     credited += 1;
-    if (item.product_name_snapshot === null) {
-      await updateRow(db, 'supply_request_items', item.id, { quantity_fulfilled: item.quantity_requested, product_name_snapshot: product.name, unit_snapshot: product.unit });
-    }
   }
   await updateRow(db, 'supply_requests', request.id, { branch_received_at: new Date(), branch_received_by_user_id: actor.id });
   return { created_materials: created, credited, duplicate: false };

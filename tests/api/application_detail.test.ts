@@ -23,8 +23,8 @@ async function walked() {
   const created = await call('POST', '/inquiries', { token: marketing, body: { lead_name: 'Detail Person', first_name: 'Detail', last_name: 'Person', phone: `092112345${String(walks).padStart(2, '0')}`, source: 'facebook', preferred_brand_id: brand.id } });
   await call('POST', `/inquiries/${created.json.data.id}/endorse`, { token: marketing, body: {} });
   const a = (await call('POST', `/inquiries/${created.json.data.id}/convert`, { token: admin, body: { assigned_sales_user_id: salesUser.id } })).json.data;
-  await call('POST', `/applicants/${a.id}/requirements/business_background`, { token: sales, form: requirementForm('business_background') });
-  await call('POST', `/applicants/${a.id}/requirements/business_background/return`, { token: admin, body: { reason: 'Add the kiosk years.' } });
+  await call('POST', `/applicants/${a.id}/requirements/application_form`, { token: sales, form: requirementForm('application_form') });
+  await call('POST', `/applicants/${a.id}/requirements/application_form/return`, { token: admin, body: { reason: 'Add the signed copy.' } });
   await completeStage(call, sales, admin, a.id);
   await call('POST', `/applicants/${a.id}/confirm-qualified`, { token: admin, body: { confirmed: true, remarks: 'All requirements accepted.' } });
   await call('POST', `/applicants/${a.id}/follow-ups`, { token: sales, body: { channel: 'call', outcome: 'reached', notes: 'Explained the next stage.' } });
@@ -57,7 +57,7 @@ test('the History is every action in time order, tagged by page, filterable by s
   assert.equal(find('converted').page, 'overview');
   assert.equal(find('sales_assigned').page, 'overview');
   assert.equal(find('requirement_returned').page, 'qualification');
-  assert.equal(find('requirement_returned').reason, 'Add the kiosk years.');
+  assert.equal(find('requirement_returned').reason, 'Add the signed copy.');
   assert.equal(find('requirement_returned').role, 'admin');
   assert.equal(find('follow_up_logged').page, 'overview');
   const qualified = all.find((h: any) => h.from_stage === 'converted' && h.stage === 'qualified');

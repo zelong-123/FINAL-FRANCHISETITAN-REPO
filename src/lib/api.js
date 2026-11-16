@@ -160,6 +160,14 @@ export async function downloadFile(path, query, fallbackName = 'download.csv') {
   return { filename: link.download, headers: response.headers };
 }
 
+/** A private file (photo, POD) as a Blob, read with the auth header; the caller owns any object URL. */
+export async function fetchBlob(path) {
+  const token = await authToken.get();
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+  if (!response.ok) throw new ApiError('The file could not be opened.', response.status);
+  return response.blob();
+}
+
 export function firstValidationMessage(error) {
   if (!(error instanceof ApiError)) return error?.message || 'Something went wrong.';
   const first = Object.values(error.errors || {}).flat()[0];

@@ -892,7 +892,6 @@ export default function EstimatedRequirement({ embedded = false }) {
         <PageHeader
           title="Analytics and Forecasting"
           subtitle="Usage-based demand and supply estimates"
-          eyebrow="Analytics and Forecasting"
         />
       )}
 

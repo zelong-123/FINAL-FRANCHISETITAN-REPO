@@ -62,3 +62,29 @@ test('unselecting removes one row and the payload keeps every item', () => {
     { product_id: 2, quantity_requested: 5 },
   ]);
 });
+
+test('the branch tracker: Submitted → Approved → On the way → Received', async () => {
+  const { branchStep, BRANCH_STEPS } = await import('./branchWorkspace.js');
+  assert.deepEqual(BRANCH_STEPS, ['Submitted', 'Approved', 'On the way', 'Received']);
+  assert.equal(branchStep('under_review').step, 0);
+  assert.equal(branchStep('returned').label, 'Returned – edit and resubmit');
+  assert.equal(branchStep('scheduled').step, 1);
+  assert.equal(branchStep('on_hold').label, 'Approved – on hold for restock');
+  assert.equal(branchStep('dispatched').step, 2);
+  assert.equal(branchStep('dispatched', '2026-11-11T08:00:00Z').step, 3, 'received before the POD');
+  assert.equal(branchStep('completed_with_discrepancy').step, 3);
+  assert.equal(branchStep('cancelled').stopped, true);
+  assert.equal(branchStep('draft').step, -1);
+});
+
+test('Confirm Receipt lines are checked like the server does', async () => {
+  const { receiptLineErrors } = await import('./branchWorkspace.js');
+  assert.deepEqual(receiptLineErrors({ good: 10, damaged: 0, short: 0 }, 10), {});
+  assert.match(receiptLineErrors({ good: 8, damaged: 0, short: 0 }, 10).sum, /must equal the 10 dispatched \(now 8\)/);
+  const damaged = receiptLineErrors({ good: 8, damaged: 2, short: 0 }, 10);
+  assert.ok(damaged.damage_reason && damaged.photo && !damaged.sum);
+  assert.deepEqual(receiptLineErrors({ good: 8, damaged: 2, short: 0, damage_reason: 'Crushed box', photo: {} }, 10), {});
+  assert.ok(receiptLineErrors({ good: 9, damaged: 0, short: 1 }, 10).short_reason);
+  assert.ok(receiptLineErrors({ good: -1, damaged: 0, short: 0 }, 10).sum);
+  assert.ok(receiptLineErrors({ good: '', damaged: 0, short: 0 }, 10).sum, 'empty good is not zero');
+});

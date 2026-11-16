@@ -17,11 +17,14 @@ import {
 } from 'recharts';
 import {
   FaBoxesStacked,
+  FaCalendarCheck,
   FaCircleCheck,
   FaClipboardCheck,
   FaClipboardList,
   FaHandshake,
   FaMagnifyingGlass,
+  FaPause,
+  FaRotateLeft,
   FaTriangleExclamation,
   FaTruckFast,
 } from 'react-icons/fa6';
@@ -34,22 +37,31 @@ const PALETTE = ['#6687ff', '#8b6dff', '#32c997', '#f4b84a', '#54a8ff', '#f56d7d
 const GRID = 'rgba(143, 154, 178, .16)';
 const AXIS = '#8f9ab2';
 
+// One entry per open supply status (the pipeline's stages); colours come from PALETTE.
 const STAGE_COLORS = {
   submitted: '#54a8ff',
   under_review: '#6687ff',
-  endorsed: '#8b6dff',
+  returned: '#9db2ff',
+  waiting_logistics: '#8b6dff',
+  scheduled: '#4dd4ac',
+  on_hold: '#f56d7d',
   preparing: '#f4b84a',
   dispatched: '#9db2ff',
   delivered: '#32c997',
+  discrepancy_review: '#f56d7d',
 };
 
 const STAGE_ICONS = {
   submitted: FaClipboardList,
   under_review: FaMagnifyingGlass,
-  endorsed: FaHandshake,
+  returned: FaRotateLeft,
+  waiting_logistics: FaHandshake,
+  scheduled: FaCalendarCheck,
+  on_hold: FaPause,
   preparing: FaBoxesStacked,
   dispatched: FaTruckFast,
   delivered: FaCircleCheck,
+  discrepancy_review: FaTriangleExclamation,
 };
 
 function ChartTooltip({ active, payload, label }) {
@@ -576,7 +588,7 @@ const TRACKER_CARDS = [
 
 export function SupplyStageTracker({ data, loading, error }) {
   if (loading) return <LoadingState label="Loading supply pipeline…" />;
-  if (error) return <Notice type="error">{error}</Notice>;
+  if (error) return <Notice type="error" inline>{error}</Notice>;
 
   const stages = data?.stages || [];
   const kpis = data?.kpis || {};
@@ -600,7 +612,7 @@ export function SupplyStageTracker({ data, loading, error }) {
             <div className="tracker-step [.dashboard-page_&]:relative [.dashboard-page_&]:min-w-0 [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:gap-[9px]" key={stage.key} data-stage={stage.key}>
               <span className="[.dashboard-page_&]:text-text-secondary [.dashboard-page_&]:text-[9.5px] [.dashboard-page_&]:font-[740] [.dashboard-page_&]:text-center [.dashboard-page_&]:whitespace-nowrap">{stage.label}</span>
               <div className="[.dashboard-page_&]:relative [.dashboard-page_&]:w-full [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-center">
-                <span className="[.dashboard-page_&]:[--stage-c:var(--accent)] [.dashboard-page_&]:relative [.dashboard-page_&]:z-1 [.dashboard-page_&]:w-[48px] [.dashboard-page_&]:h-[48px] [.dashboard-page_&]:grid [.dashboard-page_&]:place-items-center [.dashboard-page_&]:[border:1px_solid_color-mix(in_srgb,_var(--stage-c)_55%,_transparent)] [.dashboard-page_&]:rounded-[50%] [.dashboard-page_&]:text-[color:var(--stage-c)] [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--stage-c)_13%,_var(--panel-2))] [.dashboard-page_&]:[box-shadow:0_0_0_7px_color-mix(in_srgb,_var(--stage-c)_8%,_transparent),_0_0_20px_color-mix(in_srgb,_var(--stage-c)_38%,_transparent)] [.dashboard-page_&]:text-[17px] [.dashboard-page_.tracker-step[data-stage='submitted']_&]:[--stage-c:#54a8ff] later:[.dashboard-page_.tracker-step[data-stage='under\_review']_&]:[--stage-c:#6687ff] later-2:[.dashboard-page_.tracker-step[data-stage='endorsed']_&]:[--stage-c:#8b6dff] later-3:[.dashboard-page_.tracker-step[data-stage='preparing']_&]:[--stage-c:#f4b84a] later-4:[.dashboard-page_.tracker-step[data-stage='dispatched']_&]:[--stage-c:#9db2ff] later-5:[.dashboard-page_.tracker-step[data-stage='delivered']_&]:[--stage-c:#32c997]"><Icon aria-hidden="true" /></span>
+                <span className="[.dashboard-page_&]:[--stage-c:var(--accent)] [.dashboard-page_&]:relative [.dashboard-page_&]:z-1 [.dashboard-page_&]:w-[48px] [.dashboard-page_&]:h-[48px] [.dashboard-page_&]:grid [.dashboard-page_&]:place-items-center [.dashboard-page_&]:[border:1px_solid_color-mix(in_srgb,_var(--stage-c)_55%,_transparent)] [.dashboard-page_&]:rounded-[50%] [.dashboard-page_&]:text-[color:var(--stage-c)] [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--stage-c)_13%,_var(--panel-2))] [.dashboard-page_&]:[box-shadow:0_0_0_7px_color-mix(in_srgb,_var(--stage-c)_8%,_transparent),_0_0_20px_color-mix(in_srgb,_var(--stage-c)_38%,_transparent)] [.dashboard-page_&]:text-[17px] [.dashboard-page_.tracker-step[data-stage='submitted']_&]:[--stage-c:#54a8ff] later:[.dashboard-page_.tracker-step[data-stage='under\_review']_&]:[--stage-c:#6687ff] later-2:[.dashboard-page_.tracker-step[data-stage='waiting\_logistics']_&]:[--stage-c:#8b6dff] later-3:[.dashboard-page_.tracker-step[data-stage='preparing']_&]:[--stage-c:#f4b84a] later-4:[.dashboard-page_.tracker-step[data-stage='dispatched']_&]:[--stage-c:#9db2ff] later-5:[.dashboard-page_.tracker-step[data-stage='delivered']_&]:[--stage-c:#32c997]"><Icon aria-hidden="true" /></span>
                 {index < stages.length - 1 && <span className="[.dashboard-page_&]:absolute [.dashboard-page_&]:left-[50%] [.dashboard-page_&]:-right-[50%] [.dashboard-page_&]:top-[50%] [.dashboard-page_&]:h-[2px] [.dashboard-page_&]:[transform:translateY(-50%)] [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:[background:linear-gradient(_90deg,_color-mix(in_srgb,_var(--accent)_75%,_transparent),_color-mix(in_srgb,_var(--accent-2)_55%,_transparent)_)] max-[981px]:[.dashboard-page_&]:hidden" aria-hidden="true" />}
               </div>
               <span className="[.dashboard-page_&]:min-w-[36px] [.dashboard-page_&]:p-[3px_9px] [.dashboard-page_&]:border [.dashboard-page_&]:border-line [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:text-text-secondary [.dashboard-page_&]:[background:var(--surface-subtle)] [.dashboard-page_&]:text-[8.5px] [.dashboard-page_&]:font-[780] [.dashboard-page_&]:text-center">{formatNumber(stage.count)}</span>

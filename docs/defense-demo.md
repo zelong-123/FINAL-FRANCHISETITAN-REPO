@@ -213,3 +213,188 @@ at may account na ang franchisee sa Branch Portal."
 - **Walang notification:** i-refresh ang Notifications o ang Inquiries list. Doon nagche-check ng due reminders ang system.
 - **Hindi bumukas ang file preview:** i-click ang attachment para i-download. Pareho itong dumadaan sa API.
 - **Mabagal ang network:** gamitin ang **Application Detail** → **Export PDF** na inihanda bago ang defense, at ang listahan ng 35 blocked attempts sa `tests/api/walkthrough.test.ts` (`npm run test:api`).
+
+---
+---
+
+# Defense demo script — Objective 3: Supply Request and Fulfillment Coordination
+
+> Taglish ang paliwanag. Ang screen names, button labels at field names ay **English, eksakto kung paano
+> nakasulat sa UI** (naka-**bold**).
+
+**Ang ipapakita:** isang supply workflow na parang totoong franchise operation. Bawat desisyon ay may
+**proof at may dahilang naka-record**, at bawat role ay sariling bahagi lang ang ginagawa (maker-checker):
+
+| Role | Ginagawa |
+|---|---|
+| Branch (franchisee) | gumagawa, nag-e-edit at nagka-cancel ng sariling request (habang editable pa lang); nagko-confirm ng receipt per item; nagre-report ng damaged o short na may proof |
+| Admin | nagre-review; nag-e-endorse na may **Fulfillment decision**; nagre-return, nagre-reject o nagka-cancel; nag-a-approve ng bagong date; nagre-resume ng naka-hold; nagre-resolve ng discrepancy |
+| Logistics | nagko-confirm ng schedule o humihingi ng bagong date; nagre-report ng shortage; nagpe-prepare; nagdi-dispatch; nag-e-encode ng POD |
+
+**Ang rule ng stock (uulit-ulitin natin):** **reserved** pag na-endorse → **ibabawas sa warehouse** pag
+na-dispatch (ang prepared quantity) → **good lang ang idadagdag sa branch** pag nag-Confirm Receipt.
+Pag cancel o reject, ibinabalik ang reservation. Walang stock na gumagalaw nang walang record.
+
+## 1. Paghahanda
+
+### Ang demo data (local lang, hindi kailanman sa live)
+Tatlong PowerShell terminal:
+```powershell
+# 1) Local API na may supply demo data (127.0.0.1:54321)
+npm run dev:api:demo
+
+# 2) Staff portal, nakaturo sa LOCAL API (hindi sa .env, na nakaturo sa live)
+$env:VITE_SUPABASE_URL='http://127.0.0.1:54321'; $env:VITE_SUPABASE_ANON_KEY='local-dev-anon-key'; $env:VITE_PORTAL='staff'; npx vite --port 5173 --strictPort
+
+# 3) Branch portal, nakaturo rin sa LOCAL API
+$env:VITE_SUPABASE_URL='http://127.0.0.1:54321'; $env:VITE_SUPABASE_ANON_KEY='local-dev-anon-key'; $env:VITE_PORTAL='branch'; npx vite --port 5174 --strictPort
+```
+> **Mahalaga:** huwag laktawan ang `VITE_SUPABASE_URL` sa 2 at 3. Kung wala ito, ang `.env` ang gagamitin, at
+> live ang tatamaan ng app. Sa DevTools → Network, dapat `127.0.0.1:54321` ang lahat ng API request.
+- Tumatakbo lang ito sa in-memory na database ng `dev:api:demo`; tinatanggihan ng script ang ibang database
+  (`supabase/seed/supplyDemo.ts`). Nawawala ang data pag ni-restart, kaya puwedeng ulit-ulitin.
+- Dalawang Kkopi branch ang may inventory at **10 linggong usage history**, kaya may totoong **Days covered**
+  at **Suggested** sa staff drawer at sa branch form. Ang **Fresh milk** ay **Critical** sa parehong branch.
+- May nakahandang request sa bawat sitwasyon sa ibaba. Makikita ang mga number sa terminal ("Supply demo ready").
+
+### Mga account (magkakahiwalay na window o incognito)
+| Window | Account | Gamit |
+|---|---|---|
+| 1 | Admin (`admin@franchisetitan.local`) | review, Fulfillment decision, approvals |
+| 2 | Logistics (`logistics@franchisetitan.local`) | schedule, shortage, dispatch, POD |
+| 3 | Branch Portal (`franchisee@franchisetitan.local`) — Kkopi - Las Piñas Sample | request, receipt |
+
+### Timing (mga 20 minuto)
+Scenario 1 (5 min) → 2–4 (5 min) → 5–7 (4 min) → 8–9 (4 min) → 10 at mga tanong.
+
+## 2. Ang 10 scenario
+
+### Scenario 1. Normal, full stock, end to end
+1. **Branch:** **Supply Request Panel** → pumili ng item at quantity → **Add to list**. Ipakita ang **Days covered**
+   at ang estimate sa bawat line, ang **Earliest delivery date** (2 working days), tapos **Submit request**.
+2. **Admin:** **Supply requests** → tab **Needs my action** → **Review** → **Start review**. Ipakita sa **Items**
+   ang Available, Unavailable, Branch stock, Days covered at Suggested → **Endorse – Full**.
+   Sabihin: "Naka-reserve na po ang stock; hindi pa ito nababawas."
+3. **Logistics:** **Confirm schedule** → **Accept schedule** → **Start preparing** → **Dispatch**
+   (driver, 11-digit contact, plate, departure, ETA) → **Print Delivery Receipt**.
+   Sabihin: "Ngayon pa lang po nababawas ang warehouse, at ang prepared quantity ang ibinabawas."
+4. **Logistics:** **Encode POD** (photo o pirma, received by, actual time).
+5. **Branch:** **Confirm receipt** → lahat good → **Completed**. Ipakita ang **Audit trail** sa drawer
+   (sino, anong role, kailan, from → to, dahilan).
+
+### Scenario 2. Kulang ang stock, hindi urgent: Hold for Restock, tapos Resume
+1. **Admin:** buksan ang request na **On hold** (Caramel syrup). Pindutin ang **Resume request** →
+   *"The warehouse cannot cover the held quantities yet…"*. Hindi siya makakalusot.
+2. **Logistics:** **Warehouse inventory** → Caramel syrup → **Adjust** → dagdagan.
+3. **Admin:** **Resume request** → **Waiting for Logistics**, naka-reserve na ang buong quantity.
+
+### Scenario 3. Kulang at Critical: Partial – Ship Now
+1. Ipakita ang request na **Critical** (Fresh milk) at ang dahilan ng urgency. Naka-flag ang item na **Critical**
+   (branch stock Critical, mas kaunti ang days covered kaysa sa lead time).
+2. Nakahanda na ang **-B** backorder. Sa ibang short na request, ipakita ang **Fulfillment decision** →
+   **Partial – Ship Now** → ang preview: *"FT-…-B will be created for …"* bago mag-confirm.
+3. Magkahiwalay na matatapos ang parent at ang **-B** (makikita ang link sa drawer: **Parent** / **Backorders**).
+
+### Scenario 4. Partial – Consolidated
+1. Ipakita ang request na **On hold** na may naka-reserve na Paper cups (**Partial – Consolidated**,
+   dahilan: "same trip").
+2. Gumawa ng ibang request ng Paper cups (Admin: **New supply request**) at subukang **Endorse – Full**: naka-disable,
+   *"Stock is short; choose a Fulfillment Decision."* Hindi makukuha ng iba ang naka-reserve.
+3. **Logistics** ay mag-**Adjust** ng cups → **Admin** **Resume request** → sabay-sabay ang alis.
+
+### Scenario 5. Bulk: higit 50% sa suggestion, Return, Edit and resubmit
+1. **Branch:** maglagay ng item na sobrang laki ng quantity. Lalabas ang **Bulk reason (required)**. Kung
+   wala ito, tatanggihan ng system ang Submit (pati ang Save as draft).
+2. **Admin:** buksan ang **Returned – waiting for branch** na request (White sugar) para makita ang flow, o i-**Return
+   for correction** ang bago, na may dahilan.
+3. **Branch:** sa **My requests**, pindutin ang **Edit and resubmit**, bawasan ang quantity, tapos **Resubmit request**.
+   Parehong request number, at nasa audit trail pa rin ang history.
+
+### Scenario 6. Bagong date mula sa Logistics: approve, at sa ibang kaso, reject
+1. **Admin:** may **New date requested** na chip ang isang row → **Review date** → **Approve new date**.
+   Magiging **Scheduled** ito sa bagong date, at aabisuhan ang Logistics at ang branch.
+2. **Logistics:** sa ibang request, **Request new date** na may dahilan → **Admin:** **Reject new date**.
+   Kailangan ng dahilan, at mananatili ang orihinal na date.
+
+### Scenario 7. Shortage report ng Logistics
+1. Ipakita ang **Shortage reported** (White sugar: 6 lang ang nasa shelf sa 8). Naka-block ang prepare at dispatch,
+   at hindi ginalaw ang inventory.
+2. **Admin:** **Review shortage** → **New fulfillment decision**. Naka-cap ang Available sa actual count →
+   **Partial – Ship Now** → may **-B**.
+
+### Scenario 8. Dispatch ng Huwebes, ETA ng Linggo
+1. Ipakita ang request na dispatched noong Huwebes na may ETA ng Linggo. Sa dispatch lumabas ang
+   *"The ETA is on a weekend…"*. Na-confirm na ng branch ang receipt noong Linggo, kahit wala pang POD,
+   at nadagdag agad ang stock.
+2. **Logistics:** **Encode POD**, gamit ang oras noong Linggo bilang **Actual delivery** (ini-encode ng Lunes) →
+   **Completed**.
+
+### Scenario 9. Damaged items
+1. Ipakita ang **Discrepancy review** (Paper cups: 190 good, 10 damaged). Sa drawer, ang litrato ng sira
+   (thumbnail na lumalaki) at ang dahilan.
+2. Sabihin: "190 lang po ang nadagdag sa branch. Hindi ibinabalik sa warehouse ang sira."
+3. **Admin:** **Resolve discrepancy** → piliin ang **Accept loss**, **For Logistics investigation** o
+   **Branch to re-request**, may remarks → **Completed with discrepancy**. Aabisuhan ang branch at Logistics.
+
+### Scenario 10. Permissions at required reasons
+- **Branch:** nakaka-**Cancel request** habang **Submitted**. Pag **Under review** na, wala nang Cancel o Edit,
+  at 422 din ang sagot ng API.
+- **Logistics:** walang **Endorse**. 403 ang sagot ng API.
+- **Admin:** may **Cancel request** hanggang **Preparing**, pero wala na pag **Dispatched** na.
+- Kahit anong **Reason** na blangko, o kulang sa 5 characters, ay tinatanggihan. Pareho ang sinasabi ng form at ng API.
+- Lahat ng ito ay may automated test: `tests/api/supply_scenarios.test.ts` (`npm run test:api`).
+
+## 3. Mga tanong ng panel
+
+### "Ano ang proof sa bawat hakbang?"
+- **Endorse:** naka-record ang Fulfillment decision per item (available, unavailable, restock date) at ang dahilan ni Admin.
+- **Dispatch:** driver, contact, plate, departure at ETA, at ang printed **Delivery Receipt** na may pirma ng
+  "Released by" at "Received by".
+- **POD:** litrato o pirma, sino ang tumanggap, at ang aktwal na oras.
+- **Receipt:** good, damaged at short per item, at litrato ng sira.
+- **Audit trail:** append-only, ibig sabihin bawal i-edit o i-delete kahit sa database mismo (may trigger).
+  May sino, role, kailan, from → to, action, dahilan, file at details.
+
+### "Bakit may Partial at may Hold? Kailan ang alin?"
+- **Hold for Restock:** kapag kayang maghintay ang branch. Isang biyahe lang mamaya, walang hati-hating delivery.
+- **Partial – Ship Now:** kapag kailangan na ngayon (lalo na Critical). Ang meron ay aalis na, at ang kulang ay nagiging
+  **-B** backorder na may sariling tracking.
+- **Partial – Consolidated:** naka-reserve na ang meron para walang ibang makakuha, pero sabay ang alis para iisang
+  biyahe lang (halimbawa, malayo ang branch).
+- Desisyon ito ni Admin, kaya laging may dahilan na naka-record.
+
+### "Bakit 50% ang bulk check?"
+Galing sa existing na forecast ang suggestion, base sa totoong usage ng branch. Kapag lampas 50%, hindi namin
+binabawal (baka may fiesta o promo), pero kailangan ng **bulk reason** para makita ni Admin kung bakit.
+Setting ito na nababago ni Admin (**Supply settings**). Hindi nito ginagalaw ang forecast mismo.
+
+### "Paano ang weekend?"
+Mon–Fri ang working days (2 working days ang lead time, nababago sa **Supply settings**): Mon → Wed, Thu → Mon,
+Fri → Tue, Sat/Sun → Wed. Puwedeng weekend ang target date dahil bukas ang branches tuwing weekend, pero may
+babala. Ang **Urgent** at **Critical** ay puwedeng next working day, basta may dahilan. Ang POD ay puwedeng
+i-encode sa susunod na office day gamit ang aktwal na oras.
+
+### "Paano ang sirang items?"
+Good lang ang pumapasok sa stock ng branch. Naka-record ang damaged at short na may dahilan at litrato, at pumupunta
+sa **Discrepancy review** ni Admin. Walang automatic na kapalit; kung kailangan pa ng branch, gagawa ito ng bagong request.
+
+### "Bakit hindi kinukwenta ang delivery cost?"
+Hindi ito bahagi ng Objective 3 (coordination at accountability ang layunin, hindi costing), at wala pa kaming
+maaasahang data para dito (rate per trip, fuel, distansya). Naka-record ang bawat biyahe (driver, plate, oras),
+kaya madali itong idagdag sa susunod.
+
+## 4. Mga limitasyon (sabihin nang diretso kung tanungin)
+- Hindi binibilang ang **holidays**; Mon–Fri lang ang working days.
+- **Iisang lead time** para sa lahat ng branches.
+- **Walang GPS**: record lang ang dispatch details (driver, plate, ETA), hindi live tracking.
+- **Hindi kinukwenta ang delivery cost.**
+- **Walang automatic na kapalit** ng sirang items; bagong request ang paraan.
+- Ang overdue alerts ay tumatakbo kapag may nagbukas ng supply lists, isang beses kada 10 minuto (walang hiwalay
+  na scheduler); may **run now** si Admin sa API.
+
+## 5. Kung may pumalya sa mismong demo
+- **Walang Days covered o Suggested:** siguraduhing `npm run dev:api:demo` (hindi `dev:api`) ang tumatakbo.
+- **Hindi bumukas ang Print Delivery Receipt:** i-allow ang pop-ups para sa site.
+- **Na-restart ang API at nawala ang mga ginawa:** normal iyon; in-memory ang demo. Ulitin lang ang hakbang.
+- **Gusto ng panel ng patunay na ang API mismo ang nagbabawal:** `npm run test:api` → ang 10 scenario sa
+  `tests/api/supply_scenarios.test.ts`.
