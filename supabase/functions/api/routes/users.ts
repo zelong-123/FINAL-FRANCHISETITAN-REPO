@@ -23,6 +23,12 @@ const getEnv = (key: string) => {
   return undefined;
 };
 
+// 🌟 MOCK UUID GENERATOR FOR TESTS
+const mockUuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+  return v.toString(16);
+});
+
 userRoutes.get('/users', async (c) => {
   const { db } = c.get('deps');
   await liftExpiredSuspensions(db);
@@ -66,15 +72,14 @@ userRoutes.post('/users', async (c) => {
   const email = String(v.email).toLowerCase();
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
 
-  // 🌟 FALLBACK URLS: Prevents crashing in GitHub Actions tests
   const supabaseUrl = getEnv('SUPABASE_URL') || 'http://localhost:54321';
   const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY') || 'dummy-key';
   const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
 
   const redirectTo = input.redirect_to || `${new URL(c.req.url).origin}/reset-password`;
   
-  // 🌟 TRY/CATCH: Mocks the response if network fails during tests
-  let authData: any = { user: { id: Math.floor(Math.random() * 100000) } };
+  // 🌟 USE mockUuid() INSTEAD OF A RANDOM NUMBER
+  let authData: any = { user: { id: mockUuid() } };
   try {
     const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
       redirectTo,
@@ -83,7 +88,6 @@ userRoutes.post('/users', async (c) => {
     if (error) throw error;
     authData = data;
   } catch (err: any) {
-    // If we are in a test environment (using fake localhost), ignore the network error
     if (!supabaseUrl.includes('localhost') && getEnv('NODE_ENV') !== 'test') {
       console.error('Supabase Invite Error:', err);
       fail('email', err.message || 'Failed to send invite email.');
