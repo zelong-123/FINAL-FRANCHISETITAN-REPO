@@ -9,7 +9,7 @@ import AuthCard, { errorBox, fieldLabel, primaryButton, textInput } from './Auth
 // Supabase redirects here with the session in the URL hash:
 //   /reset-password#access_token=...&refresh_token=...&type=recovery
 // supabase.js has detectSessionInUrl turned off, so this page reads the hash itself.
-export default function ResetPassword() {
+export default function SetPassword() {
   const [status, setStatus] = useState('checking'); // checking | ready | invalid | done
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');

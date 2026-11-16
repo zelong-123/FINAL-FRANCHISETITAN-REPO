@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Log from './components/Log';
 import BranchLogin from './components/BranchLogin';
-import ResetPassword from './components/ResetPassword';
+import SetPassword from './components/SetPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AppLoader } from './components/ApiUi';
 import { AuthProvider, ROLE_HOME, useAuth } from './context/AuthContext';
@@ -99,7 +99,7 @@ export default function App() {
                 build has no staff login or staff pages; unset keeps every route. */}
             <Route path="/" element={IS_BRANCH_PORTAL ? <BranchLogin /> : <Log />} />
             {/* Public: opened from the "create your password" email. */}
-            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/reset-password" element={<SetPassword />} />
             {!IS_STAFF_PORTAL && (
               <>
                 <Route path="/branch-login" element={<BranchLogin />} />
