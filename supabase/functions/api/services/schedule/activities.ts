@@ -2,7 +2,7 @@
 // every write of a live schedule row, taken under the same day lock as the Master Schedule.
 import type { Db, Row } from '../../lib/db.ts';
 import { ValidationError } from '../../lib/http.ts';
-import { evaluate } from './conflict.ts';
+import { defaultHandlerId, evaluate } from './conflict.ts';
 import { acquireDayLocks, sessionCapacity, TRACKED_TYPES } from './rules.ts';
 import { activeCountExcept, insertActivity, resolveActivity, syncActivity, updateActivity } from './sync.ts';
 
@@ -50,6 +50,11 @@ export async function assertActivityAllowed(db: Db, activity: Row, actor: Row | 
 /** Writes one row: guard, then the write, then the copy into its session. Needs a transaction. */
 export async function saveActivity(tx: Db, current: Row | null, changes: Row, actor: Row): Promise<Row> {
   const next: Row = { status: 'pending', approval_status: 'immediate', session_key: '', ...(current ?? {}), ...changes };
+  // A live activity always has a handler: the applicant's assigned Sales user unless one is given.
+  if (!next.assigned_to_user_id && TRACKED_TYPES.includes(next.activity_type) && ['pending', 'confirmed'].includes(next.status) && next.applicant_id) {
+    const handler = await defaultHandlerId(tx, next.activity_type, [Number(next.applicant_id)]);
+    if (handler) { changes = { ...changes, assigned_to_user_id: handler }; next.assigned_to_user_id = handler; }
+  }
   if (needsRuleCheck(current, next)) {
     await acquireDayLocks(tx, [next.starts_at, current?.starts_at]);
     await assertActivityAllowed(tx, next, actor);

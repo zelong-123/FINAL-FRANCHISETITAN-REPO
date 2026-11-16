@@ -29,7 +29,8 @@ test('the requirement list comes from one config and is sent to the browser', as
   const id = await applicant();
   const req = (await call('GET', `/applicants/${id}`, { token: admin })).json.data.requirements;
   assert.deepEqual(req.config.requirements.filter((r: any) => r.stage === 'qualification').map((r: any) => r.key),
-    ['application_form', 'government_id', 'proof_of_funds', 'initial_interview', 'proposed_site']);
+    ['application_form', 'government_id', 'proof_of_funds', 'initial_interview']);
+  assert.equal(req.config.requirements.find((r: any) => r.key === 'proposed_site').stage, 'loi', 'the Proposed site belongs to LOI Submission');
   assert.equal(req.config.requirements.find((r: any) => r.key === 'franchise_agreement').stage, 'activation');
   assert.ok(req.items.every((i: any) => i.status === 'pending'));
   assert.equal(req.summary.qualification.complete, false);
@@ -50,9 +51,10 @@ test('each requirement validates its details and its proof files', async () => {
   const twoForms = requirementForm('application_form');
   twoForms.append('form', new File([new Uint8Array([1])], 'b.pdf', { type: 'application/pdf' }));
   assert.ok((await submit(id, 'application_form', twoForms)).json.errors.form, 'one file only where one is expected');
-  const photos = requirementForm('proposed_site');
+  const atLoi = await applicant('loi_submitted');
+  const photos = requirementForm('proposed_site', 'loi');
   photos.append('site_photos', new File([new Uint8Array([1])], 'front.png', { type: 'image/png' }));
-  const site = await submit(id, 'proposed_site', photos);
+  const site = await submit(atLoi, 'proposed_site', photos);
   assert.equal(site.status, 201, JSON.stringify(site.json));
   assert.equal(site.json.data.files.length, 2, 'several site photos');
   assert.match((await submit(id, 'franchise_agreement', requirementForm('franchise_agreement', 'activation'))).json.errors.requirement[0], /submitted at the Before Active Franchisee stage/);

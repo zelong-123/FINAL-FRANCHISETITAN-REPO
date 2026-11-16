@@ -3,7 +3,7 @@ import { api, firstValidationMessage } from '../../lib/api';
 import { EmptyState, LoadingState, Notice, Pagination } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
 
-/** Every production transaction of this branch, newest first. */
+/** Every production transaction of this branch, newest first, and the physical counts below it. */
 export default function BranchTransactionsPanel({ branchQuery = {} }) {
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -64,6 +64,53 @@ export default function BranchTransactionsPanel({ branchQuery = {} }) {
           )}
         </div>
       </section>
+      <CountHistory branchQuery={branchQuery} />
     </div>
+  );
+}
+
+/** Physical counts of this branch with the reason given, newest first. */
+function CountHistory({ branchQuery }) {
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [page, setPage] = useState(1);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    api.get('/branch/workspace/count-history', { ...branchQuery, page })
+      .then((response) => { if (alive) { setRows(response.data || []); setMeta(response.meta || null); setError(''); } })
+      .catch((caught) => { if (alive) setError(firstValidationMessage(caught)); });
+    return () => { alive = false; };
+  }, [branchQuery, page]);
+  const delta = (row) => (row.delta === 0 ? 'No change' : `${row.delta > 0 ? '+' : ''}${formatNumber(row.delta, 3)} ${row.unit}`);
+  return (
+    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] flex flex-col p-0" aria-labelledby="count-history-title">
+      <header className="min-h-[60px] flex items-center m-[0_20px] p-[12px_8px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent)_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[18px] [&_h2]:font-[800] [&_h2]:uppercase"><h2 id="count-history-title">Physical counts</h2></header>
+      <div className="p-[16px_20px_20px]">
+        <Notice type="error">{error}</Notice>
+        {rows.length === 0 ? <EmptyState label="No physical counts yet." detail="Use Physical count in Raw materials; each count shows here with its reason." /> : (
+          <>
+            <div className="table-wrap overflow-x-auto">
+              <table className="branch-readable-table [&_th]:text-[12px] [&_td_small]:text-[12px]">
+                <thead><tr><th>Date and time</th><th>Material</th><th>System → counted</th><th>Change</th><th>Reason</th><th>Counted by</th></tr></thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{formatDate(row.occurred_at, true)}</td>
+                      <td><strong>{row.material}</strong></td>
+                      <td>{formatNumber(row.before, 3)} → {formatNumber(row.counted, 3)} {row.unit}</td>
+                      <td className={row.delta < 0 ? 'text-danger-text font-[650]' : row.delta > 0 ? 'text-success-text font-[650]' : 'text-muted'}>{delta(row)}</td>
+                      <td>{row.reason || '—'}</td>
+                      <td>{row.recorded_by || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination meta={meta} onPage={setPage} />
+          </>
+        )}
+      </div>
+    </section>
   );
 }

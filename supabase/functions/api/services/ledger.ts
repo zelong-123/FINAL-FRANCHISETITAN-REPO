@@ -3,6 +3,7 @@
 // Products of these are computed in BigInt so nothing rounds through a float.
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, updateRow } from '../lib/http.ts';
+import { evaluate, STOCK_LABELS, syncStockStatus } from './materialStock.ts';
 
 const MAX_MILLI = 1_000_000_000_000;
 const MAX_CENTS = 9_000_000_000_000_000;
@@ -70,6 +71,8 @@ export function addMaterial(db: Db, location: Row, actor: Row, data: Row): Promi
     });
     const balance = await insertRow(tx, 'profittrack_material_balances', { location_id: location.id, material_id: material.id });
     await audit(tx, location, actor, 'material.created', 'material', material.id);
+    // The first status is stored without a timestamp: a new material never reads as a new alert.
+    await syncStockStatus(tx, [material.id]);
     return { ...material, balance };
   });
 }
@@ -103,6 +106,7 @@ export async function receive(db: Db, location: Row, actor: Row, data: Row, cost
       idempotency_key: data.idempotency_key, request_fingerprint: fingerprint, reason: payload.reason, recorded_by_user_id: actor.id, occurred_at: new Date(),
     });
     await audit(tx, location, actor, 'material.received', 'material_movement', movement.id, payload.reason);
+    await syncStockStatus(tx, [material.id]);
     return { movement: await withMaterial(tx, movement), duplicate: false };
   });
 }
@@ -122,6 +126,7 @@ export async function creditDelivery(db: Db, location: Row, actor: Row, data: Ro
       idempotency_key: data.idempotency_key, request_fingerprint: fingerprint, reason: payload.reason, recorded_by_user_id: actor.id, occurred_at: new Date(),
     });
     await audit(tx, location, actor, 'material.delivered', 'material_movement', movement.id, payload.reason);
+    await syncStockStatus(tx, [material.id]);
     return { movement: await withMaterial(tx, movement), duplicate: false };
   });
 }
@@ -166,6 +171,36 @@ async function operation(tx: Db, location: Row, actor: Row, type: string, key: s
   return { operation: raced, duplicate: true };
 }
 
+/**
+ * One counted material inside an open count operation: sets the balance to the counted quantity
+ * (value moves with the unit cost), writes the profittrack_counts row, the physical_count movement
+ * with the reason text, and the material.counted audit. Shared by the single and the batch count.
+ */
+async function countItem(tx: Db, location: Row, actor: Row, operationId: number, materialId: number, counted: number, reason: string | null, field = 'counted_quantity_milli') {
+  const { material, balance } = await lockMaterial(tx, location, materialId);
+  const before = balance.quantity_milli;
+  const delta = counted - before;
+  const unitCost = balance.unit_cost_micropesos;
+  const valueDelta = unitCost === null ? null : roundRatio(BigInt(delta) * BigInt(unitCost), 10_000_000n);
+  let value = balance.value_cents;
+  if (valueDelta !== null) {
+    const next = Number(value ?? 0) + valueDelta;
+    if (next < 0 || next > MAX_CENTS) fail(field, 'The count would create an invalid inventory value.');
+    value = next;
+  } else if (counted === 0) value = 0;
+  await updateRow(tx, 'profittrack_material_balances', balance.id, { quantity_milli: counted, value_cents: value, unit_cost_micropesos: counted === 0 ? null : unitCost });
+  const count = await insertRow(tx, 'profittrack_counts', {
+    location_id: location.id, operation_id: operationId, material_id: material.id, recorded_quantity_milli: before, counted_quantity_milli: counted, quantity_delta_milli: delta,
+    unit_cost_micropesos: unitCost, value_delta_cents: valueDelta,
+  });
+  await insertRow(tx, 'profittrack_material_movements', {
+    location_id: location.id, material_id: material.id, type: 'physical_count', quantity_delta_milli: delta, value_delta_cents: valueDelta, unit_cost_micropesos: unitCost,
+    operation_id: operationId, reason, recorded_by_user_id: actor.id, occurred_at: new Date(),
+  });
+  await audit(tx, location, actor, 'material.counted', 'material_count', count.id, reason);
+  return { count, material, before, delta };
+}
+
 export async function physicalCount(db: Db, location: Row, actor: Row, data: Row): Promise<Row> {
   const counted = integer(data.counted_quantity_milli, 'counted_quantity_milli', 0, MAX_MILLI);
   const payload = { material_id: Number(data.material_id), counted_quantity_milli: counted, reason: String(data.reason).trim() };
@@ -173,28 +208,79 @@ export async function physicalCount(db: Db, location: Row, actor: Row, data: Row
   return db.tx(async (tx) => {
     const op = await operation(tx, location, actor, 'count', data.idempotency_key, fingerprint, payload.reason);
     if (op.duplicate) return { count: (await tx.query(`select * from profittrack_counts where operation_id = $1`, [op.operation.id]))[0], duplicate: true };
-    const { material, balance } = await lockMaterial(tx, location, payload.material_id);
-    const before = balance.quantity_milli;
-    const delta = counted - before;
-    const unitCost = balance.unit_cost_micropesos;
-    const valueDelta = unitCost === null ? null : roundRatio(BigInt(delta) * BigInt(unitCost), 10_000_000n);
-    let value = balance.value_cents;
-    if (valueDelta !== null) {
-      const next = Number(value ?? 0) + valueDelta;
-      if (next < 0 || next > MAX_CENTS) fail('counted_quantity_milli', 'The count would create an invalid inventory value.');
-      value = next;
-    } else if (counted === 0) value = 0;
-    await updateRow(tx, 'profittrack_material_balances', balance.id, { quantity_milli: counted, value_cents: value, unit_cost_micropesos: counted === 0 ? null : unitCost });
-    const count = await insertRow(tx, 'profittrack_counts', {
-      location_id: location.id, operation_id: op.operation.id, material_id: material.id, recorded_quantity_milli: before, counted_quantity_milli: counted, quantity_delta_milli: delta,
-      unit_cost_micropesos: unitCost, value_delta_cents: valueDelta,
-    });
-    await insertRow(tx, 'profittrack_material_movements', {
-      location_id: location.id, material_id: material.id, type: 'physical_count', quantity_delta_milli: delta, value_delta_cents: valueDelta, unit_cost_micropesos: unitCost,
-      operation_id: op.operation.id, reason: payload.reason, recorded_by_user_id: actor.id, occurred_at: new Date(),
-    });
-    await audit(tx, location, actor, 'material.counted', 'material_count', count.id, payload.reason);
+    const { count } = await countItem(tx, location, actor, op.operation.id, payload.material_id, counted, payload.reason);
+    await syncStockStatus(tx, [payload.material_id]);
     return { count, duplicate: false };
+  });
+}
+
+/** Reasons a franchisee gives when the counted quantity differs from the system. */
+export const COUNT_REASONS: Record<string, string> = {
+  spoiled: 'Spoiled or expired', damaged: 'Damaged', spilled: 'Spilled or wasted', unrecorded_use: 'Used but not recorded', encoding_error: 'Encoding error', other: 'Other',
+};
+export const MAX_COUNT_ITEMS = 200;
+
+const countRowJson = (c: Row, material: Row, statusBefore: string, statusAfter: string) => ({
+  material_id: Number(c.material_id), material: material.name, unit: material.unit,
+  before_quantity_milli: Number(c.recorded_quantity_milli), counted_quantity_milli: Number(c.counted_quantity_milli), delta_milli: Number(c.quantity_delta_milli),
+  status_before: statusBefore, status_before_label: STOCK_LABELS[statusBefore], status_after: statusAfter, status_after_label: STOCK_LABELS[statusAfter],
+});
+
+/**
+ * A physical count of several materials in ONE transaction (all or nothing) under ONE count_batch
+ * operation: one profittrack_counts row, movement and audit per item, all linked to that operation.
+ * Blank rows are simply not sent. A reason is required when the count differs from the balance, and a
+ * note when the reason is "other". Retrying with the same key returns the original result.
+ */
+export async function physicalCountBatch(db: Db, location: Row, actor: Row, data: Row): Promise<Row> {
+  const raw = Array.isArray(data.items) ? data.items : [];
+  if (!raw.length) fail('items', 'Count at least one material.');
+  if (raw.length > MAX_COUNT_ITEMS) fail('items', `A count can include at most ${MAX_COUNT_ITEMS} materials.`);
+  const seen = new Set<number>();
+  const items = raw.map((item: Row, index: number) => {
+    const materialId = Number(item?.material_id);
+    if (!Number.isInteger(materialId) || materialId <= 0) fail(`items.${index}.material_id`, 'Choose a material.');
+    if (seen.has(materialId)) fail(`items.${index}.material_id`, 'The same material is counted twice.');
+    seen.add(materialId);
+    const counted = integer(item.counted_quantity_milli, `items.${index}.counted_quantity_milli`, 0, MAX_MILLI);
+    const code = item.reason_code === undefined || item.reason_code === null || item.reason_code === '' ? null : String(item.reason_code);
+    if (code !== null && !COUNT_REASONS[code]) fail(`items.${index}.reason_code`, 'Choose a valid reason.');
+    const note = String(item.note ?? '').trim().slice(0, 500);
+    if (code === 'other' && note.length < 3) fail(`items.${index}.note`, 'Add a short note for "Other".');
+    return { index, material_id: materialId, counted, code, note };
+  });
+  const fingerprint = await fingerprintOf({ items: [...items].sort((x, y) => x.material_id - y.material_id).map(({ index: _i, ...rest }) => rest) });
+  return db.tx(async (tx) => {
+    const op = await operation(tx, location, actor, 'count_batch', data.idempotency_key, fingerprint, 'Physical count');
+    if (op.duplicate) {
+      const rows = await tx.query(
+        `select c.*, (select to_jsonb(m) from profittrack_materials m where m.id = c.material_id) as material from profittrack_counts c where c.operation_id = $1 order by c.id`, [op.operation.id],
+      );
+      const results = rows.map((c) => {
+        const before = evaluate({ ...c.material, balance: { quantity_milli: c.recorded_quantity_milli } }).status;
+        const after = evaluate({ ...c.material, balance: { quantity_milli: c.counted_quantity_milli } }).status;
+        return countRowJson(c, c.material, before, after);
+      });
+      return { operation_id: op.operation.id, items: results, counted: results.length, adjusted: results.filter((r) => r.delta_milli !== 0).length, duplicate: true };
+    }
+    const results: { index: number; row: Row }[] = [];
+    // Locks in material order, so two counts of the same branch never deadlock.
+    for (const item of [...items].sort((x, y) => x.material_id - y.material_id)) {
+      const [material] = await tx.query(`select * from profittrack_materials where location_id = $1 and id = $2 and is_active = true`, [location.id, item.material_id]);
+      if (!material) abort(404, 'Record not found.');
+      const [balance] = await tx.query(`select quantity_milli from profittrack_material_balances where location_id = $1 and material_id = $2`, [location.id, item.material_id]);
+      const differs = Number(balance?.quantity_milli ?? 0) !== item.counted;
+      if (differs && !item.code) fail(`items.${item.index}.reason_code`, `Choose a reason: the count of ${material.name} differs from the system.`);
+      const label = item.code ? COUNT_REASONS[item.code] : null;
+      const reason = !differs ? 'Counted, no change' : item.note ? `${label}: ${item.note}` : label;
+      const statusBefore = evaluate({ ...material, balance }).status;
+      const { count } = await countItem(tx, location, actor, op.operation.id, item.material_id, item.counted, reason, `items.${item.index}.counted_quantity_milli`);
+      const statusAfter = evaluate({ ...material, balance: { quantity_milli: item.counted } }).status;
+      results.push({ index: item.index, row: countRowJson(count, material, statusBefore, statusAfter) });
+    }
+    await syncStockStatus(tx, items.map((i) => i.material_id));
+    const ordered = results.sort((x, y) => x.index - y.index).map((r) => r.row);
+    return { operation_id: op.operation.id, items: ordered, counted: ordered.length, adjusted: ordered.filter((r) => r.delta_milli !== 0).length, duplicate: false };
   });
 }
 
@@ -348,6 +434,7 @@ export async function produce(db: Db, location: Row, actor: Row, data: Row): Pro
       });
     }
     await audit(tx, location, actor, 'production.recorded', 'production_batch', batch.id, null, payload);
+    await syncStockStatus(tx, consumptions.map((c) => c.ingredient.material_id));
     return { batch: await batchWithConsumptions(tx, batch.id), duplicate: false };
   });
 }
@@ -464,6 +551,8 @@ export function voidProduction(db: Db, location: Row, actor: Row, batchId: numbe
       quantity_pieces_voided: batch.quantity_pieces,
       restored_materials: consumptions.map((c) => ({ material_id: c.material_id, quantity_milli: c.quantity_milli, cost_cents: c.total_cost_cents })),
     });
+    // The void writes no movement (unchanged), but the restored balances still update the status.
+    await syncStockStatus(tx, consumptions.map((c) => c.material_id));
     return { ...saved, consumptions, voided_by: { id: actor.id, full_name: actor.full_name } };
   });
 }

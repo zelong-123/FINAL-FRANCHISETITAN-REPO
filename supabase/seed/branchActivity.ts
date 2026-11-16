@@ -14,6 +14,7 @@
 import type { Db, Row } from '../functions/api/lib/db.ts';
 import type { AuthProvider, FileStore } from '../functions/api/lib/env.ts';
 import { createApp } from '../functions/api/app.ts';
+import { isCountUnit } from '../functions/api/services/materialStock.ts';
 
 const DAYS = 14;
 const HOUR = 3_600_000;
@@ -37,6 +38,15 @@ const hash = (s: string) => {
 };
 const up2 = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
+/** What Logistics would type: whole numbers for count units (pcs, packs, …), 2 decimals otherwise. */
+function roundedLevels(l: { low: number; critical: number }, unit: string) {
+  if (isCountUnit(unit)) {
+    const low = Math.max(2, Math.round(l.low));
+    return { low_level: low, critical_level: Math.max(1, Math.min(Math.round(l.critical), low - 1)) };
+  }
+  const low = Math.max(0.02, Math.round(l.low * 100) / 100);
+  return { low_level: low, critical_level: Math.max(0.01, Math.min(Math.round(l.critical * 100) / 100, Math.round((low - 0.01) * 100) / 100)) };
+}
 
 /** Acts as a given user without a password: only for this local script, never deployed. */
 function trustedAuth(): AuthProvider {
@@ -347,9 +357,9 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
 
     await deliver(plan.first, DAYS);
     // Branch stock levels sized to this branch's usage (what Logistics sets on the Branches page).
-    for (const m of await db.query(`select id, warehouse_product_id from profittrack_materials where location_id = $1`, [branch.id])) {
+    for (const m of await db.query(`select id, warehouse_product_id, unit from profittrack_materials where location_id = $1`, [branch.id])) {
       const l = plan.levels.get(Number(m.warehouse_product_id));
-      if (l) await call(LOGISTICS, 'PATCH', `/branches/${branch.id}/materials/${m.id}/levels`, { low_level: l.low, critical_level: l.critical });
+      if (l) await call(LOGISTICS, 'PATCH', `/branches/${branch.id}/materials/${m.id}/levels`, roundedLevels(l, m.unit));
     }
     await step(at(DAYS, 16, now));
     for (const day of plan.days) {
@@ -358,6 +368,28 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
       await step(at(day.day, 19, now));
       report.production_days++;
       report.pieces += day.items.reduce((s, i) => s + i.pieces, 0);
+    }
+
+    // Real physical counts (profittrack_counts rows), so the demo shows a realistic "Last count":
+    // one branch in three counted today, one counted 5 days ago (stale), one never counted (stale).
+    const countMood = plan.index % 3;
+    if (plan.kind === 'full' && countMood !== 2) {
+      const when = at(countMood === 0 ? 0 : 5, 20, now);
+      const rows = await db.query(
+        `select m.id, b.quantity_milli from profittrack_materials m join profittrack_material_balances b on b.material_id = m.id
+         where m.location_id = $1 and m.is_active = true order by m.id limit 3`, [branch.id],
+      );
+      const items = rows.map((r: Row, i: number) => {
+        const onHand = Number(r.quantity_milli);
+        // The first counted item had a little spoilage (2%); the others matched the system.
+        return i === 0 && onHand >= 1000
+          ? { material_id: Number(r.id), counted_quantity_milli: Math.floor(onHand * 0.98), reason_code: 'spoiled' }
+          : { material_id: Number(r.id), counted_quantity_milli: onHand };
+      });
+      if (items.length) {
+        await call(OWNER, 'POST', '/branch/workspace/physical-count', { idempotency_key: `seed-count-${branch.id}`, items });
+        await step(when);
+      }
     }
 
     // One open request, at a different stage per branch; it covers the Low item, not the Critical one.

@@ -6,7 +6,9 @@ import type { Db, Row } from '../lib/db.ts';
 import { abort, boolParam, fail, manilaToday, ok, pick, routeId, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
-import { attentionText, branchStatus, defaultLevels, evaluate, formatQuantity, STOCK_LABELS } from '../services/materialStock.ts';
+import {
+  attentionText, branchStatus, defaultLevels, evaluate, formatQuantity, isCountUnit, isStale, lastCountsByLocation, lastCountsByMaterial, STALE_COUNT_DAYS, STOCK_LABELS, syncStockStatus,
+} from '../services/materialStock.ts';
 import { stockStatus } from '../services/inventory.ts';
 import { audit } from '../services/users.ts';
 import { DELIVERED_ON, IN_TRANSIT, OPEN as OPEN_SUPPLY, sqlList, SUBMITTED_OPEN } from '../services/supplyStatus.ts';
@@ -68,6 +70,13 @@ branchRoutes.get('/branches/overview', adminOrLogistics, async (c) => {
      from supply_requests sr where sr.location_id = any($1::bigint[]) order by sr.created_at desc, sr.id desc limit 80`, [ids],
   );
   const today = manilaToday();
+  const locationIds = locations.map((l) => Number(l.id));
+  // Last REAL count per branch (profittrack_counts), and the last production, for the stale list.
+  const lastCounts = await lastCountsByLocation(db, locationIds);
+  const lastProduction = new Map((await db.query(
+    `select location_id, max(occurred_at) as last_at from profittrack_operations where location_id = any($1::bigint[]) and type = 'production' group by location_id`, [ids],
+  )).map((r) => [Number(r.location_id), new Date(r.last_at).toISOString()]));
+  const seenAt = await lastSeenAt(db, c.get('user').id);
 
   const branches = locations.map((l) => {
     const stockRows = inventories.filter((i) => i.location_id === l.id);
@@ -107,6 +116,10 @@ branchRoutes.get('/branches/overview', adminOrLogistics, async (c) => {
       })),
       needs_attention: needsAttention, last_delivery: l.last_delivered_at ? { delivered_at: l.last_delivered_at } : null, next_delivery_target: l.next_delivery_target,
       last_activity_at: latest([branchSales[0]?.created_at, branchRequests[0]?.updated_at]),
+      last_count_at: lastCounts.get(Number(l.id)) ?? null, is_stale: isStale(lastCounts.get(Number(l.id)) ?? null, statuses.length),
+      last_production_at: lastProduction.get(Number(l.id)) ?? null,
+      new_low_count: stock.filter((row) => row.status === 'low' && isNewAlert(row.material.stock_status_changed_at, seenAt)).length,
+      new_critical_count: stock.filter((row) => ['critical', 'out'].includes(row.status) && isNewAlert(row.material.stock_status_changed_at, seenAt)).length,
       inventory: stockRows.map((i) => {
         const daily = Number(i.consumed) / 30;
         return {
@@ -128,6 +141,11 @@ branchRoutes.get('/branches/overview', adminOrLogistics, async (c) => {
       active_branches: current.length, with_portal_account: current.filter((b) => !b.is_demo && b.portal_active).length, demo_with_portal_account: current.filter((b) => b.is_demo && b.portal_active).length,
       archived_branches: branches.length - current.length, materials_tracked: total('materials_count'), low_stock_items: total('low_stock_count'), critical_stock_items: total('critical_stock_count'),
       out_of_stock_items: total('out_of_stock_count'), open_requests: total('open_request_count'),
+      // Additive: an unambiguous Active branches breakdown (live + demo + without portal account = active).
+      live_branches: current.filter((b) => !b.is_demo && b.portal_active).length, demo_branches: current.filter((b) => b.is_demo).length,
+      without_portal_account: current.filter((b) => !b.is_demo && !b.portal_active).length,
+      stale_branches: current.filter((b) => b.is_stale).length, stale_count_days: STALE_COUNT_DAYS,
+      new_low_count: current.reduce((sum, b) => sum + b.new_low_count, 0), new_critical_count: current.reduce((sum, b) => sum + b.new_critical_count, 0),
     },
     branches, live_sync_seconds: LIVE_SYNC_SECONDS, server_time: new Date().toISOString(),
   });
@@ -157,6 +175,7 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
        and not exists (select 1 from profittrack_production_batches b where b.operation_id = m.operation_id and b.voided_at is not null)
      group by m.material_id`, [l.id, USAGE_WINDOW_DAYS],
   );
+  const lastCounted = await lastCountsByMaterial(db, [Number(l.id)]);
   const inventory = materials.map((m) => {
     const stock = evaluate(m);
     const usedPerDay = Math.abs(Number(usage.find((u) => u.material_id === m.id)?.used ?? 0)) / 1000 / USAGE_WINDOW_DAYS;
@@ -169,6 +188,7 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
       daily_usage: round(usedPerDay, 3), days_cover: usedPerDay > 0 ? round(stock.on_hand / usedPerDay, 1) : null, low_level: stock.low_level, critical_level: stock.critical_level,
       low_level_display: formatQuantity(stock.low_level, m.unit, reference), critical_level_display: formatQuantity(stock.critical_level, m.unit, reference), reorder_level: stock.low_level,
       status: stock.status, status_label: STOCK_LABELS[stock.status], reason: stock.status === 'ok' ? null : attentionText(m.name, m.unit, stock), updated_at: m.balance?.updated_at ?? null,
+      last_counted_at: lastCounted.get(Number(m.id)) ?? null, levels_source: m.low_level !== null && m.critical_level !== null ? 'set' : 'default', count_unit: isCountUnit(m.unit),
     };
   });
   const order: Record<string, number> = { out: 0, critical: 1, low: 2 };
@@ -195,6 +215,8 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
       id: l.id, name: l.name, branch_code: l.branch_code, brand: l.brand, brand_type: l.preferred_branch_type, address: l.address, city: l.city, province: l.province, contact_number: l.contact_number,
       operator: l.franchisee?.user ?? null, is_active: l.is_active, location_label: locationLabel(l), portal_active: portalActive(l), is_demo: Boolean(l.is_demo), archived_at: l.archived_at, archive_reason: l.archive_reason,
       archived_by: l.archived_by, last_activity_at: latest([l.last_delivered_at, activeRequests[0]?.created_at, deliveries[0]?.delivered_at]),
+      last_count_at: latest([...lastCounted.values()])?.toISOString() ?? null,
+      is_stale: isStale(latest([...lastCounted.values()])?.toISOString() ?? null, inventory.length),
     },
     inventory,
     inventory_summary: {
@@ -230,11 +252,88 @@ branchRoutes.patch('/branches/:location/materials/:material/levels', logistics, 
     if (low < 0) fail('low_level', 'The low level cannot be negative.');
     if (critical < 0) fail('critical_level', 'The critical level cannot be negative.');
     if (critical >= low) fail('critical_level', 'The critical level must be lower than the low level.');
+    if (isCountUnit(material.unit)) {
+      if (!Number.isInteger(low)) fail('low_level', `${material.unit} is counted in whole units: enter a whole number for the low level.`);
+      if (!Number.isInteger(critical)) fail('critical_level', `${material.unit} is counted in whole units: enter a whole number for the critical level.`);
+    }
   }
-  const saved = await updateRow(db, 'profittrack_materials', material.id, { low_level: round(low, 3), critical_level: round(critical, 3) });
+  const saved = await db.tx(async (tx) => {
+    const row = await updateRow(tx, 'profittrack_materials', material.id, { low_level: round(low, 3), critical_level: round(critical, 3) });
+    // A new threshold can change the status (manual change and reset alike).
+    await syncStockStatus(tx, [material.id]);
+    return row;
+  });
   await audit(c, db, reset ? 'branch_material.levels_reset' : 'branch_material.levels_updated', { type: MATERIAL, id: material.id },
     { low_level: material.low_level, critical_level: material.critical_level }, { low_level: saved!.low_level, critical_level: saved!.critical_level, unit: material.unit, location_id: locationId });
   return ok(c, pick(saved!, ['id', 'name', 'unit', 'low_level', 'critical_level']), 'Stock levels saved.');
+});
+
+// ---- Stock alerts on the metric cards (not the bell) ----
+const SOURCE_LABELS: Record<string, string> = {
+  receipt: 'receipt', production_consumption: 'production', physical_count: 'physical count', revaluation: 'cost update', admin_valuation: 'valuation',
+};
+
+async function lastSeenAt(db: Db, userId: number): Promise<string | null> {
+  const [row] = await db.query(`select last_seen_at from stock_alert_views where user_id = $1`, [userId]);
+  return row ? new Date(row.last_seen_at).toISOString() : null;
+}
+/** New: changed after the user's last "Mark as seen"; never marked seen: changed within the last 24 h. */
+function isNewAlert(changedAt: unknown, seenAt: string | null): boolean {
+  if (!changedAt) return false;
+  const changed = new Date(changedAt as string).getTime();
+  return seenAt ? changed > new Date(seenAt).getTime() : changed > Date.now() - 86_400_000;
+}
+
+branchRoutes.get('/branches/stock-alerts', adminOrLogistics, async (c) => {
+  const { db } = c.get('deps');
+  const includeArchived = boolParam(c.req.query('include_archived')) && roleName(c) === 'admin';
+  const visible = includeArchived ? `((l.is_active = true and l.archived_at is null) or l.archived_at is not null)` : `l.is_active = true and l.archived_at is null`;
+  const seenAt = await lastSeenAt(db, c.get('user').id);
+  const rows = await db.query(
+    `select m.*, l.name as branch_name, l.is_demo, (select to_jsonb(b) from profittrack_material_balances b where b.material_id = m.id limit 1) as balance,
+       (select jsonb_build_object('type', mv.type, 'at', mv.occurred_at) from profittrack_material_movements mv where mv.material_id = m.id order by mv.occurred_at desc, mv.id desc limit 1) as last_movement,
+       (select e.occurred_at from profittrack_audit_events e where e.location_id = m.location_id and e.action = 'production.voided'
+          and e.metadata -> 'restored_materials' @> jsonb_build_array(jsonb_build_object('material_id', m.id)) order by e.occurred_at desc limit 1) as last_void_at,
+       (select a.created_at from audit_logs a where a.auditable_type = $1 and a.auditable_id = m.id and a.action like 'branch_material.levels%' order by a.id desc limit 1) as last_levels_at,
+       (select jsonb_build_object('request_number', sr.request_number, 'status', sr.status) from supply_requests sr
+          where sr.location_id = m.location_id and sr.status in (${sqlList(OPEN)}) and m.warehouse_product_id is not null
+            and exists (select 1 from supply_request_items si where si.supply_request_id = sr.id and si.product_id = m.warehouse_product_id)
+          order by sr.id desc limit 1) as open_request
+     from profittrack_materials m join franchise_locations l on l.id = m.location_id
+     where l.type = 'franchise' and ${visible} and m.is_active = true`, [MATERIAL],
+  );
+  const items = rows.map((m) => ({ m, stock: evaluate(m) })).filter(({ stock }) => ['low', 'critical', 'out'].includes(stock.status)).map(({ m, stock }) => {
+    const reference = Math.max(stock.on_hand, stock.low_level, stock.critical_level);
+    const candidates = [
+      m.last_movement ? { source: SOURCE_LABELS[m.last_movement.type] ?? String(m.last_movement.type).replace(/_/g, ' '), at: m.last_movement.at } : null,
+      m.last_void_at ? { source: 'production void', at: m.last_void_at } : null,
+      m.last_levels_at ? { source: 'levels change', at: m.last_levels_at } : null,
+    ].filter(Boolean) as { source: string; at: string }[];
+    const last = candidates.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0] ?? null;
+    return {
+      branch_id: Number(m.location_id), branch_name: m.branch_name, is_demo: Boolean(m.is_demo), material_id: Number(m.id), material_name: m.name, variant: m.variant, unit: m.unit,
+      on_hand: stock.on_hand, low_level: stock.low_level, critical_level: stock.critical_level, status: stock.status, status_label: STOCK_LABELS[stock.status],
+      on_hand_display: formatQuantity(stock.on_hand, m.unit, reference), low_level_display: formatQuantity(stock.low_level, m.unit, reference),
+      critical_level_display: formatQuantity(stock.critical_level, m.unit, reference),
+      stock_status_changed_at: m.stock_status_changed_at ? new Date(m.stock_status_changed_at).toISOString() : null,
+      source: last?.source ?? null, source_at: last?.at ? new Date(last.at).toISOString() : null,
+      open_request: m.open_request ?? null, is_new: isNewAlert(m.stock_status_changed_at, seenAt),
+    };
+  }).sort((a, b) => (new Date(b.stock_status_changed_at ?? 0).getTime() - new Date(a.stock_status_changed_at ?? 0).getTime())
+    || (new Date(b.source_at ?? 0).getTime() - new Date(a.source_at ?? 0).getTime()) || a.material_name.localeCompare(b.material_name));
+  return ok(c, {
+    items,
+    new_counts: { low: items.filter((i) => i.is_new && i.status === 'low').length, critical: items.filter((i) => i.is_new && i.status !== 'low').length },
+    last_seen_at: seenAt, server_time: new Date().toISOString(),
+  });
+});
+
+branchRoutes.post('/branches/stock-alerts/seen', adminOrLogistics, async (c) => {
+  const { db } = c.get('deps');
+  const [row] = await db.query(
+    `insert into stock_alert_views (user_id, last_seen_at) values ($1, now()) on conflict (user_id) do update set last_seen_at = excluded.last_seen_at returning last_seen_at`, [c.get('user').id],
+  );
+  return ok(c, { last_seen_at: new Date(row.last_seen_at).toISOString() }, 'Stock alerts marked as seen.');
 });
 
 async function requireReason(c: Context<AppEnv>, db: Db, message: string): Promise<string> {

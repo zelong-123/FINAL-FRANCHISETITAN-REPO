@@ -1,6 +1,7 @@
 // Application Detail: every recorded action of an applicant, sorted into the seven report pages.
 import type { Db, Row } from '../lib/db.ts';
 import { requirementsOf } from './requirements.ts';
+import { withoutMoney } from './requiredPayments.ts';
 
 export const REPORT_PAGES = ['overview', 'qualification', 'activities', 'loi', 'payment', 'approval', 'history'] as const;
 export type ReportPage = typeof REPORT_PAGES[number];
@@ -8,6 +9,7 @@ export type ReportPage = typeof REPORT_PAGES[number];
 const QUALIFICATION_STEPS = new Set(['qualification', ...requirementsOf('qualification').map((r) => r.key)]);
 const ACTIVITY_STEPS = new Set(['orientation', 'product_tasting', 'training', 'brand_confirmation']);
 const APPROVAL_STEPS = new Set(['activation', ...requirementsOf('activation').map((r) => r.key)]);
+const LOI_STEPS = new Set(['loi', ...requirementsOf('loi').map((r) => r.key)]);
 
 /** The report page an action belongs to (History shows them all). */
 export function pageOf(row: Row): Exclude<ReportPage, 'history'> {
@@ -19,7 +21,7 @@ export function pageOf(row: Row): Exclude<ReportPage, 'history'> {
   if (QUALIFICATION_STEPS.has(step) || event === 'assessment_saved' || (stageChange && to === 'qualified')) return 'qualification';
   if (ACTIVITY_STEPS.has(step) || event.startsWith('activity_') || event.startsWith('brand_') || ['set_again', 'participant_removed', 'scheduled'].includes(event)
     || (stageChange && to === 'scheduled')) return 'activities';
-  if (step === 'loi' || event.startsWith('loi_') || (stageChange && (to === 'loi_submitted' || from === 'loi_submitted'))) return 'loi';
+  if (LOI_STEPS.has(step) || event.startsWith('loi_') || (stageChange && (to === 'loi_submitted' || from === 'loi_submitted'))) return 'loi';
   if (step === 'payment_record' || event.startsWith('payment_') || step.startsWith('applicant.payment') || (stageChange && (to === 'payment_submitted' || to === 'for_approval'))) return 'payment';
   if (APPROVAL_STEPS.has(step) || (stageChange && ['approved', 'active_franchisee'].includes(to)) || step === 'applicant.revision_requested') return 'approval';
   return 'overview';
@@ -29,19 +31,29 @@ const NICE: Record<string, string> = {
   converted: 'Converted from inquiry', created: 'Applicant created', sales_assigned: 'Sales user assigned', sales_reassigned: 'Sales user reassigned',
   assessment_saved: 'Checklist saved (old)', requirement_submitted: 'Requirement submitted', requirement_resubmitted: 'Requirement resubmitted',
   requirement_accepted: 'Requirement accepted', requirement_returned: 'Requirement returned', activity_completed: 'Activity completed by Sales',
-  activity_no_show: 'Marked No Show', activity_attended: 'Marked Attended by Admin', activity_returned: 'Activity returned to Sales',
+  activity_no_show: 'Marked No Show', activity_attended: 'Verified by Admin (Attended)', activity_returned: 'Activity returned to Sales',
+  brand_selected: 'Selected brand verified (Orientation/Tasting)', orientation_tasting_merged: 'Orientation and Product Tasting merged (Orientation/Tasting)',
+  orientation_tasting_reopened: 'Orientation/Tasting reopened for the new flow',
   activity_completed_early: 'Completed early (legacy)', brand_confirmation_submitted: 'Final brand submitted', brand_confirmation_returned: 'Brand Confirmation returned',
   brand_confirmed: 'Brand confirmed and locked', brand_changed: 'Brand changed', loi_uploaded: 'LOI scan uploaded', loi_replaced: 'LOI scan replaced',
   loi_details_saved: 'LOI details saved', loi_verification_changed: 'LOI verification changed', loi_returned: 'LOI returned to Sales', loi_image_removed: 'LOI scan removed',
-  loi_completed: 'LOI completed', loi_proceeded: 'Proceeded with LOI pending', payment_agreed_amount_set: 'Agreed Package Amount set',
-  payment_agreed_amount_changed: 'Agreed Package Amount changed', payment_entry_submitted: 'Payment recorded', payment_entry_verified: 'Payment verified',
-  payment_entry_returned: 'Payment returned to Sales', payment_entry_reviewed: 'Payment reviewed (older flow)', follow_up_logged: 'Follow-up logged',
+  loi_completed: 'LOI completed', loi_proceeded: 'Proceeded with LOI pending', payment_agreed_amount_set: 'Payment setup (old flow)',
+  payment_agreed_amount_changed: 'Payment setup changed (old flow)', payment_entry_submitted: 'Payment submitted for verification',
+  payment_entry_resubmitted: 'Payment resubmitted', payment_entry_edited: 'Payment entry edited', payment_entry_rejected: 'Payment rejected',
+  payment_required_updated: 'Required payments updated', payment_entry_verified: 'Payment verified',
+  payment_entry_returned: 'Payment returned to Sales (older flow)', payment_entry_reviewed: 'Payment reviewed (older flow)', follow_up_logged: 'Follow-up logged',
   set_again: 'Set Again', scheduled: 'Schedule approved', participant_removed: 'Removed from a session', document_removed: 'File removed',
 };
 const STAGE_NAMES: Record<string, string> = {
   converted: 'Converted', qualified: 'Qualified', scheduled: 'Scheduling', loi_submitted: 'LOI', payment_submitted: 'Payment Record', for_approval: 'For Approval',
   approved: 'Approved', active_franchisee: 'Active Franchisee', rejected: 'Rejected',
 };
+
+/** History rows are append-only: a value an older data script stored as a JSON string is read as JSON. */
+export function asJson(value: unknown): unknown {
+  if (typeof value !== 'string' || !/^\s*[[{]/.test(value)) return value;
+  try { return JSON.parse(value); } catch { return value; }
+}
 
 /** A plain-English name for the action. */
 export function actionLabel(row: Row): string {
@@ -66,7 +78,7 @@ export async function applicantHistory(db: Db, applicantId: number, showFiles: b
     .map((h) => ({
       id: h.id, at: h.changed_at ?? h.created_at, by: h.by_name ?? (h.actor_role === 'system' ? 'System' : null), by_user_id: h.changed_by_user_id, role: h.actor_role,
       page: pageOf(h), action: actionLabel(h), event: h.event, step: h.step, stage: h.to_stage, from_stage: h.from_stage,
-      reason: h.remarks, old_values: h.old_values, new_values: h.new_values,
+      reason: h.remarks, old_values: withoutMoney(asJson(h.old_values)), new_values: withoutMoney(asJson(h.new_values)),
       attachments: showFiles ? (h.attachments ?? []) : (h.attachments ?? []).map(() => ({ hidden: true })),
     }))
     .filter((h) => !page || page === 'history' || h.page === page);

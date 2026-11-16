@@ -12,6 +12,7 @@ import * as ledger from '../services/ledger.ts';
 import { readCsv, warehouse } from '../services/inventory.ts';
 import { receiveLines, recordCost, requirementsFor, resolveBrandProduct, syncRecipe } from '../services/branchStock.ts';
 import { notifyRoles } from '../services/notifications.ts';
+import { evaluate, lastCountsByMaterial, STOCK_LABELS } from '../services/materialStock.ts';
 import { DELIVERED_ON, sqlList, STATUSES as SUPPLY_STATUSES } from '../services/supplyStatus.ts';
 
 export const workspaceRoutes = new Hono<AppEnv>();
@@ -20,6 +21,7 @@ const franchisee = role('franchisee');
 const admin = role('admin');
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const SEVERITY_ORDER: Record<string, number> = { ok: 0, low: 1, critical: 2, out: 3 };
 const brandOf = async (db: Db, id: number | null) => (id ? (await db.query(`select * from brands where id = $1`, [id]))[0] ?? null : null);
 const brandBrief = (brand: Row | null) => (brand ? { id: brand.id, name: brand.name } : null);
 
@@ -247,9 +249,49 @@ workspaceRoutes.get('/branch/workspace/materials', anyBranchRole, async (c) => {
   const { db } = c.get('deps');
   const loc = await location(c);
   const active = boolParam(c.req.query('include_inactive')) ? '' : ' and m.is_active = true';
-  return ok(c, await db.query(
+  const rows = await db.query(
     `select m.*, (select to_jsonb(b) from profittrack_material_balances b where b.material_id = m.id limit 1) as balance from profittrack_materials m where m.location_id = $1${active} order by m.name`, [loc.id],
-  ));
+  );
+  // Additive: the same status rule as every Branches screen, the levels in use, and the last real count.
+  const lastCounts = await lastCountsByMaterial(db, [loc.id]);
+  return ok(c, rows.map((m) => {
+    const stock = evaluate(m);
+    return {
+      ...m, on_hand: stock.on_hand, low_level: stock.low_level, critical_level: stock.critical_level,
+      levels_source: m.low_level !== null && m.low_level !== undefined && m.critical_level !== null && m.critical_level !== undefined ? 'set' : 'default',
+      status: stock.status, status_label: STOCK_LABELS[stock.status], last_counted_at: lastCounts.get(Number(m.id)) ?? null,
+    };
+  }));
+});
+
+/** The franchisee counts materials on hand (blank rows skipped). All or nothing, one count operation. */
+workspaceRoutes.post('/branch/workspace/physical-count', franchisee, async (c) => {
+  const { db } = c.get('deps');
+  const user = c.get('user');
+  const loc = await location(c);
+  const input = await readInput(c);
+  const v = await validate(db, input, { idempotency_key: ['required', 'string', 'max:120'], items: ['required', 'array', 'min:1', `max:${ledger.MAX_COUNT_ITEMS}`] });
+  const result = await ledger.physicalCountBatch(db, loc, user, { idempotency_key: v.idempotency_key, items: v.items });
+  const worse = result.items.filter((i: Row) => SEVERITY_ORDER[i.status_after] > SEVERITY_ORDER[i.status_before]);
+  const message = `${result.counted} counted, ${result.adjusted} adjusted.` + (worse.length ? ` ${worse.map((i: Row) => `${i.material} is now ${i.status_after_label}`).join('; ')}.` : '');
+  return ok(c, { ...result, worse: worse.map((i: Row) => ({ material_id: i.material_id, material: i.material, status: i.status_after, status_label: i.status_after_label })) }, message, result.duplicate ? 200 : 201);
+});
+
+/** Physical counts of this branch, newest first, with the reason (the franchisee's history list). */
+workspaceRoutes.get('/branch/workspace/count-history', anyBranchRole, async (c) => {
+  const { db } = c.get('deps');
+  const loc = await location(c);
+  return paginate(c, db, {
+    columns: `c.id, c.material_id, c.recorded_quantity_milli, c.counted_quantity_milli, c.quantity_delta_milli, o.occurred_at, o.type as operation_type,
+      (select m.name from profittrack_materials m where m.id = c.material_id) as material, (select m.unit from profittrack_materials m where m.id = c.material_id) as unit,
+      (select mv.reason from profittrack_material_movements mv where mv.operation_id = c.operation_id and mv.material_id = c.material_id and mv.type = 'physical_count' order by mv.id desc limit 1) as reason,
+      (select u.full_name from users u where u.id = o.recorded_by_user_id) as recorded_by`,
+    from: 'profittrack_counts c join profittrack_operations o on o.id = c.operation_id', where: ['c.location_id = $1'], params: [loc.id], orderBy: 'o.occurred_at desc, c.id desc', perPage: perPage(c, 15),
+    map: (r: Row) => ({
+      id: r.id, material_id: r.material_id, material: r.material, unit: r.unit, occurred_at: r.occurred_at, recorded_by: r.recorded_by, reason: r.reason,
+      before: round3(Number(r.recorded_quantity_milli) / 1000), counted: round3(Number(r.counted_quantity_milli) / 1000), delta: round3(Number(r.quantity_delta_milli) / 1000),
+    }),
+  });
 });
 
 const withImage = (c: Context<AppEnv>, recipe: Row): Row => ({ ...recipe, image_url: recipe.image_path ? c.get('deps').files.publicUrl(recipe.image_path) : null });

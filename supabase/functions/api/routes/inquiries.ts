@@ -19,6 +19,7 @@ import { activeSalesUser, requireReason } from '../services/accountability.ts';
 import { logStageChange } from '../services/applicantStage.ts';
 import { assertBrandUnlocked } from '../services/brandConfirmation.ts';
 import { applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, INQUIRY_DAYS_SQL, inquiryMonitor } from '../services/monitoring.ts';
+import { readLocation } from '../services/psgc.ts';
 
 export const inquiryRoutes = new Hono<AppEnv>();
 
@@ -134,7 +135,8 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
 inquiryRoutes.post('/inquiries', role('marketing'), async (c) => {
   const { db } = c.get('deps');
   const user = c.get('user');
-  const v = await validate(db, await readInput(c), {
+  const input = await readInput(c);
+  const v = await validate(db, input, {
     lead_name: ['required', 'string', 'max:255'],
     first_name: ['required', 'string', 'max:100'],
     last_name: ['required', 'string', 'max:100'],
@@ -165,7 +167,7 @@ inquiryRoutes.post('/inquiries', role('marketing'), async (c) => {
     }
     duplicate = { duplicate_reason: requireReason(duplicateInput, 'duplicate_reason', 'a duplicate reason'), duplicate_matches: JSON.stringify(matches) };
   }
-  const inquiry = await createInquiry(db, { ...fields, ...duplicate, status: 'new', encoded_by_user_id: user.id, inquiry_date: fields.inquiry_date ?? manilaToday() });
+  const inquiry = await createInquiry(db, { ...fields, ...(await readInquiryLocations(db, input, true)), ...duplicate, status: 'new', encoded_by_user_id: user.id, inquiry_date: fields.inquiry_date ?? manilaToday() });
   await audit(c, db, 'inquiry.created', { type: INQUIRY_MODEL, id: inquiry.id }, null, inquiry);
   if (matches.length) {
     await audit(c, db, 'inquiry.duplicate_confirmed', { type: INQUIRY_MODEL, id: inquiry.id }, null, { duplicate_reason: inquiry.duplicate_reason, matches });
@@ -316,11 +318,28 @@ inquiryRoutes.put('/inquiries/:inquiry', marketingAdmin, async (c) => {
   if (linked && Number(v.preferred_brand_id) !== Number(linked.preferred_brand_id ?? 0)) {
     await assertBrandUnlocked(db, linked, 'preferred_brand_id');
   }
-  const saved = await updateInquiry(db, inquiry, v);
-  await syncLinkedApplicant(db, saved, v);
+  const locations = await readInquiryLocations(db, input, false);
+  const saved = await updateInquiry(db, inquiry, { ...v, ...locations });
+  await syncLinkedApplicant(db, saved, { ...v, ...locations });
   await audit(c, db, 'inquiry.updated', { type: INQUIRY_MODEL, id }, inquiry, saved);
   return ok(c, await withRelations(db, id), 'Inquiry updated.');
 });
+
+/**
+ * Current residence (Province -> City/Municipality -> Barangay -> Street) and preferred franchise location
+ * (Province -> City/Municipality -> Barangay/area), all optional. No preferred City/Municipality marks the
+ * inquiry "No preferred location yet" (the form asks Marketing to confirm first). On an edit, only the
+ * locations that were sent change.
+ */
+async function readInquiryLocations(db: Db, input: Row, creating: boolean): Promise<Row> {
+  const out: Row = {};
+  if (creating || 'residence_location' in input) out.residence_location = await readLocation(db, input.residence_location, 'residence_location', { street: true });
+  if (creating || 'preferred_location' in input) {
+    out.preferred_location = await readLocation(db, input.preferred_location, 'preferred_location');
+    out.no_preferred_location = !out.preferred_location?.city_code;
+  }
+  return out;
+}
 
 /** The inquiry owns the person's identity: mirror edited fields onto the linked applicant. */
 async function syncLinkedApplicant(db: Db, inquiry: Row, sent: Row) {
@@ -328,10 +347,11 @@ async function syncLinkedApplicant(db: Db, inquiry: Row, sent: Row) {
   if (!applicant) return;
   const changes: Row = {};
   if ('lead_name' in sent) changes.full_name = inquiry.lead_name;
-  for (const field of ['email', 'phone', 'address', 'preferred_brand_id']) {
+  for (const field of ['email', 'phone', 'address', 'preferred_brand_id', 'residence_location', 'preferred_location', 'no_preferred_location']) {
     if (field in sent) changes[field] = inquiry[field];
   }
-  const different = Object.entries(changes).filter(([k, value]) => String(applicant[k] ?? '') !== String(value ?? ''));
+  const key = (value: unknown) => (value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? ''));
+  const different = Object.entries(changes).filter(([k, value]) => key(applicant[k]) !== key(value));
   if (!different.length) return;
   await db.query(
     `update applicants set ${different.map(([k], i) => `"${k}" = $${i + 1}`).join(', ')} where id = $${different.length + 1}`,
@@ -394,9 +414,11 @@ inquiryRoutes.post('/inquiries/:inquiry/convert', adminOnly, async (c) => {
   const salesUser = await activeSalesUser(db, v.assigned_sales_user_id, 'assigned_sales_user_id');
   const applicant = await db.tx(async (tx) => {
     const [row] = await tx.query(
-      `insert into applicants (inquiry_id, preferred_brand_id, full_name, email, phone, address, status, application_date, notes, assigned_sales_user_id, assigned_sales_at, assigned_sales_by_user_id)
-       values ($1, $2, $3, $4, $5, $6, 'converted', $7, $8, $9, now(), $10) returning *`,
-      [id, inquiry.preferred_brand_id, inquiry.lead_name, inquiry.email, inquiry.phone, inquiry.address, v.application_date ?? manilaToday(), v.notes ?? inquiry.remarks, salesUser.id, user.id],
+      `insert into applicants (inquiry_id, preferred_brand_id, full_name, email, phone, address, status, application_date, notes, assigned_sales_user_id, assigned_sales_at, assigned_sales_by_user_id,
+         residence_location, preferred_location, no_preferred_location)
+       values ($1, $2, $3, $4, $5, $6, 'converted', $7, $8, $9, now(), $10, $11, $12, $13) returning *`,
+      [id, inquiry.preferred_brand_id, inquiry.lead_name, inquiry.email, inquiry.phone, inquiry.address, v.application_date ?? manilaToday(), v.notes ?? inquiry.remarks, salesUser.id, user.id,
+        inquiry.residence_location ?? null, inquiry.preferred_location ?? null, Boolean(inquiry.no_preferred_location)],
     );
     row.applicant_code = await assignPublicCode(tx, 'applicants', 'applicant_code', 'APL', row.id);
     await tx.query(

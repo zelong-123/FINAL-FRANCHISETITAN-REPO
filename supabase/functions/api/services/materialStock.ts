@@ -1,5 +1,5 @@
 // App\Support\MaterialStock and QuantityFormat: one stock rule for every Branches screen.
-import type { Row } from '../lib/db.ts';
+import type { Db, Row } from '../lib/db.ts';
 
 const SEVERITY: Record<string, number> = { ok: 0, low: 1, critical: 2, out: 3 };
 export const STOCK_LABELS: Record<string, string> = { ok: 'Normal', low: 'Low stock', critical: 'Critical', out: 'No stock', none: 'No inventory yet' };
@@ -58,4 +58,69 @@ export function attentionText(name: string, unit: unknown, row: ReturnType<typeo
   if (row.status === 'out') return `${name} — no stock (critical at ${format(row.critical_level)})`;
   if (row.status === 'critical') return `${name} — ${format(row.on_hand)} (critical at ${format(row.critical_level)})`;
   return `${name} — ${format(row.on_hand)} (low at ${format(row.low_level)})`;
+}
+
+// ---- Objective 2: status tracking, last counts and count units ----
+
+/** A branch with no physical count in this many days reads as stale ("on-hand figures may be higher than actual"). */
+export const STALE_COUNT_DAYS = 3;
+
+/** Units counted in whole pieces: their low / critical levels must be whole numbers. */
+export const COUNT_UNITS = new Set(['pc', 'pcs', 'piece', 'pieces', 'pack', 'packs', 'box', 'boxes', 'bottle', 'bottles', 'can', 'cans', 'sachet', 'sachets', 'roll', 'rolls', 'set', 'sets', 'unit', 'units', 'tray', 'trays', 'bag', 'bags']);
+export const isCountUnit = (unit: unknown) => COUNT_UNITS.has(String(unit ?? '').trim().toLowerCase());
+
+/**
+ * Recomputes the stock status of the given materials with evaluate() and stores it. When it differs
+ * from the stored one, stock_status_changed_at = now(); a material's FIRST status (null before) is
+ * stored without a timestamp, so it never reads as a new alert. Call inside the same transaction as
+ * the balance or level change.
+ */
+export async function syncStockStatus(db: Db, materialIds: number[]): Promise<void> {
+  const ids = [...new Set(materialIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return;
+  const rows = await db.query(
+    `select m.id, m.unit, m.low_level, m.critical_level, m.stock_status,
+       (select to_jsonb(b) from profittrack_material_balances b where b.material_id = m.id limit 1) as balance
+     from profittrack_materials m where m.id = any($1::bigint[])`, [`{${ids.join(',')}}`],
+  );
+  for (const m of rows) {
+    const next = evaluate(m).status;
+    if (m.stock_status === next) continue;
+    if (m.stock_status === null || m.stock_status === undefined) {
+      await db.query(`update profittrack_materials set stock_status = $2 where id = $1`, [m.id, next]);
+    } else {
+      await db.query(`update profittrack_materials set stock_status = $2, stock_status_changed_at = now() where id = $1`, [m.id, next]);
+    }
+  }
+}
+
+/**
+ * Last REAL physical count per material: profittrack_counts rows (written by every single and batch
+ * count) joined to their operation for the time. Bare physical_count movements without a count row
+ * (e.g. seeded usage history) never count as a physical count.
+ */
+export async function lastCountsByMaterial(db: Db, locationIds: number[]): Promise<Map<number, string>> {
+  if (!locationIds.length) return new Map();
+  const rows = await db.query(
+    `select c.material_id, max(o.occurred_at) as last_at from profittrack_counts c join profittrack_operations o on o.id = c.operation_id
+     where c.location_id = any($1::bigint[]) group by c.material_id`, [`{${locationIds.join(',')}}`],
+  );
+  return new Map(rows.map((r) => [Number(r.material_id), new Date(r.last_at).toISOString()]));
+}
+
+/** Last real physical count per branch (same source as lastCountsByMaterial). */
+export async function lastCountsByLocation(db: Db, locationIds: number[]): Promise<Map<number, string>> {
+  if (!locationIds.length) return new Map();
+  const rows = await db.query(
+    `select c.location_id, max(o.occurred_at) as last_at from profittrack_counts c join profittrack_operations o on o.id = c.operation_id
+     where c.location_id = any($1::bigint[]) group by c.location_id`, [`{${locationIds.join(',')}}`],
+  );
+  return new Map(rows.map((r) => [Number(r.location_id), new Date(r.last_at).toISOString()]));
+}
+
+/** Stale: the branch has active materials and no real count, or its last count is older than STALE_COUNT_DAYS. */
+export function isStale(lastCountAt: string | null, activeMaterials: number, now = Date.now()): boolean {
+  if (activeMaterials <= 0) return false;
+  if (!lastCountAt) return true;
+  return now - new Date(lastCountAt).getTime() > STALE_COUNT_DAYS * 86_400_000;
 }

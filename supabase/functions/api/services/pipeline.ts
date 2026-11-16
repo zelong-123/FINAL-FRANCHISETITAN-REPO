@@ -2,15 +2,13 @@
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, manilaToday, ValidationError } from '../lib/http.ts';
 import { REASON_MIN } from './accountability.ts';
-import { assertBrandConfirmedForTraining, retastingSince } from './brandConfirmation.ts';
 import { PIPELINE } from '../config/roles.ts';
-import {
-  hasVerifiedInitialPayment, MILESTONES, PAYMENT_APPROVAL_PERCENT, paymentPercent, QUALIFICATION_KEYS, REQUIRED_MILESTONES,
-} from './applicantModel.ts';
+import { MILESTONES, QUALIFICATION_KEYS, REQUIRED_MILESTONES } from './applicantModel.ts';
+import { requiredPaymentsBlocker } from './requiredPayments.ts';
+import { loadRequirementRows } from './requirements.ts';
 
 export const NOT_SCHEDULABLE = 'Activities can only be scheduled for applicants at the Scheduling stage. Admin must click Set Schedule first.';
 export const LOI_PENDING_BLOCK = 'The LOI is still Pending. Upload the soft-copy image, mark it Verified and click [Complete] in the LOI section before moving to For Approval.';
-const LOI_SOFT_TYPES = ['digital', 'email'];
 const STAGES = PIPELINE.stages as Record<string, { label: string }>;
 export const STAGE_ORDER = Object.keys(STAGES);
 
@@ -20,21 +18,22 @@ const EDGE_RULES: Record<string, { requires?: string; remarks_required?: boolean
   'qualified>scheduled': { requires: 'qualification_checked' },
   'scheduled>loi_submitted': { requires: 'scheduled_checked', remarks_required: true },
   'loi_submitted>scheduled': { remarks_required: true },
-  'payment_submitted>for_approval': { requires: 'payment_confirmed' },
+  'payment_submitted>for_approval': { requires: 'payments_verified' },
   'for_approval>approved': { requires: 'approved_ready' },
-  'approved>active_franchisee': { requires: 'fully_paid' },
+  'approved>active_franchisee': { requires: 'payments_verified' },
 };
 
 export const TRACKED_ACTIVITY_MILESTONES: Record<string, string> = {
   orientation: 'orientation_attended',
-  product_tasting: 'product_tasting_attended',
   training: 'training_completed',
 };
 export const ACTIVITY_ORDER = Object.keys(TRACKED_ACTIVITY_MILESTONES);
 
 export const isSchedulable = (a: Row) => !a.archived_at && a.status === 'scheduled';
 export const stageLabel = (stage: string | null) => STAGES[stage ?? '']?.label || String(stage ?? '').replace(/_/g, ' ');
-export const activityLabel = (type: string) => type.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+/** Orientation and Product Tasting are one activity: Orientation/Tasting (stored key 'orientation'). */
+export const activityLabel = (type: string) => (type === 'orientation' || type === 'product_tasting' ? 'Orientation/Tasting'
+  : type.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' '));
 export const nextActivityType = (type: string) => {
   const i = ACTIVITY_ORDER.indexOf(type);
   return i < 0 ? null : ACTIVITY_ORDER[i + 1] ?? null;
@@ -65,14 +64,16 @@ async function salesCompletedTypes(db: Db, a: Row, types: string[]): Promise<Set
      join schedule_sessions s on s.id = p.session_id where p.applicant_id = $1`,
     [a.id],
   );
-  if (rows.length) {
-    return new Set(rows.filter((r) => types.includes(r.activity_type) && ['completed', 'attended'].includes(r.attendance_status)).map((r) => r.activity_type));
-  }
+  // Sales' Complete is saved on activity_schedules and may not be copied to the
+  // session participant yet, so either source counts.
   const schedules = await db.query(
     `select activity_type from activity_schedules where applicant_id = $1 and status = 'completed' and activity_type = any($2::text[])`,
     [a.id, `{${types.join(',')}}`],
   );
-  return new Set(schedules.map((r) => r.activity_type));
+  return new Set([
+    ...rows.filter((r) => types.includes(r.activity_type) && ['completed', 'attended'].includes(r.attendance_status)).map((r) => r.activity_type),
+    ...schedules.map((r) => r.activity_type),
+  ]);
 }
 
 /** DONE = Sales marked Complete AND Admin marked Attended and saved it. */
@@ -96,8 +97,6 @@ export async function assertPreviousActivityDone(db: Db, a: Row, type: string) {
   if (!(await activityDone(db, a, previous))) {
     fail('activity_type', `${activityLabel(type)} comes after ${activityLabel(previous)}. Sales must mark ${activityLabel(previous)} Complete and Admin must mark it Attended and Save Applicant first.`);
   }
-  // Brand Confirmation sits between Product Tasting and Training.
-  if (type === 'training') await assertBrandConfirmedForTraining(db, a);
 }
 
 const latestOfType = async (db: Db, a: Row, type: string) => (await db.query(
@@ -107,10 +106,8 @@ const latestOfType = async (db: Db, a: Row, type: string) => (await db.query(
 export async function setAgainTarget(db: Db, a: Row): Promise<string> {
   if (a.archived_at) fail('applicant', 'An archived applicant cannot be scheduled.');
   if (!isSchedulable(a)) fail('applicant_id', NOT_SCHEDULABLE);
-  // A brand that differs from the tasted one needs a new Product Tasting first.
-  if (await retastingSince(db, a.id)) return 'product_tasting';
   const target = await currentActivityType(db, a);
-  if (target === null) fail('activity_type', 'All three activities are Done — there is no next step to schedule. Use [Completed] at the Scheduling stage to move to LOI Submission.');
+  if (target === null) fail('activity_type', 'Both activities are Done — there is no next step to schedule. Use [Completed] at the Scheduling stage to move to LOI Submission.');
   // After a No Show, Set Again reschedules the same activity (Orientation included).
   const noShow = (await latestOfType(db, a, target!))?.status === 'no_show';
   if (target === ACTIVITY_ORDER[0] && !noShow) fail('activity_type', `No activity is Done yet — schedule ${activityLabel(target!)} with Set Schedule instead of Set Again.`);
@@ -135,51 +132,38 @@ export async function assertScheduledChecked(db: Db, a: Row) {
   fail('status', message);
 }
 
-export async function assertPaymentThreshold(db: Db, a: Row, threshold: number) {
-  const percent = await paymentPercent(db, a);
-  if (percent < threshold) {
-    fail('status', threshold >= 100
-      ? `The Payment Record must be Fully Paid first: verified payments cover ${percent}% of the Agreed Package Amount.`
-      : `Verified payment progress is ${percent}%; at least ${threshold}% is required.`);
-  }
+/** No billing: the gate is "at least one required payment, and every one Verified by Admin". */
+export async function assertRequiredPaymentsVerified(db: Db, a: Row) {
+  const blocker = await requiredPaymentsBlocker(db, a);
+  if (blocker) fail('status', blocker);
 }
 
-async function assertInitialPayment(db: Db, a: Row) {
-  if (!(await hasVerifiedInitialPayment(db, a))) fail('status', 'A verified initial/down payment is required before For Approval.');
-}
-
-async function assertPaymentConfirmed(db: Db, a: Row) {
-  // Older records without the payment state machine need Fully Paid too, not only an initial payment.
-  if (a.payment_stage_state === null || a.payment_stage_state === undefined) {
-    await assertInitialPayment(db, a);
-    await assertPaymentThreshold(db, a, PAYMENT_APPROVAL_PERCENT);
-    return;
-  }
-  if (a.payment_stage_state !== 'confirmed') fail('status', 'The applicant can move to For Approval only after Admin confirms the Sales Report and clicks COMPLETED.');
-  await assertInitialPayment(db, a);
-  await assertPaymentThreshold(db, a, PAYMENT_APPROVAL_PERCENT);
-}
-
-export const loiIsSoftCopy = (a: Row) => LOI_SOFT_TYPES.includes(a.loi_submission_type);
 export const loiPending = (a: Row) => a.loi_status === 'pending';
 
 const loiDocumentExists = async (db: Db, a: Row) => (await db.query(
   `select 1 from documents where documentable_type = 'App\\Models\\Applicant' and documentable_id = $1 and type = 'loi' and removed_at is null limit 1`, [a.id],
 )).length > 0;
 
-export async function assertLoiCompletable(db: Db, a: Row) {
+/**
+ * Complete LOI (LOI Submission -> Payment Record) needs the LOI verified with its file AND the
+ * Proposed site Accepted by Admin. `withSite` is false only for an older Pending LOI that is
+ * completed after the applicant already reached Payment Record (the stage does not move then).
+ */
+export async function assertLoiCompletable(db: Db, a: Row, withSite = true) {
   const messages: string[] = [];
   if (!a.loi_submission_date) messages.push('Set the LOI submission date.');
   else if (String(a.loi_submission_date).slice(0, 10) > manilaToday()) messages.push('The LOI submission date cannot be in the future.');
   if (a.loi_verification_status !== 'verified') messages.push('Mark the LOI as Verified.');
   // The scanned LOI is always required, hard copies included.
   if (!(await loiDocumentExists(db, a))) messages.push('Upload the scanned LOI first — it is required for every LOI, hard copies included.');
-  if (messages.length) fail('loi', messages.join(' '));
-}
-
-export function assertLoiProceedable(a: Row) {
-  if (!loiIsSoftCopy(a)) fail('loi', '[Proceed] is only for a soft-copy LOI (Soft copy or Email). A hard copy is finished with [Complete].');
-  if (!a.loi_submission_date || String(a.loi_submission_date).slice(0, 10) > manilaToday()) fail('loi', 'Set the LOI submission date (not in the future) before proceeding.');
+  if (withSite) {
+    const site = (await loadRequirementRows(db, a.id)).find((r) => r.requirement_key === 'proposed_site');
+    if (site?.status !== 'accepted') {
+      const where = { submitted: 'it is waiting for Admin review', returned: 'it was returned to Sales' }[String(site?.status)] ?? 'it has not been submitted yet';
+      messages.push(`The Proposed site must be verified by Admin (${where}).`);
+    }
+  }
+  if (messages.length) fail('loi', `Complete LOI needs the LOI (with its file) and the Proposed site verified. Missing: ${messages.join(' ')}`);
 }
 
 export async function approvalBlocker(db: Db, a: Row): Promise<string | null> {
@@ -190,8 +174,9 @@ export async function approvalBlocker(db: Db, a: Row): Promise<string | null> {
     return `Approval Failed: Applicant has completed ${done}/${REQUIRED_MILESTONES.length} required activities. Pending: ${missing.map((k) => MILESTONES[k] ?? k).join(', ')}.`;
   }
   const hasLoi = (await loiDocumentExists(db, a)) || Boolean(a.loi_confirmed_at);
-  if (!(await hasVerifiedInitialPayment(db, a)) || !hasLoi) return 'A verified initial payment and Letter of Intent are required before approval.';
-  if ((await paymentPercent(db, a)) < PAYMENT_APPROVAL_PERCENT) return 'The Payment Record must be Fully Paid before approval.';
+  if (!hasLoi) return 'A Letter of Intent is required before approval.';
+  const payments = await requiredPaymentsBlocker(db, a);
+  if (payments) return payments;
   if (!a.reviewed_at) return 'The review must be confirmed first — use "Review" at the For Approval stage.';
   return null;
 }
@@ -224,12 +209,10 @@ export async function assertTransition(db: Db, a: Row, to: string, user: Row, re
   switch (rules.requires) {
     case 'qualification_checked': assertQualificationChecked(a); break;
     case 'scheduled_checked': await assertScheduledChecked(db, a); break;
-    case 'payment_confirmed': await assertPaymentConfirmed(db, a); break;
-    case 'fully_paid': await assertPaymentThreshold(db, a, 100); break;
+    case 'payments_verified': await assertRequiredPaymentsVerified(db, a); break;
     case 'approved_ready': {
       const blocker = await approvalBlocker(db, a);
       if (blocker) fail('status', blocker);
-      await assertPaymentThreshold(db, a, PAYMENT_APPROVAL_PERCENT);
       break;
     }
   }

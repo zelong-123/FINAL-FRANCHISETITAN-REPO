@@ -5,6 +5,7 @@ import {
   FaBoxesStacked,
   FaCircleExclamation,
   FaClipboardList,
+  FaClockRotateLeft,
   FaExpand,
   FaStore,
   FaTriangleExclamation,
@@ -19,6 +20,7 @@ import { EmptyState, Field, LoadingState, Modal, Notice, StatusBadge } from '../
 import { defaultLevelsFor, formatQuantity, STOCK_STATUS_LABELS } from '../lib/quantity';
 import { formatDate, formatNumber } from '../lib/format';
 import { supplyStatusLabel } from '../lib/supplyActions';
+import { changedAgo, lastCountLabel, sortWorstFirst } from '../lib/stockView';
 
 import dailyDashLogo from '../assets/dailydash_new.png';
 import goDoLogo from '../assets/godo_new.png';
@@ -26,12 +28,24 @@ import kkopiLogo from '../assets/kkopi_new.png';
 import laPastaLogo from '../assets/lapasta_new.png';
 
 const metrics = [
-  ['active_branches', 'Active branches', FaStore, (summary) => `With portal account: ${formatNumber(summary?.with_portal_account || 0)}${Number(summary?.demo_with_portal_account) ? ` · ${formatNumber(summary.demo_with_portal_account)} demo` : ''}`],
+  ['active_branches', 'Active branches', FaStore, (summary) => activeBreakdown(summary)],
   ['materials_tracked', 'Materials tracked', FaBoxesStacked, 'Inventory items across active branches'],
   ['low_stock_items', 'Low-stock items', FaTriangleExclamation, "At or below each material's low level"],
   ['critical_stock_items', 'Critical items', FaCircleExclamation, 'At or below the critical level, or no stock'],
   ['open_requests', 'Open requests', FaClipboardList, 'Awaiting completion'],
+  ['stale_branches', 'Stale data', FaClockRotateLeft, (summary) => `Branches with no count in ${summary?.stale_count_days ?? 3}+ days`],
 ];
+/** Cards that open an alert list (one open at a time). */
+const ALERT_CARDS = { low_stock_items: 'low', critical_stock_items: 'critical', stale_branches: 'stale' };
+
+/** "2 live · 8 demo · 1 without portal account": the parts always add up to Active branches. */
+function activeBreakdown(summary) {
+  if (!summary) return '';
+  const parts = [`${formatNumber(summary.live_branches ?? summary.with_portal_account ?? 0)} live`];
+  if (Number(summary.demo_branches)) parts.push(`${formatNumber(summary.demo_branches)} demo`);
+  if (Number(summary.without_portal_account)) parts.push(`${formatNumber(summary.without_portal_account)} without portal account`);
+  return parts.join(' · ');
+}
 
 // Keys are normalized brand codes/names (lowercase, letters only).
 const BRANDS = {
@@ -101,7 +115,7 @@ function materialsSummary(branch) {
  * Default view: one branch card. The card and the View label open the
  * same half view.
  * ------------------------------------------------------------------ */
-function BranchCard({ branch, active, onOpen, role, onEditLocation }) {
+function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted = false }) {
   const brand = getBrand(branch);
   const state = stockState(branch);
   const alert = branchAlert(branch);
@@ -119,8 +133,10 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation }) {
 
   return (
     <div
-      className={`bp-card relative gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:var(--bp-surface)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
-      style={{ '--brand-color': brand.color }}
+      id={`branch-card-${branch.id}`}
+      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:var(--bp-surface)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
+      data-highlighted={highlighted || undefined}
+      style={{ '--brand-color': brand.color, ...(highlighted ? { outline: '2px solid var(--accent)', outlineOffset: '3px', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent) 24%, transparent)' } : {}) }}
       role="button"
       tabIndex={0}
       aria-label={`Open ${branch.name}`}
@@ -174,6 +190,10 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation }) {
             <small>Request</small>
             <b>{formatNumber(branch.open_request_count)}</b>
           </span>
+          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-danger-text [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
+            <small>Last count</small>
+            <b className={branch.is_stale ? 'text-[color:var(--warning-text)]! font-[650]!' : ''} title={branch.is_stale ? 'No physical count in 3+ days: on-hand figures may be higher than actual' : undefined}>{lastCountLabel(branch.last_count_at)}{branch.is_stale && branch.materials_count ? ' · stale' : ''}</b>
+          </span>
         </div>
 
         <div className="flex justify-end mt-auto pt-3">
@@ -216,7 +236,8 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   }
   if (!ops) return null;
 
-  const inventory = ops.inventory || [];
+  // Worst status first (No stock, Critical, Low, Normal), then by name.
+  const inventory = sortWorstFirst(ops.inventory || []);
   const summary = ops.inventory_summary || {};
   const activeRequests = ops.active_requests || [];
   const attention = ops.needs_attention || [];
@@ -244,6 +265,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                   <th>On hand</th>
                   <th>Low / Critical</th>
                   <th>Status</th>
+                  <th>Last count</th>
                   {costing && <th>Unit cost</th>}
                   {costing && <th>Stock value</th>}
                   {role === 'logistics' && <th aria-label="Actions" />}
@@ -259,8 +281,12 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                     </td>
                     <td className="bp-col-source">{row.source || '—'}</td>
                     <td><strong>{row.on_hand_display || formatQuantity(row.on_hand, row.unit)}</strong></td>
-                    <td>{row.low_level_display || '—'} / {row.critical_level_display || '—'}</td>
+                    <td>
+                      {row.low_level_display || '—'} / {row.critical_level_display || '—'}
+                      {row.levels_source === 'default' && <span className="ml-[6px] inline-flex p-[1px_6px] border border-line rounded-[999px] text-muted text-[10px] font-[650] align-middle" title="Unit defaults: Logistics has not set levels for this material">Default</span>}
+                    </td>
                     <td><b className={`font-[600] whitespace-nowrap later-5:[&.is-ok]:text-success-text later-6:[&.is-low]:text-[color:var(--warning-text)] later-7:[&.is-critical]:text-danger-text later-7:[&.is-out]:text-danger-text is-${row.status}`}>{STOCK_STATUS_LABELS[row.status] || '—'}</b></td>
+                    <td className={row.last_counted_at ? '' : 'text-muted'}>{lastCountLabel(row.last_counted_at)}</td>
                     {costing && <td>{row.unit_cost == null ? '—' : `₱${formatNumber(row.unit_cost, 2)}`}</td>}
                     {costing && <td>{row.stock_value == null ? '—' : `₱${formatNumber(row.stock_value, 2)}`}</td>}
                     {role === 'logistics' && (
@@ -518,6 +544,8 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const unit = material.unit || '';
+  // pcs, packs, boxes, bottles…: the API requires whole numbers too.
+  const wholeOnly = Boolean(material.count_unit);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -529,6 +557,10 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
     }
     if (!(criticalValue < lowValue)) {
       setError('The critical level must be lower than the low level.');
+      return;
+    }
+    if (wholeOnly && (!Number.isInteger(lowValue) || !Number.isInteger(criticalValue))) {
+      setError(`${unit} is counted in whole units: enter whole numbers for both levels.`);
       return;
     }
     setSaving(true);
@@ -582,15 +614,105 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
       <Notice type="error">{error}</Notice>
       <form id="material-levels-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={submit}>
         <Field label={`Low level (${unit})`} required hint={low !== '' ? `= ${formatQuantity(low, unit, reference)}` : 'Reorder at or below this amount.'}>
-          <input required type="number" min="0" step="0.001" value={low} onChange={(event) => setLow(event.target.value)} />
+          <input required type="number" min="0" step={wholeOnly ? '1' : '0.001'} value={low} onChange={(event) => setLow(event.target.value)} />
         </Field>
         <Field label={`Critical level (${unit})`} required hint={critical !== '' ? `= ${formatQuantity(critical, unit, reference)}` : 'Critical at or below this amount.'}>
-          <input required type="number" min="0" step="0.001" value={critical} onChange={(event) => setCritical(event.target.value)} />
+          <input required type="number" min="0" step={wholeOnly ? '1' : '0.001'} value={critical} onChange={(event) => setCritical(event.target.value)} />
         </Field>
       </form>
+      {wholeOnly && <p className="muted-note text-muted text-[8px] leading-[1.6]">{unit} is counted in whole units: use whole numbers.</p>}
       <p className="muted-note text-muted text-[8px] leading-[1.6]">On hand now: {material.on_hand_display || formatQuantity(material.on_hand, unit)}. Status order: No stock → Critical → Low → Normal.</p>
       <p className="muted-note text-muted text-[8px] leading-[1.6]">Default for this unit: low {formatQuantity(defaults.low, unit)} · critical {formatQuantity(defaults.critical, unit)}. Every change is logged (who, when, old and new values).</p>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Alert list under the summary cards: Low-stock items, Critical items
+ * (critical + no stock) or Stale data. Closed by default; one at a time.
+ * Opening it never marks anything as seen — only "Mark as seen" does.
+ * ------------------------------------------------------------------ */
+const ALERT_TITLES = { low: 'Low-stock items', critical: 'Critical items', stale: 'Stale data' };
+const CHIP = {
+  low: 'text-[#1a1305] [background:#fbbf24]',
+  critical: 'text-danger-text [background:color-mix(in_srgb,var(--danger)_16%,transparent)]',
+  out: 'text-danger-text [background:color-mix(in_srgb,var(--danger)_16%,transparent)]',
+};
+
+function AlertList({ kind, items, branches, newCount, marking, onMarkSeen, onClose, onViewBranch, error = '', loaded = true, onRetry }) {
+  // Low / Critical come from GET /branches/stock-alerts; Stale comes from the overview already on the page.
+  const fromAlerts = kind !== 'stale';
+  const rows = kind === 'stale'
+    ? branches.filter((branch) => branch.is_stale).sort((a, b) => new Date(a.last_count_at || 0) - new Date(b.last_count_at || 0))
+    : items.filter((item) => (kind === 'low' ? item.status === 'low' : item.status !== 'low'));
+  const subtitle = kind === 'stale'
+    ? 'No physical count in 3+ days · On-hand figures may be higher than actual'
+    : `${newCount ? `${newCount} new since you last checked` : 'Nothing new since you last checked'} · newest first`;
+  const rowClass = 'grid grid-cols-[110px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,.8fr)_auto] max-[981px]:grid-cols-[1fr_1fr] items-center gap-[10px_16px] p-[12px_18px] border-t border-t-line text-[13px]';
+  return (
+    <section id="branch-alert-list" className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]" aria-labelledby="branch-alert-list-title">
+      <div className="flex flex-wrap items-start justify-between gap-3 p-[14px_18px]">
+        <div>
+          <h2 id="branch-alert-list-title" className="m-0 text-text text-[16px] font-[780]">{ALERT_TITLES[kind]}</h2>
+          <small className="text-muted text-[12px]">{subtitle}</small>
+        </div>
+        <span className="flex gap-2">
+          {kind !== 'stale' && (
+            <button type="button" className="ghost-button min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] text-text-secondary text-[13px] font-[650] disabled:opacity-50" disabled={marking || !newCount} onClick={onMarkSeen}>
+              {marking ? 'Saving…' : 'Mark as seen'}
+            </button>
+          )}
+          <button type="button" className="ghost-button w-[36px] h-[36px] inline-grid place-items-center border border-line-strong rounded-[10px] text-text-secondary" aria-label="Close the list" onClick={onClose}>
+            <FaXmark aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+      {fromAlerts && error ? (
+        <div className="p-[14px_18px] border-t border-t-line">
+          <Notice type="error">{`The stock alerts could not be loaded: ${error}`}</Notice>
+          <button type="button" className="ghost-button min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] text-text-secondary text-[13px] font-[650]" onClick={onRetry}>Retry</button>
+        </div>
+      ) : fromAlerts && !loaded ? (
+        <div className="p-[14px_18px] border-t border-t-line"><LoadingState label="Loading stock alerts…" /></div>
+      ) : rows.length === 0 ? (
+        <p className="m-0 p-[14px_18px] border-t border-t-line text-muted text-[13px]">{kind === 'stale' ? 'Every branch with materials was counted in the last 3 days.' : 'No items in this list right now.'}</p>
+      ) : kind === 'stale' ? (
+        <ul className="m-0 p-0 [list-style:none]">
+          {rows.map((branch) => (
+            <li key={branch.id} className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] max-[981px]:grid-cols-[1fr_1fr] items-center gap-[10px_16px] p-[12px_18px] border-t border-t-line text-[13px]">
+              <span><strong className="text-text">{branch.name}</strong>{branch.is_demo && <small className="ml-2 text-muted">Demo</small>}</span>
+              <span><small className="block text-muted">Last count</small><b className="text-[color:var(--warning-text)] font-[650]">{lastCountLabel(branch.last_count_at)}</b></span>
+              <span><small className="block text-muted">Last production or activity</small>{changedAgo(branch.last_production_at || branch.last_activity_at)}</span>
+              <button type="button" className="p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={() => onViewBranch(branch.id)}>View branch →</button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul className="m-0 p-0 [list-style:none]">
+          {rows.map((item) => (
+            <li key={item.material_id} className={`${rowClass} ${item.is_new ? '[background:color-mix(in_srgb,var(--accent)_6%,transparent)]' : ''}`}>
+              <span className={`justify-self-start p-[3px_10px] rounded-[999px] text-[11px] font-[800] ${CHIP[item.status] || ''}`}>{item.status_label}</span>
+              <span className="min-w-0">
+                <strong className="text-text">{item.material_name}</strong>
+                {item.is_new && <span className="ml-2 p-[1px_7px] rounded-[999px] text-[10px] font-[800] text-accent-text [background:color-mix(in_srgb,var(--accent)_18%,transparent)]">NEW</span>}
+                <small className="block text-muted">{item.branch_name}</small>
+              </span>
+              <span>
+                <strong className="text-text">{item.on_hand_display}</strong>
+                <small className="block text-muted">{item.status === 'out' ? `No stock (critical at ${item.critical_level_display})` : item.status === 'critical' ? `Critical at ${item.critical_level_display}` : `Low at ${item.low_level_display}`}</small>
+              </span>
+              <span>
+                {item.open_request
+                  ? <span className="text-text-secondary">{item.open_request.request_number} {supplyStatusLabel(item.open_request.status).toLowerCase()}</span>
+                  : <span className="text-[color:var(--warning-text)] font-[650]">No open supply request</span>}
+              </span>
+              <span className="text-muted">{changedAgo(item.stock_status_changed_at || item.source_at)}{item.source ? ` · ${item.source}` : ''}</span>
+              <button type="button" className="justify-self-end p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={() => onViewBranch(item.branch_id)}>View branch →</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -620,6 +742,10 @@ export default function Branches() {
     () => (selectedId ? api.get(`/branches/${selectedId}/operations`) : Promise.resolve(null)),
     [selectedId],
   );
+  // Stock alerts for the Low / Critical cards (refreshed with the page's live sync, no extra polling).
+  const alerts = useRemote(() => api.get('/branches/stock-alerts', showArchived ? { include_archived: 1 } : {}), [showArchived]);
+  const [alertList, setAlertList] = useState(null); // 'low' | 'critical' | 'stale' | null — closed by default
+  const [markingSeen, setMarkingSeen] = useState(false);
   const ops = operations.data?.data ?? null;
   const opsMatch = ops && Number(ops.branch?.id) === Number(selectedId);
   const opsForBranch = opsMatch ? ops : null;
@@ -654,6 +780,7 @@ export default function Branches() {
   // comes back, and never a new request while one is still pending.
   const { reload: reloadOverview } = overview;
   const { reload: reloadOperations } = operations;
+  const { reload: reloadAlerts } = alerts;
   const syncSeconds = Math.max(10, Number(payload?.live_sync_seconds) || 30);
   const syncing = useRef(false);
   const syncNow = useCallback(async () => {
@@ -662,12 +789,13 @@ export default function Branches() {
     try {
       await Promise.all([
         reloadOverview({ silent: true }),
+        reloadAlerts({ silent: true }),
         selectedId ? reloadOperations({ silent: true }) : null,
       ]);
     } finally {
       syncing.current = false;
     }
-  }, [reloadOverview, reloadOperations, selectedId]);
+  }, [reloadOverview, reloadOperations, reloadAlerts, selectedId]);
   useEffect(() => {
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void syncNow();
@@ -738,6 +866,61 @@ export default function Branches() {
     setActionError('');
   };
 
+  const markSeen = async () => {
+    setMarkingSeen(true);
+    try {
+      await api.post('/branches/stock-alerts/seen', {});
+      await Promise.all([reloadAlerts({ silent: true }), reloadOverview({ silent: true })]);
+      window.dispatchEvent(new Event('herald:stock-alerts-updated'));
+    } catch (caught) {
+      setActionError(firstValidationMessage(caught));
+    } finally {
+      setMarkingSeen(false);
+    }
+  };
+  const toggleAlertList = (kind) => setAlertList((current) => (current === kind ? null : kind));
+  const alertItems = (alerts.data?.data?.items || []).filter((item) => showDemo || !item.is_demo);
+  const newCounts = {
+    low: alertItems.filter((item) => item.is_new && item.status === 'low').length,
+    critical: alertItems.filter((item) => item.is_new && item.status !== 'low').length,
+  };
+
+  // "View branch →" in the alert lists: scroll to the branch's card below and highlight it.
+  const [highlightedId, setHighlightedId] = useState(null);
+  const highlightTimer = useRef(null);
+  useEffect(() => () => {
+    if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+  }, []);
+  const scrollToBranchCard = (id) => {
+    const branch = branches.find((b) => Number(b.id) === Number(id));
+    if (!branch) return;
+    // Make sure the card is in the list: clear a search that hides it, show demo branches if needed.
+    if (!filtered.some((b) => Number(b.id) === Number(id))) {
+      if (search) setSearch('');
+      if (branch.is_demo && !showDemo) setShowDemo(true);
+    }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let tries = 0;
+    // Wait for the re-render (a few frames at most) before scrolling.
+    const attempt = () => {
+      const card = document.getElementById(`branch-card-${branch.id}`);
+      if (!card) {
+        tries += 1;
+        if (tries < 20) window.requestAnimationFrame(attempt);
+        return;
+      }
+      card.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+      card.focus({ preventScroll: true });
+      setHighlightedId(Number(branch.id));
+      if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+      highlightTimer.current = window.setTimeout(() => {
+        highlightTimer.current = null;
+        setHighlightedId(null);
+      }, 2500);
+    };
+    window.requestAnimationFrame(attempt);
+  };
+
   const [levelsTarget, setLevelsTarget] = useState(null);
   const [branchAction, setBranchAction] = useState(null);
 
@@ -766,15 +949,54 @@ export default function Branches() {
       ) : (
         <>
           {view !== 'full' && (
-            <section className="metric-grid grid gap-[13px] mb-[18px] max-[1381px]:later:grid-cols-[repeat(3,_minmax(0,_1fr))] later-4:grid-cols-[repeat(5,_minmax(0,_1fr))] max-[1281px]:later-5:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[681px]:later-6:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[451px]:later-7:grid-cols-[1fr] [.branches-page_&]:gap-3 [.branches-page_&]:mb-4 [.branches-page_&_.metric-card]:min-h-0! [.branches-page_&_.metric-card]:p-[12px_16px]! [.branches-page_&_.metric-card]:gap-[2px]! [.branches-page_&_.metric-card]:[box-shadow:none] [.branches-page_&_.metric-card]:[background:var(--bp-surface)] [.branches-page_&_.metric-card:hover]:[box-shadow:var(--shadow-sm)] [.branches-page_&_.metric-top]:mb-0! [.branches-page_&_.metric-icon]:w-[26px]! [.branches-page_&_.metric-icon]:h-[26px]! [.branches-page_&_.metric-icon]:text-[.72rem]! [.branches-page_&_.metric-icon]:text-muted [.branches-page_&_.metric-icon]:[background:transparent] [.branches-page_&_.metric-icon]:border-0 [.branches-page_&_.metric-card>strong]:text-[1.5rem]! [.branches-page_&_.metric-card>strong]:leading-[1.1]! [.branches-page_&_.metric-card>strong]:m-[2px_0_0]! [.branches-page_&_.metric-caption]:text-[.68rem]! [.branches-page_&_.metric-caption]:m-0!" aria-label="Branch network summary">
-              {metrics.map(([key, label, Icon, caption]) => (
-                <article className="metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px]" key={key}>
-                  <div className="metric-top relative z-1 flex items-center justify-between gap-3 [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680]"><span>{label}</span><span className="metric-icon w-[36px] h-[36px] later:grid place-items-center rounded-[12px] text-accent-text [background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] [.metric-tone-success_&]:text-success-text [.metric-tone-success_&]:[background:color-mix(in_srgb,_var(--success)_10%,_transparent)] later:[.metric-tone-warning_&]:text-[color:var(--warning-text)] later:[.metric-tone-warning_&]:[background:color-mix(in_srgb,_var(--warning)_10%,_transparent)] later-2:[.metric-tone-danger_&]:text-danger-text later-2:[.metric-tone-danger_&]:[background:color-mix(in_srgb,_var(--danger)_10%,_transparent)] later-3:[.metric-tone-purple_&]:text-[#b7a4ff] later-3:[.metric-tone-purple_&]:[background:rgba(139,109,255,.11)] [.dashboard-page_&]:w-[28px] [.dashboard-page_&]:h-[28px] [.dashboard-page_&]:rounded-[9px] later:[.dashboard-page_&]:text-[12px]"><Icon aria-hidden="true" /></span></div>
-                  <strong>{formatNumber(payload?.summary?.[key])}</strong>
-                  <small className="metric-caption relative z-1 mt-[7px] text-muted text-[8px] leading-[1.45]">{typeof caption === 'function' ? caption(payload?.summary) : caption}</small>
-                </article>
-              ))}
+            <section className="metric-grid grid gap-[13px] mb-[18px] max-[1381px]:later:grid-cols-[repeat(3,_minmax(0,_1fr))] later-4:grid-cols-[repeat(6,_minmax(0,_1fr))] max-[1281px]:later-5:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[681px]:later-6:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[451px]:later-7:grid-cols-[1fr] [.branches-page_&]:gap-3 [.branches-page_&]:mb-4 [.branches-page_&_.metric-card]:min-h-0! [.branches-page_&_.metric-card]:p-[12px_16px]! [.branches-page_&_.metric-card]:gap-[2px]! [.branches-page_&_.metric-card]:[box-shadow:none] [.branches-page_&_.metric-card]:[background:var(--bp-surface)] [.branches-page_&_.metric-card:hover]:[box-shadow:var(--shadow-sm)] [.branches-page_&_.metric-top]:mb-0! [.branches-page_&_.metric-icon]:w-[26px]! [.branches-page_&_.metric-icon]:h-[26px]! [.branches-page_&_.metric-icon]:text-[.72rem]! [.branches-page_&_.metric-icon]:text-muted [.branches-page_&_.metric-icon]:[background:transparent] [.branches-page_&_.metric-icon]:border-0 [.branches-page_&_.metric-card>strong]:text-[1.5rem]! [.branches-page_&_.metric-card>strong]:leading-[1.1]! [.branches-page_&_.metric-card>strong]:m-[2px_0_0]! [.branches-page_&_.metric-caption]:text-[.68rem]! [.branches-page_&_.metric-caption]:m-0!" aria-label="Branch network summary">
+              {metrics.map(([key, label, Icon, caption]) => {
+                const kind = ALERT_CARDS[key];
+                const value = payload?.summary?.[key];
+                const fresh = kind === 'low' ? newCounts.low : kind === 'critical' ? newCounts.critical : 0;
+                const body = (
+                  <>
+                    <div className="metric-top relative z-1 flex items-center justify-between gap-3 [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680]"><span className="inline-flex items-center gap-[6px]">{kind === 'critical' && fresh > 0 && <span className="w-[7px] h-[7px] rounded-[50%] [background:var(--danger)] motion-safe:animate-pulse" aria-hidden="true" />}{label}</span><span className="metric-icon w-[36px] h-[36px] later:grid place-items-center rounded-[12px] text-accent-text [background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] [.metric-tone-success_&]:text-success-text [.metric-tone-success_&]:[background:color-mix(in_srgb,_var(--success)_10%,_transparent)] later:[.metric-tone-warning_&]:text-[color:var(--warning-text)] later:[.metric-tone-warning_&]:[background:color-mix(in_srgb,_var(--warning)_10%,_transparent)] later-2:[.metric-tone-danger_&]:text-danger-text later-2:[.metric-tone-danger_&]:[background:color-mix(in_srgb,_var(--danger)_10%,_transparent)] later-3:[.metric-tone-purple_&]:text-[#b7a4ff] later-3:[.metric-tone-purple_&]:[background:rgba(139,109,255,.11)] [.dashboard-page_&]:w-[28px] [.dashboard-page_&]:h-[28px] [.dashboard-page_&]:rounded-[9px] later:[.dashboard-page_&]:text-[12px]"><Icon aria-hidden="true" /></span></div>
+                    {fresh > 0 && <span className={`absolute top-[14px] right-[56px] z-2 p-[2px_8px] rounded-[999px] text-[11px] font-[800] ${kind === 'critical' ? 'text-[#fff] [background:var(--danger)]' : 'text-[#1a1305] [background:#fbbf24]'}`}>+{fresh} new</span>}
+                    <strong className={kind === 'stale' && Number(value) ? 'text-[color:var(--warning-text)]!' : ''}>{formatNumber(value)}</strong>
+                    <small className="metric-caption relative z-1 mt-[7px] text-muted text-[8px] leading-[1.45]">{typeof caption === 'function' ? caption(payload?.summary) : caption}{kind ? ' · tap to view' : ''}</small>
+                  </>
+                );
+                if (!kind) return <article className="metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px]" key={key}>{body}</article>;
+                const open = alertList === kind;
+                const tint = fresh > 0 ? (kind === 'critical' ? 'border-[color:var(--danger)]! [background:color-mix(in_srgb,var(--danger)_8%,var(--panel))]!' : 'border-[#fbbf24]! [background:color-mix(in_srgb,#fbbf24_7%,var(--panel))]!') : '';
+                return (
+                  <button
+                    type="button"
+                    key={key}
+                    className={`metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px] w-full text-left cursor-pointer focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${tint} ${open ? 'border-accent! [box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent)_35%,transparent)]!' : ''}`}
+                    aria-pressed={open}
+                    aria-expanded={open}
+                    aria-controls="branch-alert-list"
+                    aria-label={`${label}: ${formatNumber(value)}${fresh ? `, ${fresh} new` : ''}. ${open ? 'Hide' : 'Show'} the list.`}
+                    onClick={() => toggleAlertList(kind)}
+                  >
+                    {body}
+                  </button>
+                );
+              })}
             </section>
+          )}
+
+          {view !== 'full' && alertList && (
+            <AlertList
+              kind={alertList}
+              items={alertItems}
+              branches={branches.filter((branch) => !branch.archived_at && (showDemo || !branch.is_demo))}
+              newCount={alertList === 'low' ? newCounts.low : alertList === 'critical' ? newCounts.critical : 0}
+              marking={markingSeen}
+              onMarkSeen={() => void markSeen()}
+              onClose={() => setAlertList(null)}
+              onViewBranch={scrollToBranchCard}
+              error={alerts.error ? String(alerts.error) : ''}
+              loaded={Boolean(alerts.data)}
+              onRetry={() => void reloadAlerts()}
+            />
           )}
 
           {view === 'full' ? (
@@ -861,6 +1083,7 @@ export default function Branches() {
                         onOpen={openBranch}
                         role={role}
                         onEditLocation={(branch) => setBranchAction({ kind: 'location', branch })}
+                        highlighted={Number(branch.id) === highlightedId}
                       />
                     ))}
                   </div>
