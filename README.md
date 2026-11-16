@@ -60,9 +60,29 @@ npm run test:import
 
 This runs the MySQL importer on real Postgres against a made-up dump, `tests/fixtures/phpmyadmin-sample.sql`.
 
-## Deploy to Supabase
+## Deploy the API (live project) — only from main
 
-Not yet run against a real project (see below). The steps, once you have one:
+The live `api` function serves BOTH the Vercel site and everyone's local dev server, so a deploy
+from a feature branch or an unmerged local copy changes the app for the whole team. Deploy only with:
+
+```bash
+git checkout main && git pull --ff-only
+npm run deploy:api
+```
+
+`npm run deploy:api` (tools/deploy-api.mjs) refuses unless you are on `main`, the working tree is
+completely clean, `HEAD` equals `origin/main`, the library and API tests pass, and every migration is
+already on the database. After deploying it downloads the live source and checks that every file
+equals `HEAD`. Do not run `npx supabase functions deploy` by hand against the live project.
+
+- Work on a branch, open a pull request; CI (`.github/workflows/ci.yml`) runs `test:lib`, `test:api`
+  and the build on every PR and on main.
+- Database changes: `npx supabase db push --linked --dry-run`, review, then push — before deploying.
+- Try API changes locally (`npm run dev:api`) or on a separate Supabase project, never on live.
+
+## Deploy to Supabase (first setup)
+
+The steps for a new project:
 
 ```bash
 npx supabase link --project-ref YOUR_PROJECT_REF
