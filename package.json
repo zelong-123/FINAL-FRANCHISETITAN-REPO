@@ -15,7 +15,8 @@
     "import:mysql": "node --no-warnings --env-file-if-exists=.env scripts/import-mysql-dump.mjs",
     "users:create": "node --env-file=.env scripts/create-auth-users.mjs",
     "test:lib": "node --test src/lib/*.test.mjs",
-    "deploy:api": "node --no-warnings tools/deploy-api.mjs"
+    "deploy:api": "node --no-warnings tools/deploy-api.mjs",
+    "check:imports": "node tools/check-import-case.mjs"
   },
   "dependencies": {
     "@fullcalendar/core": "6.1.15",

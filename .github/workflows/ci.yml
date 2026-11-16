@@ -22,6 +22,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Import letter case matches the files (Linux and Vercel are case-sensitive)
+        run: npm run check:imports
       - name: Library tests
         run: npm run test:lib
       - name: API tests (PGlite, no Supabase project needed)

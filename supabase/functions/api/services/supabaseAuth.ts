@@ -35,6 +35,16 @@ export function supabaseAuth(url: string, anonKey: string, serviceKey: string, d
       if (error || !data.user) throw new Error(`Could not create the sign-in: ${error?.message}`);
       return data.user.id;
     },
+    // Supabase Auth sends the invitation email (SMTP and templates are set in the dashboard, not
+    // in code); the redirect must be listed under Authentication → URL Configuration.
+    async inviteUser(email, { redirectTo, fullName } = {}) {
+      const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+        ...(redirectTo ? { redirectTo } : {}),
+        ...(fullName ? { data: { full_name: fullName } } : {}),
+      });
+      if (error || !data?.user) throw new Error(error?.message || 'The invitation email could not be sent.');
+      return data.user.id;
+    },
     async updateUser(authUserId, changes) {
       const { error } = await admin.auth.admin.updateUserById(authUserId, {
         ...changes,

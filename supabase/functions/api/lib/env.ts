@@ -18,6 +18,11 @@ export interface AuthProvider {
   signIn(email: string, password: string): Promise<AuthSession | null>;
   verify(accessToken: string): Promise<VerifiedToken | null>;
   createUser(email: string, password: string): Promise<string>;
+  /**
+   * Emails an invitation; the person sets their own password from the link (which opens
+   * `redirectTo`). Returns the new auth user id. Throws when the invitation cannot be sent.
+   */
+  inviteUser(email: string, options?: { redirectTo?: string | null; fullName?: string | null }): Promise<string>;
   updateUser(authUserId: string, changes: { email?: string; password?: string }): Promise<void>;
   deleteUser(authUserId: string): Promise<void>;
   /** Ends this session only (sign out, or a sign-in rejected after the password check). */

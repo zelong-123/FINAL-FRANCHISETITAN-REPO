@@ -1,6 +1,5 @@
 // UserController and AuditLogController. Admin only, enforced where these are mounted.
 import { Hono } from 'hono';
-import { createClient } from '@supabase/supabase-js';
 import type { AppEnv } from '../lib/env.ts';
 import { fail, intParam, ok, paginate, perPage, pick, routeId, updateRow, manilaToday } from '../lib/http.ts';
 import type { Row } from '../lib/db.ts';
@@ -8,19 +7,14 @@ import { readInput, validate } from '../lib/validate.ts';
 import { requireFound } from '../lib/middleware.ts';
 import { audit, createAccount, liftExpiredSuspensions, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
 import { forUsers } from '../services/presence.ts';
-import { accountAuditValues, cleanOptionalPhone, cleanPersonName } from '../services/credentials.ts';
+import { accountAuditValues, cleanOptionalPhone, cleanPersonName, type CredentialDelivery } from '../services/credentials.ts';
 
 export const userRoutes = new Hono<AppEnv>();
 const USER = 'App\\Models\\User';
 const STAFF = ['admin', 'sales', 'marketing', 'logistics'];
+/** Roles User Management may create directly. Admin never; Franchisee only from its applicant. */
 const STAFF_CREATABLE = ['marketing', 'sales', 'logistics'];
 const AUDIT_KEYS = ['full_name', 'email', 'phone', 'role_id', 'account_status', 'suspended_from', 'suspended_until'];
-
-const getEnv = (key: string) => {
-  if (typeof Deno !== 'undefined') return Deno.env.get(key);
-  if (typeof process !== 'undefined') return process.env[key];
-  return undefined;
-};
 
 userRoutes.get('/users', async (c) => {
   const { db } = c.get('deps');
@@ -48,8 +42,14 @@ userRoutes.get('/users', async (c) => {
   return c.json(body);
 });
 
+/**
+ * Staff accounts (Marketing, Sales, Logistics). Admin is never created here, and a Franchisee
+ * account is created from its applicant (POST /applicants/:id/portal-user) so every activation gate
+ * applies. The new person gets an invitation email and sets their own password from the link
+ * (`redirect_to`: the app's /reset-password page). No password is created, shown or stored here.
+ */
 userRoutes.post('/users', async (c) => {
-  const { db, auth } = c.get('deps');
+  const { db } = c.get('deps');
   const input = await readInput(c);
   if (input.role === 'admin') fail('role', 'An Admin account cannot be created from User Management.');
   if (input.role === 'franchisee') fail('role', 'A Franchisee account is created from an approved or active applicant. Choose the applicant as the Full name.');
@@ -59,57 +59,31 @@ userRoutes.post('/users', async (c) => {
     phone: ['nullable'],
     role: ['required', `in:${STAFF_CREATABLE.join(',')}`],
     account_status: ['nullable', 'in:active,inactive'],
+    redirect_to: ['nullable', 'string', 'max:500'],
   });
   const fullName = cleanPersonName(v.full_name);
   const phone = cleanOptionalPhone(v.phone);
   const email = String(v.email).toLowerCase();
+  // Where the email link opens. Supabase only follows URLs allowed under Authentication → URL
+  // Configuration; without one it uses the project's Site URL.
+  const redirectTo = v.redirect_to ? String(v.redirect_to).trim() : null;
+  if (redirectTo && !/^https?:\/\/\S+$/i.test(redirectTo)) fail('redirect_to', 'The invitation link must open an http(s) address.');
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
-
-  const supabaseUrl = getEnv('SUPABASE_URL');
-  let authUserId;
-
-  // 🌟 FOOLPROOF TEST CHECK: If there is no SUPABASE_URL, we are in GitHub Actions.
-  if (!supabaseUrl) {
-    // Use the mocked auth service so the foreign key constraint passes
-    authUserId = await auth.createUser(email, 'dummy-password-123!');
-  } else {
-    // Production/Staging: Send the real email invite
-    const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
-
-    const redirectTo = input.redirect_to || `${new URL(c.req.url).origin}/reset-password`;
-    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
-      data: { full_name: fullName }
-    });
-
-    if (error) {
-      console.error('Supabase Invite Error:', error);
-      fail('email', error.message || 'Failed to send invite email.');
-    }
-    authUserId = data.user.id;
-  }
-
-  // Create the user record in your database
   const user = await createAccount(c, {
-    auth_user_id: authUserId,
     role_id: requireFound(roleRow).id,
     full_name: fullName,
     email,
     phone,
     account_status: v.account_status ?? 'active',
+    // The password is chosen by the person from the invitation link, so no forced change.
     must_change_password: false,
-  });
-
-  const delivery = {
-    method: 'email_link',
-    note: `Invite emailed to ${email}. They set their own password when they open the link.`
-  };
-
+  }, { invite: { redirectTo, fullName } });
+  const delivery: CredentialDelivery = { method: 'email_link', sent_to: email, note: `Invite emailed to ${email}. They set their own password when they open the link.` };
   await audit(c, db, 'user.created', { type: USER, id: user.id }, null, accountAuditValues(user, v.role, delivery));
   return ok(c, { ...(await loadUser(db, user.id)), credentials: delivery }, 'User account created.', 201);
 });
 
+/** Applicants who may get a Franchisee account: Approved or Active Franchisee, with no account yet. */
 userRoutes.get('/users/franchisee-candidates', async (c) => {
   const { db } = c.get('deps');
   const rows = await db.query(
@@ -159,6 +133,7 @@ userRoutes.on(['PUT', 'PATCH'], '/users/:user', async (c) => {
   if (newRole) changes.role_id = requireFound((await db.query(`select id from roles where name = $1`, [newRole]))[0]).id;
   if (changes.email) changes.email = String(changes.email).toLowerCase();
 
+  // Suspended carries a window and ends by itself; Inactive has none and only an admin restores it.
   const status = changes.account_status ?? target.account_status;
   if (status === 'suspended') {
     const start = String(changes.suspended_from ?? manilaToday()).slice(0, 10);
@@ -181,6 +156,7 @@ userRoutes.on(['PUT', 'PATCH'], '/users/:user', async (c) => {
   }
   const saved = await updateRow(db, 'users', id, changes);
 
+  // A blocked account cannot keep using the system.
   if (saved!.account_status !== 'active' && target.auth_user_id) await auth.revokeAll(target.auth_user_id);
   await audit(c, db, 'user.updated', { type: USER, id }, pick(target, AUDIT_KEYS), pick(saved!, AUDIT_KEYS));
   return ok(c, await loadUser(db, id), 'User account updated.');

@@ -3,6 +3,7 @@ import { createApp } from '../../supabase/functions/api/app.ts';
 import type { FileStore } from '../../supabase/functions/api/lib/env.ts';
 import { createTestPg, pgliteDb } from './testDb.ts';
 import { fakeAuth, linkSeedUsers } from './fakeAuth.ts';
+import { registerFakeAuth } from './accounts.ts';
 
 export const PASSWORD = 'test-only-password';
 export const ADMIN = 'admin@franchisetitan.local';
@@ -38,6 +39,7 @@ export async function setup() {
   const pg = await createTestPg();
   const db = process.env.TEST_DB_ADAPTER === 'postgres' ? await productionAdapter(pg) : pgliteDb(pg);
   const auth = fakeAuth(db);
+  registerFakeAuth(auth);
   await linkSeedUsers(db, auth, PASSWORD);
   const files = memoryFiles();
   // Costing stays off like production; a test flips deps.costingEnabled to see the cost fields.
