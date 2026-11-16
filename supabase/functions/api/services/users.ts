@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
-import { manilaToday } from '../lib/http.ts';
+import { fail, manilaToday } from '../lib/http.ts';
 import { applicantJson } from './applicantModel.ts';
 
 /** $hidden on the User model, plus the Supabase link. */
@@ -88,22 +88,29 @@ export function clientIp(c: Context<AppEnv>): string | null {
   return c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip') || null;
 }
 
-/** Keeps auth.users.email and users.email identical. */
-export async function createAccount(
-  c: Context<AppEnv>,
-  fields: Row,
-  password?: string, // 🌟 Made optional so we can pass auth_user_id from an invite instead
-): Promise<Row> {
+/** How a new account gets its first sign-in: a temporary password, or an emailed invitation. */
+export type AccountCredential = string | { invite: { redirectTo?: string | null; fullName?: string | null } };
+
+/**
+ * Creates the sign-in and the users row together; keeps auth.users.email and users.email identical.
+ * Staff accounts are invited by email (the person sets their own password from the link); Franchisee
+ * portal accounts keep a system-generated temporary password, shown once and changed at first sign-in.
+ * The sign-in is created first; if the database insert then fails it is removed again, so no orphan
+ * sign-in (invited or not) is left behind.
+ */
+export async function createAccount(c: Context<AppEnv>, fields: Row, credential: AccountCredential): Promise<Row> {
   const { db, auth } = c.get('deps');
-  
-  let authUserId = fields.auth_user_id;
-
-  // If no auth_user_id is provided (e.g., old way with temp password), create the auth user
-  if (!authUserId) {
-    if (!password) throw new Error('Password is required to create a new Auth user.');
-    authUserId = await auth.createUser(fields.email, password);
+  let authUserId: string;
+  if (typeof credential === 'string') {
+    authUserId = await auth.createUser(fields.email, credential);
+  } else {
+    try {
+      authUserId = await auth.inviteUser(fields.email, credential.invite);
+    } catch (error) {
+      // Nothing was created: the invitation itself failed (e.g. email not sent, address refused).
+      fail('email', `The invitation email could not be sent: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
-
   try {
     return await db.tx(async (tx) => {
       const columns = { ...fields, auth_user_id: authUserId };
@@ -116,10 +123,7 @@ export async function createAccount(
       return row;
     });
   } catch (error) {
-    // Only delete the auth user if we just created them here, not if they were invited
-    if (!fields.auth_user_id) {
-      await auth.deleteUser(authUserId).catch(() => {});
-    }
+    await auth.deleteUser(authUserId).catch(() => {});
     throw error;
   }
 }

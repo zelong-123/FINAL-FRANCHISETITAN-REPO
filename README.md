@@ -85,6 +85,22 @@ each Admin can dismiss (remembered per browser).
   and the build on every PR and on main.
 - Database changes: `npx supabase db push --linked --dry-run`, review, then push — before deploying.
 - Try API changes locally (`npm run dev:api`) or on a separate Supabase project, never on live.
+- CI also runs `npm run check:imports`: an import whose letter case differs from the file name
+  works on Windows but breaks the Linux build on Vercel.
+
+### Staff invitation emails
+
+New staff accounts (User Management) get an invitation email from Supabase Auth and set their own
+password on the app's `/reset-password` page. Nothing about email is stored in code; set it up in
+the Supabase dashboard:
+
+- Authentication → URL Configuration → Redirect URLs: add every app address that opens the link,
+  e.g. `https://<your-vercel-app>/reset-password` (and preview URLs if you test invites there).
+- Authentication → Emails → SMTP Settings: configure a custom SMTP sender for real use. The built-in
+  sender is heavily rate-limited and meant for testing only.
+
+Franchisee portal accounts keep the system-generated temporary password (shown once, changed at
+first sign-in).
 
 ## Deploy to Supabase (first setup)
 

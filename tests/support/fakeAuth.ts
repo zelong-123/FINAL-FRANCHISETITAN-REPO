@@ -21,8 +21,22 @@ export function decodeToken(token: string): any | null {
   }
 }
 
-export function fakeAuth(db: Db): AuthProvider & { addUser(email: string, password: string): Promise<string> } {
-  const accounts = new Map<string, { email: string; password: string }>();
+export type Invite = { email: string; redirectTo: string | null; fullName: string | null; authUserId: string };
+export type FakeAuth = AuthProvider & {
+  addUser(email: string, password: string | null): Promise<string>;
+  /** Invitations "emailed" so far (newest last). */
+  invites: Invite[];
+  /** The invited person opens the email link and sets a password. */
+  acceptInvite(email: string, password: string): Promise<void>;
+  /** The next invitation fails, as when the email cannot be sent. */
+  failNextInvite(message: string): void;
+};
+
+export function fakeAuth(db: Db): FakeAuth {
+  // An invited account has no password until the invitation is accepted.
+  const accounts = new Map<string, { email: string; password: string | null }>();
+  const invites: Invite[] = [];
+  let nextInviteError: string | null = null;
   const byEmail = (email: string) => [...accounts].find(([, a]) => a.email === email);
 
   const newSession = async (uid: string, email: string): Promise<AuthSession> => {
@@ -33,7 +47,8 @@ export function fakeAuth(db: Db): AuthProvider & { addUser(email: string, passwo
   };
 
   const provider = {
-    async addUser(email: string, password: string) {
+    invites,
+    async addUser(email: string, password: string | null) {
       const uid = randomUUID();
       await db.query(`insert into auth.users (id, email) values ($1::uuid, $2)`, [uid, email]);
       accounts.set(uid, { email, password });
@@ -41,13 +56,25 @@ export function fakeAuth(db: Db): AuthProvider & { addUser(email: string, passwo
     },
     async signIn(email: string, password: string) {
       const found = byEmail(email);
-      return found && found[1].password === password ? newSession(found[0], email) : null;
+      return found && found[1].password !== null && found[1].password === password ? newSession(found[0], email) : null;
     },
     async verify(token: string) {
       const claims = decodeToken(token);
       return claims ? { authUserId: claims.sub, sessionId: claims.session_id } : null;
     },
     createUser: (email: string, password: string) => provider.addUser(email, password),
+    async inviteUser(email: string, { redirectTo = null, fullName = null }: { redirectTo?: string | null; fullName?: string | null } = {}) {
+      if (nextInviteError) { const message = nextInviteError; nextInviteError = null; throw new Error(message); }
+      const authUserId = await provider.addUser(email, null);
+      invites.push({ email, redirectTo, fullName, authUserId });
+      return authUserId;
+    },
+    async acceptInvite(email: string, password: string) {
+      const found = byEmail(email);
+      if (!found) throw new Error(`No invited account for ${email}`);
+      found[1].password = password;
+    },
+    failNextInvite(message: string) { nextInviteError = message; },
     async updateUser(uid: string, changes: { email?: string; password?: string }) {
       const account = accounts.get(uid);
       if (account) Object.assign(account, changes);

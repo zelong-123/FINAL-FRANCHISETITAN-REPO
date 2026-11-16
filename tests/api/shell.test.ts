@@ -4,12 +4,13 @@ import { createApp } from '../../supabase/functions/api/app.ts';
 import { createTestPg, pgliteDb } from '../support/testDb.ts';
 import { fakeAuth, linkSeedUsers } from '../support/fakeAuth.ts';
 import { memoryFiles } from '../support/harness.ts';
-import { firstSignIn } from '../support/accounts.ts';
+import { registerFakeAuth, signInInvited } from '../support/accounts.ts';
 
 const PASSWORD = 'test-only-password';
 const pg = await createTestPg();
 const db = pgliteDb(pg);
 const auth = fakeAuth(db);
+registerFakeAuth(auth);
 await linkSeedUsers(db, auth, PASSWORD);
 const app = createApp({ db, auth, files: memoryFiles(), costingEnabled: false });
 
@@ -111,7 +112,8 @@ test('admin creates a user who can sign in with a USR code, then blocks them', a
   const duplicate = await call('POST', '/users', { token: admin, body: { full_name: 'Dup', email: email.toUpperCase(), phone: '09171234567', role: 'sales' } });
   assert.equal(duplicate.json.errors.email[0], 'The email has already been taken.', 'uniqueness stays case-insensitive as in MySQL');
 
-  const userToken = await firstSignIn(call, email, created.json.data.credentials.temporary_password);
+  assert.equal(created.json.data.credentials.method, 'email_link', 'staff get an invitation email, not a password');
+  const userToken = await signInInvited(call, email);
 
   const blocked = await call('PUT', `/users/${created.json.data.id}`, { token: admin, body: { account_status: 'inactive' } });
   assert.equal(blocked.status, 200);

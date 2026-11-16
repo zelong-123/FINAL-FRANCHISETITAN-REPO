@@ -1,8 +1,10 @@
-// User Management: staff accounts and Franchisee accounts from applicants.
+// User Management: staff accounts (emailed invitation; the person sets their own password) and
+// Franchisee accounts from applicants (temporary password, changed at first sign-in).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from '../support/harness.ts';
-import { firstSignIn, NEW_PASSWORD } from '../support/accounts.ts';
+import { firstSignIn, NEW_PASSWORD, signInInvited } from '../support/accounts.ts';
+import { createAccount } from '../../supabase/functions/api/services/users.ts';
 
 // Everything written to the console during these tests, to prove no password is ever logged.
 const logged: string[] = [];
@@ -12,7 +14,9 @@ for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
 }
 
 const ADMIN = 'admin@franchisetitan.local';
-const { pg, call, login } = await setup();
+const { pg, call, login, auth, deps } = await setup();
+// Temporary passwords issued during these tests (Franchisee accounts), checked never to leak.
+const issued: string[] = [];
 const admin = await login(ADMIN);
 const q = async (sql: string, params: any[] = []) => (await pg.query(sql, params)).rows as any[];
 const [brand] = await q(`select id, name from brands order by id limit 1`);
@@ -69,8 +73,56 @@ test('the Admin role cannot be created, and Franchisee is not created as a plain
   assert.equal((await q(`select count(*)::int c from users where full_name like 'Would Be%'`))[0].c, 0);
 });
 
-// 🌟 REMOVED: 'the temporary password works only until it is changed' test. 
-// The system now uses email invites, so there is no temporary password to test.
+test('staff invitation: the email is sent with the app link and the name; no password is created or shown', async () => {
+  const email = 'Invited.Person@Example.test';
+  const created = await staff({ full_name: 'Invited Person', email, redirect_to: 'https://app.example.test/reset-password' });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.deepEqual(created.json.data.credentials, { method: 'email_link', sent_to: email.toLowerCase(), note: `Invite emailed to ${email.toLowerCase()}. They set their own password when they open the link.` });
+  assert.equal(created.json.data.must_change_password, false);
+  assert.ok(!JSON.stringify(created.json).includes('temporary_password'), 'no password in the response');
+  const invite = auth.invites.at(-1)!;
+  assert.deepEqual([invite.email, invite.redirectTo, invite.fullName], [email.toLowerCase(), 'https://app.example.test/reset-password', 'Invited Person']);
+  const [row] = await q(`select auth_user_id from users where email = $1`, [email.toLowerCase()]);
+  assert.equal(row.auth_user_id, invite.authUserId, 'the users row is linked to the invited sign-in');
+
+  // Before the link is opened there is no password to sign in with.
+  assert.equal((await call('POST', '/auth/login', { body: { email, password: NEW_PASSWORD, portal: 'staff' } })).status, 422);
+  const token = await signInInvited(call, email);
+  assert.equal((await call('GET', '/applicants', { token })).status, 200, 'works straight away: no forced password change');
+
+  const [log] = await q(`select new_values from audit_logs where action = 'user.created' and auditable_id = (select id from users where email = $1)`, [email.toLowerCase()]);
+  assert.equal(log.new_values.credential_method, 'email_link');
+});
+
+test('staff invitation: the link must be an http(s) address; without one Supabase uses the Site URL', async () => {
+  const bad = await staff({ full_name: 'Bad Link', redirect_to: 'javascript:alert(1)' });
+  assert.equal(bad.status, 422);
+  assert.match(bad.json.errors.redirect_to[0], /http\(s\)/);
+  const none = await staff({ full_name: 'No Link', email: 'no.link@example.test' });
+  assert.equal(none.status, 201);
+  assert.equal(auth.invites.at(-1)!.redirectTo, null);
+});
+
+test('a failed invitation creates no account and no sign-in', async () => {
+  const email = 'invite.fails@example.test';
+  auth.failNextInvite('Email rate limit exceeded');
+  const res = await staff({ full_name: 'Invite Fails', email });
+  assert.equal(res.status, 422);
+  assert.match(res.json.errors.email[0], /The invitation email could not be sent: Email rate limit exceeded/);
+  assert.equal((await q(`select count(*)::int c from users where email = $1`, [email]))[0].c, 0);
+  assert.equal((await q(`select count(*)::int c from auth.users where email = $1`, [email]))[0].c, 0);
+  assert.equal((await q(`select count(*)::int c from audit_logs a where a.action = 'user.created' and a.new_values->>'email' = $1`, [email]))[0].c, 0);
+  assert.equal((await staff({ full_name: 'Invite Fails', email })).status, 201, 'the same address can be invited again');
+});
+
+test('when the database insert fails after the invitation, the invited sign-in is removed again', async () => {
+  const email = 'db.fails@example.test';
+  const c = { get: (key: string) => (key === 'deps' ? deps : undefined) } as any;
+  await assert.rejects(createAccount(c, { role_id: 999999, full_name: 'Db Fails', email, account_status: 'active', must_change_password: false }, { invite: { fullName: 'Db Fails' } }));
+  assert.equal(auth.invites.at(-1)!.email, email, 'the invitation was sent');
+  assert.equal((await q(`select count(*)::int c from auth.users where email = $1`, [email]))[0].c, 0, 'no orphan sign-in');
+  assert.equal((await q(`select count(*)::int c from users where email = $1`, [email]))[0].c, 0);
+});
 
 test('existing accounts are not affected', async () => {
   const [seed] = await q(`select bool_or(must_change_password) as any from users where email like '%@franchisetitan.local'`);
@@ -117,10 +169,27 @@ test('Franchisee: candidates are Approved or Active Franchisee applicants withou
   const created = await call('POST', `/applicants/${active}/portal-user`, { token: admin, body: { email: 'Candidate.Branch@Example.Test' } });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   assert.equal(created.json.data.role.name, 'franchisee');
-  assert.equal(created.json.data.credentials.method, 'email_link');
-  
+  // Franchisee portal accounts keep the system-generated temporary password (no email invite).
+  assert.equal(created.json.data.must_change_password, true);
+  assert.equal(created.json.data.credentials.method, 'temporary_password');
+  const temp = created.json.data.credentials.temporary_password as string;
+  issued.push(temp);
   assert.equal((await q(`select phone from applicants where id = $1`, [active]))[0].phone, '09170000555', 'an empty phone keeps the applicant phone');
   assert.ok(!(await call('GET', '/users/franchisee-candidates', { token: admin })).json.data.some((r: any) => r.id === active), 'no longer a candidate');
+
+  // The branch account must also change its password first.
+  const branch = await call('POST', '/auth/login', { body: { email: 'candidate.branch@example.test', password: temp, portal: 'branch' } });
+  assert.equal(branch.status, 200);
+  assert.equal((await call('GET', '/branch/context', { token: branch.json.data.token })).status, 403);
+  const token = await firstSignIn(call, 'candidate.branch@example.test', temp, 'branch');
+  assert.equal((await call('GET', '/branch/context', { token })).status, 200);
+
+  const [log] = await q(`select user_id, new_values from audit_logs where action = 'user.created' and auditable_id = $1`, [created.json.data.id]);
+  const [adminRow] = await q(`select id from users where email = $1`, [ADMIN]);
+  assert.equal(Number(log.user_id), Number(adminRow.id), 'who created it');
+  assert.equal(log.new_values.role, 'franchisee');
+  assert.equal(log.new_values.credential_method, 'temporary_password');
+  assert.equal(Number(log.new_values.applicant_id), active, 'the linked applicant');
 });
 
 test('account creation is audited with who and which role', async () => {
@@ -131,5 +200,25 @@ test('account creation is audited with who and which role', async () => {
   assert.equal(log.new_values.credential_method, 'email_link');
 });
 
-// 🌟 REMOVED: 'a temporary password is returned once...' test. 
-// This is no longer applicable since users set their own password via the email link.
+test('a Franchisee temporary password is returned once and never appears in a later response, the database or any log', async () => {
+  assert.ok(issued.length >= 1, 'the Franchisee test issued a temporary password');
+  const [branchUser] = await q(`select id from users where email = 'candidate.branch@example.test'`);
+  const later = [
+    await call('GET', `/users/${branchUser.id}`, { token: admin }),
+    await call('GET', '/users', { token: admin }),
+    await call('GET', '/users?search=Candidate', { token: admin }),
+    await call('GET', '/audit-logs', { token: admin }),
+  ];
+  for (const res of later) {
+    assert.equal(res.status, 200);
+    const text = JSON.stringify(res.json);
+    assert.ok(!text.includes('"temporary_password":') && !text.includes('"credentials"'), 'no credentials field after creation');
+    for (const secret of issued) assert.ok(!text.includes(secret), 'the password is not in a later response');
+  }
+  for (const table of ['audit_logs', 'users', 'system_notifications', 'applicant_stage_histories', 'franchisees', 'applicants']) {
+    const dump = JSON.stringify(await q(`select * from ${table}`));
+    for (const secret of issued) assert.ok(!dump.includes(secret), `not stored in ${table}`);
+  }
+  const consoleText = logged.join('\n');
+  for (const secret of issued) assert.ok(!consoleText.includes(secret), 'not written to any log');
+});
