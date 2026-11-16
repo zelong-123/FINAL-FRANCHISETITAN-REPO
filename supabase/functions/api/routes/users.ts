@@ -16,18 +16,11 @@ const STAFF = ['admin', 'sales', 'marketing', 'logistics'];
 const STAFF_CREATABLE = ['marketing', 'sales', 'logistics'];
 const AUDIT_KEYS = ['full_name', 'email', 'phone', 'role_id', 'account_status', 'suspended_from', 'suspended_until'];
 
-// 🌟 SAFE ENV: Works in Deno (Supabase) and Node.js (GitHub Actions)
 const getEnv = (key: string) => {
   if (typeof Deno !== 'undefined') return Deno.env.get(key);
   if (typeof process !== 'undefined') return process.env[key];
   return undefined;
 };
-
-// 🌟 MOCK UUID GENERATOR FOR TESTS
-const mockUuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-  const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-  return v.toString(16);
-});
 
 userRoutes.get('/users', async (c) => {
   const { db } = c.get('deps');
@@ -56,7 +49,7 @@ userRoutes.get('/users', async (c) => {
 });
 
 userRoutes.post('/users', async (c) => {
-  const { db } = c.get('deps');
+  const { db, auth } = c.get('deps');
   const input = await readInput(c);
   if (input.role === 'admin') fail('role', 'An Admin account cannot be created from User Management.');
   if (input.role === 'franchisee') fail('role', 'A Franchisee account is created from an approved or active applicant. Choose the applicant as the Full name.');
@@ -72,31 +65,36 @@ userRoutes.post('/users', async (c) => {
   const email = String(v.email).toLowerCase();
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
 
-  const supabaseUrl = getEnv('SUPABASE_URL') || 'http://localhost:54321';
-  const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY') || 'dummy-key';
-  const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
+  let authUserId;
 
-  const redirectTo = input.redirect_to || `${new URL(c.req.url).origin}/reset-password`;
-  
-  // 🌟 USE mockUuid() INSTEAD OF A RANDOM NUMBER
-  let authData: any = { user: { id: mockUuid() } };
-  try {
+  // 🌟 Are we in a Node.js test environment?
+  const isNodeTest = typeof process !== 'undefined' && process.env.NODE_ENV === 'test';
+
+  if (isNodeTest) {
+    // In tests, use the mocked auth service so the foreign key is valid
+    authUserId = await auth.createUser(email, 'dummy-password-123!');
+  } else {
+    // In production (Supabase), use the real email invite
+    const supabaseUrl = getEnv('SUPABASE_URL')!;
+    const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
+
+    const redirectTo = input.redirect_to || `${new URL(c.req.url).origin}/reset-password`;
     const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
       redirectTo,
       data: { full_name: fullName }
     });
-    if (error) throw error;
-    authData = data;
-  } catch (err: any) {
-    if (!supabaseUrl.includes('localhost') && getEnv('NODE_ENV') !== 'test') {
-      console.error('Supabase Invite Error:', err);
-      fail('email', err.message || 'Failed to send invite email.');
+
+    if (error) {
+      console.error('Supabase Invite Error:', error);
+      fail('email', error.message || 'Failed to send invite email.');
     }
+    authUserId = data.user.id;
   }
 
-  // Create the user record in your database, linking the auth_user_id
+  // Create the user record in your database
   const user = await createAccount(c, {
-    auth_user_id: authData.user.id,
+    auth_user_id: authUserId,
     role_id: requireFound(roleRow).id,
     full_name: fullName,
     email,
