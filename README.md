@@ -78,7 +78,8 @@ equals `HEAD`. Do not run `npx supabase functions deploy` by hand against the li
 The script stamps the deploy with its commit and the git tree hash of `supabase/functions/api`;
 `GET /api/v1/health` returns them (`commit`, `api_tree`, `deployed_at`). Admins see a warning banner
 when the live API code differs from the API code the app was built against ("Live API is older
-than this app — tell the team"), or when the API was deployed some other way (no stamp).
+than this app — tell the team"). An API deployed some other way (no stamp) shows only a small note that
+each Admin can dismiss (remembered per browser).
 
 - Work on a branch, open a pull request; CI (`.github/workflows/ci.yml`) runs `test:lib`, `test:api`
   and the build on every PR and on main.
