@@ -219,9 +219,8 @@ function LeadIds({ inquiry }) {
   return (
     <dl className="flex flex-wrap gap-[6px_18px] m-[6px_0_0] [&_div]:grid [&_div]:gap-[1px] [&_dt]:text-muted [&_dt]:text-[10.5px] [&_dt]:font-[600] [&_dt]:tracking-[.04em] [&_dt]:uppercase [&_dd]:m-0 [&_dd]:text-text-secondary [&_dd]:text-[12px]">
       <div><dt>Lead ID</dt><dd><RecordCode code={inquiry.lead_code} label="Lead ID" size="md" /></dd></div>
-      {inquiry.applicant?.applicant_code && (
-        <div><dt>Applicant ID</dt><dd><RecordCode code={inquiry.applicant.applicant_code} label="Applicant ID" size="md" /></dd></div>
-      )}
+      {/* Always shown so the header keeps the same height for every inquiry. */}
+      <div><dt>Applicant ID</dt><dd>{inquiry.applicant?.applicant_code ? <RecordCode code={inquiry.applicant.applicant_code} label="Applicant ID" size="md" /> : '—'}</dd></div>
       {archived && <div><dt>Archive</dt><dd>{archived}</dd></div>}
     </dl>
   );
@@ -832,8 +831,21 @@ export default function Inquiries() {
     const onKey = (event) => {
       if (event.key === 'Escape' && !showCreate && !pendingAction) setSelectedId(null);
     };
+    // Clicking anywhere outside the panel closes it, like a backdrop. Clicks on
+    // table rows are skipped so selecting another inquiry still just switches it.
+    const onPointerDown = (event) => {
+      if (showCreate || pendingAction) return;
+      const drawer = drawerRef.current;
+      if (!drawer || drawer.contains(event.target)) return;
+      if (event.target.closest?.('[data-inquiry-id], [role="dialog"], [role="alertdialog"]')) return;
+      setSelectedId(null);
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
   }, [selectedId, showCreate, pendingAction]);
 
   const shownName = shown ? leadDisplayName(shown) : '';
@@ -1091,7 +1103,7 @@ export default function Inquiries() {
         </p>
       )}
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         {remote.loading ? <LoadingState /> : rows.length === 0 ? (
           <EmptyState label="No inquiries match the current filters." detail="Adjust your search or create a new inquiry to begin the pipeline." />
         ) : (
@@ -1127,7 +1139,7 @@ export default function Inquiries() {
                   {typeof inquiry.days_in_status === 'number' && !inquiry.archived_at && (
                     <small className="block mt-1 text-muted">
                       {inquiry.days_in_status} day{inquiry.days_in_status === 1 ? '' : 's'}
-                      {inquiry.overdue && <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_136,_142,_.5)] text-[#ff888e] text-[11px] font-[700]" title={`More than ${inquiry.overdue_after_days} days in this status`}>Overdue</span>}
+                      {inquiry.overdue && <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_92,_102,_.6)] text-[#ff5c66] text-[11px] font-normal" title={`More than ${inquiry.overdue_after_days} days in this status`}>Overdue</span>}
                     </small>
                   )}
                 </td>
@@ -1206,13 +1218,13 @@ export default function Inquiries() {
           </span>
           {shown && (
             <>
-              <header className="flex-none flex items-center gap-4 p-[24px_20px_20px_28px] [border-bottom:1px_solid_var(--drawer-border)] [background:linear-gradient(180deg,_rgba(123,_136,_255,_0.08),_transparent)] [&_h2]:m-0 later:[&_h2]:text-[1.2rem] [&_h2]:leading-[1.25] [&_h2]:[overflow-wrap:anywhere] later:[&_p]:m-[4px_0_0] later:[&_p]:text-[0.85rem] later:[&_p]:text-[color:var(--drawer-muted)] max-[521px]:later:p-[18px_14px_16px_18px] max-[521px]:later:gap-3">
+              <header className="flex-none flex items-start gap-4 min-h-[128px] p-[24px_20px_20px_28px] [border-bottom:1px_solid_var(--drawer-border)] [background:linear-gradient(180deg,_rgba(123,_136,_255,_0.08),_transparent)] [&_h2]:m-0 later:[&_h2]:text-[1.2rem] [&_h2]:leading-[1.25] [&_h2]:[overflow-wrap:anywhere] later:[&_p]:m-[4px_0_0] later:[&_p]:text-[0.85rem] later:[&_p]:text-[color:var(--drawer-muted)] max-[521px]:later:p-[18px_14px_16px_18px] max-[521px]:later:gap-3">
                 <span className="drawer-avatar flex-none w-[54px] h-[54px] grid place-items-center rounded-[50%] font-[700] text-[1.05rem] text-[#d4d9ff] light:text-[#3e5fd3] [background:radial-gradient(circle_at_25%_20%,_color-mix(in_srgb,_var(--drawer-accent)_45%,_transparent),_transparent_70%),_color-mix(in_srgb,_var(--drawer-accent-2)_12%,_transparent)] border border-[rgba(123,_136,_255,_0.45)] light:border-[rgba(72,_105,_235,_0.35)] [box-shadow:0_0_0_4px_rgba(123,_136,_255,_0.08),_0_6px_18px_rgba(123,_136,_255,_0.18)]" aria-hidden="true">{initialsOf(shownName)}</span>
-                <div className="min-w-0 flex-[1_1_auto]">
+                <div className="min-w-0 flex-[1_1_0%]">
                   <h2>{shownName}</h2>
                   <LeadIds inquiry={shown} />
                 </div>
-                <div className="flex-none ml-auto flex items-center gap-2">
+                <div className="flex-none ml-auto flex items-center gap-2 [&>*]:flex-none">
                   {canEdit && !shown.archived_at && !drawerEditing && (
                     <button type="button" className="flex-none inline-flex items-center gap-[6px] h-[34px] p-[0_12px] rounded-[8px] [border:1px_solid_var(--drawer-border)] [background:transparent] text-[#fde68a] light:text-[#8a5a00] text-[0.85rem] cursor-pointer [transition:background-color_0.2s_ease,_border-color_0.2s_ease] hover:[background:rgba(253,_230,_138,_0.08)] light:hover:[background:rgba(138,_90,_0,_0.08)] hover:border-[rgba(253,_230,_138,_0.4)] focus-visible:[outline:2px_solid_var(--drawer-accent)] focus-visible:[outline-offset:2px]" onClick={startDrawerEdit} title="Edit inquiry">
                       <FaPen aria-hidden="true" /> Edit

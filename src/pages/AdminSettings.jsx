@@ -4,6 +4,7 @@ import { FaBoxArchive, FaRotateLeft, FaTrashCan, FaXmark } from 'react-icons/fa6
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatDate } from '../lib/format';
+import { useAuth } from '../context/AuthContext';
 import { EmptyState, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
 
 const SECTIONS = [
@@ -14,7 +15,8 @@ const SECTIONS = [
 
 export default function AdminSettings() {
   const [params] = useSearchParams();
-  const [tab, setTab] = useState(() => SECTIONS.some((section) => section.key === params.get('tab')) ? params.get('tab') : 'users');
+  const [tab, setTab] = useState(() => (params.get('tab') === 'information' || SECTIONS.some((section) => section.key === params.get('tab')) ? params.get('tab') : 'information'));
+  const { user } = useAuth();
   const [restoringId, setRestoringId] = useState(null);
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
@@ -24,11 +26,25 @@ export default function AdminSettings() {
   const [selectedIds, setSelectedIds] = useState([]); // click order; the first one hosts the buttons
   const [bulkBusy, setBulkBusy] = useState(false);
   const [purgeTarget, setPurgeTarget] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState(null); // { item, many } awaiting confirmation
+  const [restoreAck, setRestoreAck] = useState(false); // second confirmation checkbox
   const [purgeReason, setPurgeReason] = useState('');
   const [purgeError, setPurgeError] = useState('');
   const [purging, setPurging] = useState(false);
 
   const remote = useRemote(async () => (await api.get('/archive')).data, []);
+  const activeCounts = useRemote(async () => {
+    const [users, inquiries, applicants] = await Promise.all([
+      api.get('/users', { per_page: 1, role: 'staff' }),
+      api.get('/inquiries', { per_page: 1 }),
+      api.get('/applicants', { per_page: 1 }),
+    ]);
+    return {
+      users: Number(users.data?.meta?.total ?? 0),
+      inquiries: Number(inquiries.data?.meta?.total ?? 0),
+      applicants: Number(applicants.data?.meta?.total ?? 0),
+    };
+  }, []);
 
   const data = remote.data || {};
   const section = data[tab] || { items: [] };
@@ -149,7 +165,7 @@ export default function AdminSettings() {
           type="button"
           className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
           disabled={busy}
-          onClick={() => (many ? restoreSelected() : restore(item))}
+          onClick={() => setRestoreTarget({ item, many })}
         >
           <FaRotateLeft /> {busy ? 'Restoring…' : `Restore${many ? ` (${selectedItems.length})` : ''}`}
         </button>
@@ -178,28 +194,57 @@ export default function AdminSettings() {
 
   return (
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">
-      <PageHeader
-        title="Admin settings"
-      />
+      <div className="relative mb-[10px] -mx-[clamp(22px,_3vw,_38px)] pt-[46px] [background:linear-gradient(180deg,_#0b0f19,_#1a2133_46%,_#1a2133)]">
+        <div className="flex items-end gap-[26px] px-[clamp(22px,_3vw,_38px)] pb-[16px]">
+          <span className="w-[118px] h-[118px] flex-[0_0_auto] grid place-items-center -mt-[52px] border-[6px] border-[#0b0f19] rounded-[50%] [background:#6366d6] text-[#fff] text-[48px] font-[800] [box-shadow:0_16px_34px_rgba(74,_73,_184,_0.35)]" aria-hidden="true">{(user?.full_name || 'A').charAt(0).toUpperCase()}</span>
+          <div className="min-w-0 pb-[6px]">
+            <h1 className="m-0 text-[#fff] text-[34px] font-[800] leading-[1.1] tracking-[-0.02em]">{(user?.full_name || 'Admin').toUpperCase()}</h1>
+            <p className="m-[4px_0_0] text-[#c3cad9] text-[16px]">Admin</p>
+          </div>
+        </div>
+      </div>
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError}</Notice>
 
-      <div className="flex flex-wrap gap-[6px] mb-[14px]" role="tablist" aria-label="Archive sections">
+      <div className="flex flex-wrap items-center gap-[34px] px-[clamp(22px,_3vw,_38px)] mb-[16px] border-b-2 border-b-[#2a3550]" role="tablist" aria-label="Admin sections">
+        <button type="button" role="tab" aria-selected={tab === 'information'} className={`admin-tab py-[14px] border-0 border-b-2 bg-transparent text-[16px] font-[600] cursor-pointer -mb-[2px] ${tab === 'information' ? 'text-[#fff] border-b-[#7b88ff]' : 'text-[#8fa0c0] border-b-transparent'}`} onClick={() => setTab('information')}>
+          Information
+        </button>
         {SECTIONS.map((item) => (
           <button
             key={item.key}
             type="button"
             role="tab"
             aria-selected={tab === item.key}
-            className={`tab min-h-[34px] p-[7px_14px] border border-line rounded-[999px] [background:var(--surface-subtle)] text-text-secondary text-[9px] font-[720] cursor-pointer [transition:.16s_ease] hover:text-text hover:border-line-strong hover:[background:var(--hover)] later:[&.active]:text-accent-text later:[&.active]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] later:[&.active]:[background:var(--active)] ${tab === item.key ? ' active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''}`}
+            className={`admin-tab py-[14px] border-0 border-b-2 bg-transparent text-[16px] font-[600] cursor-pointer -mb-[2px] ${tab === item.key ? 'text-[#fff] border-b-[#7b88ff]' : 'text-[#8fa0c0] border-b-transparent'}`}
             onClick={() => setTab(item.key)}
           >
-            {item.label} ({data[item.key]?.count ?? 0})
+            {item.label} ({activeCounts.data?.[item.key] ?? 0})
           </button>
         ))}
       </div>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      {tab === 'information' && (
+        <section key="information" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[19px] [background:var(--panel)]">
+          <div className="grid gap-[18px] [grid-template-columns:minmax(0,_1fr)_minmax(0,_1fr)] max-[861px]:[grid-template-columns:1fr]">
+            <div>
+              <h2 className="m-0 mb-[14px] text-[12px] font-[800] tracking-[.12em] uppercase text-muted">Information</h2>
+              <dl className="grid gap-[12px] m-0">
+                <div><dt className="text-[10px] uppercase text-muted">Name</dt><dd className="m-0 text-text">{user?.full_name || '—'}</dd></div>
+                <div><dt className="text-[10px] uppercase text-muted">Email (optional)</dt><dd className="m-0 text-text">{user?.email || '—'}</dd></div>
+                <div><dt className="text-[10px] uppercase text-muted">Contact (optional)</dt><dd className="m-0 text-text">{user?.phone || '—'}</dd></div>
+              </dl>
+            </div>
+            <dl className="grid gap-[12px] m-0 content-start">
+              <div><dt className="text-[10px] uppercase text-muted">Active</dt><dd className="m-0 text-text">{user?.presence?.time_in ? formatDate(user.presence.time_in, true) : 'Not signed in today'}</dd></div>
+              <div><dt className="text-[10px] uppercase text-muted">Last active</dt><dd className="m-0 text-text">{user?.presence?.last_active ? formatDate(user.presence.last_active, true) : '—'}</dd></div>
+              <div><dt className="text-[10px] uppercase text-muted">Date created</dt><dd className="m-0 text-text">{formatDate(user?.created_at)}</dd></div>
+            </dl>
+          </div>
+        </section>
+      )}
+
+      {tab !== 'information' && <section key={tab} className="admin-tab-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
           <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
             <h2>{SECTIONS.find((item) => item.key === tab)?.heading}</h2>
@@ -218,37 +263,87 @@ export default function AdminSettings() {
             detail="Archived records will appear here and can be restored at any time."
           />
         ) : (
-          <div className={selectable ? 'archive-selectable' : undefined}>
+          <div className={`overflow-x-auto ${selectable ? 'archive-selectable' : ''}`}>
+            <table className="w-full border-collapse text-[13px] [&_th]:text-left [&_th]:p-[12px_18px] [&_th]:text-[11px] [&_th]:font-[700] [&_th]:tracking-[.08em] [&_th]:uppercase [&_th]:text-[#8a94a6] [&_th]:border-b [&_th]:border-b-[#1f2842] [&_td]:p-[14px_18px] [&_td]:align-middle [&_td]:border-b [&_td]:border-b-[#1f2842] [&_td]:text-[#e7ebf5] [&_tr:last-child_td]:border-b-0">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Details</th>
+                  <th>Archived</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
             {items.map((item) => (
-              <div
-                className={`flex items-center justify-between gap-3 p-[11px_18px] border-b border-b-line last:border-b-0 [.archive-selectable_&]:cursor-pointer [.archive-selectable_&]:[user-select:none] [&.is-picked]:[background:rgba(123,_136,_255,_0.14)] [&.is-picked]:[box-shadow:inset_3px_0_0_#7b88ff] ${selectedIds.includes(item.id) || (tab === 'applicants' && String(item.id) === params.get('applicant')) ? ' is-picked' : ''}`}
+              <tr
+                className={`${selectedIds.includes(item.id) || (tab === 'applicants' && String(item.id) === params.get('applicant')) ? 'bg-[rgba(123,_136,_255,_0.14)]' : ''}`}
                 key={item.id}
                 onClick={(event) => handleItemClick(event, item)}
               >
-                <span className="[&_strong]:block [&_strong]:text-text later-4:[&_strong]:text-[10px] [&_small]:text-muted [&_small]:text-[8px]">
-                  <strong>{item.label}</strong>
-                  <small>
-                    {item.detail || '—'}
-                    {item.badge ? ` · ${item.badge}` : ''}
-                  </small>
-                </span>
+                <td>
+                  <strong className="block text-text text-[14px]">{item.label}</strong>
+                </td>
+                <td className="text-muted">
+                  {item.detail || '—'}
+                  {item.badge ? ` · ${item.badge}` : ''}
+                </td>
+                <td className="text-muted whitespace-nowrap">
+                  {item.archived_at ? formatDate(item.archived_at, true) : '—'}
+                  {item.archived_by ? <div className="text-[11px]">{item.archived_by}</div> : null}
+                </td>
+                <td className="text-right">
                 <span className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative" onClick={(event) => event.stopPropagation()}>
-                  <small className="muted-note text-muted text-[8px] leading-[1.6]">
-                    {item.archived_at ? `${formatDate(item.archived_at, true)}` : ''}
-                    {item.archived_by ? ` · ${item.archived_by}` : ''}
-                  </small>
                   {renderActions(item)}
                 </span>
-              </div>
+                </td>
+              </tr>
             ))}
+              </tbody>
+            </table>
           </div>
         )}
-      </section>
+      </section>}
 
-      <p className="muted-note text-muted text-[8px] leading-[1.6]" style={{ marginTop: 12 }}>
+      {tab !== 'information' && <p className="muted-note text-muted text-[8px] leading-[1.6]" style={{ marginTop: 12 }}>
         <FaBoxArchive aria-hidden="true" /> Permanent delete removes an archived inquiry from the database for good. Archive instead
         when a record may be needed later.
-      </p>
+      </p>}
+
+      {restoreTarget && (
+        <Modal
+          title={restoreTarget.many ? `Restore ${selectedItems.length} records?` : `Restore ${restoreTarget.item.label}?`}
+          onClose={() => { setRestoreTarget(null); setRestoreAck(false); }}
+          size="small"
+          footer={(
+            <>
+              <button onClick={() => { setRestoreTarget(null); setRestoreAck(false); }} disabled={restoringId !== null || bulkBusy}>Cancel</button>
+              <button
+                className="primary-button min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] rounded-[12px] text-[#fff] text-[12px] font-[760] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                disabled={!restoreAck || restoringId !== null || bulkBusy}
+                onClick={async () => {
+                  const { item, many } = restoreTarget;
+                  setRestoreTarget(null);
+                  setRestoreAck(false);
+                  if (many) await restoreSelected();
+                  else await restore(item);
+                }}
+              >
+                Yes, restore
+              </button>
+            </>
+          )}
+        >
+          <p className="m-0 text-muted text-[13px] leading-[1.6]">
+            {restoreTarget.many
+              ? `${selectedItems.length} archived ${tab} will return to the active workspace.`
+              : `${restoreTarget.item.label} will return to the active workspace.`}
+          </p>
+          <label className="flex items-start gap-[10px] mt-[16px] text-[13px] text-text cursor-pointer">
+            <input type="checkbox" className="mt-[3px]" checked={restoreAck} onChange={(event) => setRestoreAck(event.target.checked)} />
+            <span>I have checked this record and want to restore it.</span>
+          </label>
+        </Modal>
+      )}
 
       {purgeTarget && (
         <Modal

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, downloadFile, firstValidationMessage } from '../../lib/api';
-import { EmptyState, Field, LoadingState, Modal, Notice } from '../ApiUi';
+import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
 import useCosting from '../../lib/useCosting';
 import {
@@ -10,6 +10,7 @@ import {
 const money = (value) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
 const newKey = () => globalThis.crypto?.randomUUID?.() || `mat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const qty = (value, unit) => `${formatNumber(Number(value || 0), 3)} ${unit || ''}`.trim();
+const MATERIALS_PER_PAGE = 7;
 
 const GHOST = 'ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]';
 const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] disabled:opacity-50 disabled:cursor-not-allowed';
@@ -29,6 +30,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -53,6 +55,11 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const sorted = useMemo(() => sortWorstFirst(materials.filter((m) => m.is_active !== false)), [materials]);
   const tally = (...statuses) => sorted.filter((m) => statuses.includes(m.status)).length;
   const lastCount = sorted.map((m) => m.last_counted_at).filter(Boolean).sort().pop() || null;
+  // Client-side pagination of the inventory table; the shared Pagination reads this meta shape.
+  const lastPage = Math.max(1, Math.ceil(sorted.length / MATERIALS_PER_PAGE));
+  const currentPage = Math.min(page, lastPage);
+  const pageRows = sorted.slice((currentPage - 1) * MATERIALS_PER_PAGE, currentPage * MATERIALS_PER_PAGE);
+  const pageMeta = { current_page: currentPage, last_page: lastPage, per_page: MATERIALS_PER_PAGE, total: sorted.length };
   const open = (setter) => () => { setNotice(''); setter(true); };
 
   return (
@@ -119,7 +126,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((material) => {
+                {pageRows.map((material) => {
                   const balance = material.balance || {};
                   const unitCost = balance.unit_cost_micropesos == null ? null : Number(balance.unit_cost_micropesos) / 1_000_000;
                   return (
@@ -142,6 +149,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
             </table>
           </div>
         )}
+        {materials.length > 0 && <Pagination meta={pageMeta} onPage={setPage} />}
       </section>
 
       {addOpen && (
