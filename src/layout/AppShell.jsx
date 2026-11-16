@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../components/ADMIN/HeaderAndNav/Sidebar';
 import Header from '../components/ADMIN/HeaderAndNav/Header';
+import ApiVersionBanner from '../components/ApiVersionBanner';
 import MessengerWidget from '../components/Messenger/MessengerWidget';
 import { getRouteTitle } from '../lib/routes';
 import { api } from '../lib/api';
@@ -117,6 +118,7 @@ export default function AppShell() {
       />
       <div className="min-w-0">
         <Header onMenu={() => setMobileOpen((value) => !value)} mobileOpen={mobileOpen} />
+        <ApiVersionBanner role={role} />
         <main id="main-content" className="min-h-[calc(100vh_-_var(--header-height))]" tabIndex="-1">
           <div key={location.pathname} className="min-h-[inherit] [animation:routeIn_.38s_cubic-bezier(.2,_.8,_.2,_1)_both]"><Outlet /></div>
         </main>

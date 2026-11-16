@@ -36,6 +36,9 @@ test('health is public and reports the database', async () => {
   const { status, json } = await call('GET', '/health');
   assert.equal(status, 200);
   assert.equal(json.database, 'ok');
+  // Build info for the app's version banner: null unless deployed with npm run deploy:api.
+  assert.ok('commit' in json && 'api_tree' in json && 'deployed_at' in json);
+  assert.equal(json.api_tree, null);
 });
 
 test('login returns a session and never exposes the auth link', async () => {

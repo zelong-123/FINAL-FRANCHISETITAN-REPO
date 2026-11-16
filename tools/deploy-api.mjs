@@ -8,7 +8,7 @@
 //
 //   npm run deploy:api            # project ref from SUPABASE_PROJECT_REF or supabase/.temp/project-ref
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -62,10 +62,22 @@ if (pending.length) stop(`migrations not on the database yet: ${pending.join(', 
 console.log('  all migrations applied');
 
 step(`Deploying api (${head.slice(0, 7)}) to ${ref}`);
-const deploy = run('npx', ['supabase', 'functions', 'deploy', 'api', '--no-verify-jwt', '--use-api', '--project-ref', ref, '--yes'], { stdio: 'inherit' });
-if (deploy.status !== 0) stop('supabase functions deploy failed.');
+// Deploy from a temporary worktree of HEAD with build-info.ts stamped (the repo itself stays clean).
+const apiTree = git('rev-parse', 'HEAD:supabase/functions/api');
+const stamp = { commit: head, api_tree: apiTree, deployed_at: new Date().toISOString() };
+const buildInfo = (b) => `// Written by tools/deploy-api.mjs for this deploy (the committed file keeps nulls).\nexport const BUILD: { commit: string | null; api_tree: string | null; deployed_at: string | null } = ${JSON.stringify(b, null, 2)};\n`;
+const work = mkdtempSync(join(tmpdir(), 'api-deploy-'));
+rmSync(work, { recursive: true, force: true });
+git('worktree', 'add', '--detach', work, head);
+try {
+  writeFileSync(join(work, 'supabase', 'functions', 'api', 'build-info.ts'), buildInfo(stamp));
+  const deploy = run('npx', ['supabase', 'functions', 'deploy', 'api', '--no-verify-jwt', '--use-api', '--project-ref', ref, '--workdir', work, '--yes'], { stdio: 'inherit' });
+  if (deploy.status !== 0) stop('supabase functions deploy failed.');
+} finally {
+  run('git', ['worktree', 'remove', '--force', work]);
+}
 
-step('Verifying the live source equals HEAD');
+step('Verifying the live source equals HEAD (plus the build stamp)');
 const dir = mkdtempSync(join(tmpdir(), 'api-live-'));
 try {
   const dl = run('npx', ['supabase', 'functions', 'download', 'api', '--project-ref', ref, '--use-api', '--workdir', dir]);
@@ -74,11 +86,15 @@ try {
   const walk = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
   const norm = (s) => s.replace(/\r/g, '').replace(/\n+$/, '');
   const differ = walk(root).map((f) => relative(root, f).split('\\').join('/')).filter((f) => {
+    const live = norm(readFileSync(join(root, f), 'utf8'));
+    if (f === 'build-info.ts') return live !== norm(buildInfo(stamp));
     const committed = run('git', ['show', `HEAD:supabase/functions/api/${f}`]);
-    return committed.status !== 0 || norm(committed.stdout) !== norm(readFileSync(join(root, f), 'utf8'));
+    return committed.status !== 0 || norm(committed.stdout) !== live;
   });
   if (differ.length) stop(`deployed, but the live source differs from HEAD in: ${differ.join(', ')}`);
-  console.log(`\n✔ Deployed and verified: the live api function is ${head.slice(0, 7)} (${walk(root).length} files match).`);
+  const health = await fetch(`https://${ref}.supabase.co/functions/v1/api/v1/health`).then((r) => r.json()).catch(() => null);
+  if (health?.api_tree !== apiTree) stop(`deployed, but /health reports api_tree ${health?.api_tree ?? 'none'} (expected ${apiTree.slice(0, 7)}).`);
+  console.log(`\n✔ Deployed and verified: the live api function is ${head.slice(0, 7)} (api code ${apiTree.slice(0, 7)}, ${walk(root).length} files match; /health agrees).`);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
