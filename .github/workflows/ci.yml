@@ -1,0 +1,34 @@
+# Every pull request and every push to main runs the tests and the build. Make "test" a required
+# check in the branch protection for main so nothing reaches main (and the deployed API) untested.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Library tests
+        run: npm run test:lib
+      - name: API tests (PGlite, no Supabase project needed)
+        run: npm run test:api
+      - name: Build
+        run: npm run build
+        env:
+          # The build only needs the values to exist; the real ones are set in Vercel.
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder

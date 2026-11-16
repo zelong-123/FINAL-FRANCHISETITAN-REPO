@@ -3205,6 +3205,14 @@ export default function Applicants() {
   }[stage] || [];
   const doneActivityCount = TRACKED_ACTIVITIES.filter((tracked) => editing?.activity_state?.[tracked.type]?.done).length;
   const qualificationCount = QUALIFICATION_ITEMS.filter(({ key }) => draft?.milestones?.[key]).length;
+  // The retired five-item checklist is history only: hidden here once every current Qualification
+  // requirement has a record (it stays in Application Detail as "Older checklist (history)").
+  const currentQualificationDefs = (editing?.requirements?.config?.requirements || []).filter((def) => def.stage === 'qualification');
+  const hasCurrentQualification = currentQualificationDefs.length > 0 && currentQualificationDefs.every((def) => {
+    const item = (editing?.requirements?.items || []).find((i) => i.key === def.key);
+    return item && item.status !== 'pending';
+  });
+  const showOldChecklist = (editing?.assessment_log || []).length > 0 && !hasCurrentQualification;
   const doneSections = editing && draft && doneSectionKeys.length ? (
     <div className="grid gap-[10px] m-[4px_0_14px]">
       {doneSectionKeys.map((key) => {
@@ -3258,7 +3266,7 @@ export default function Applicants() {
         return (
           <DoneSection key={key} title="Qualification" summary={editing.requirements?.summary?.qualification?.legacy ? `Legacy checklist · ${qualificationCount} of ${QUALIFICATION_ITEMS.length} assessed` : 'Requirements accepted'}>
             <RequirementsPanel editing={editing} stage="qualification" readOnly busy={false} onSubmit={() => {}} onAccept={() => {}} onReturn={() => {}} onError={setActionError} />
-            {(editing.assessment_log || []).length > 0 && (
+            {showOldChecklist && (
               <QualificationAssessment draft={draft} log={editing.assessment_log || []} isSalesRole={isSalesRole} readOnly onToggle={() => {}} />
             )}
           </DoneSection>
@@ -3888,7 +3896,7 @@ export default function Applicants() {
                   onError={setActionError}
                 />
                 {/* The retired five-item checklist stays visible as history only. */}
-                {(editing.assessment_log || []).length > 0 && (
+                {showOldChecklist && (
                   <DoneSection title="Earlier qualification checklist (history)" summary="Replaced by the requirements above">
                     <QualificationAssessment draft={draft} log={editing.assessment_log || []} isSalesRole={isSalesRole} readOnly onToggle={() => {}} />
                   </DoneSection>

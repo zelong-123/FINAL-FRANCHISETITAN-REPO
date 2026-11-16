@@ -290,7 +290,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
             ]} />
           </Card>
           {!summary?.legacy && renderRequirementCards('qualification')}
-          {summary?.legacy && (
+          {(summary?.legacy || (data.qualification?.items || []).some((item) => item.completed)) && (
             <Card title="Older checklist (history)">
               <Pairs rows={(data.qualification?.items || []).map((item) => [item.label, item.completed ? `Checked${item.recorded_by ? ` · ${item.recorded_by}` : ''}${item.completed_at ? ` · ${item.completed_at}` : ''}` : 'Not checked'])} />
             </Card>
