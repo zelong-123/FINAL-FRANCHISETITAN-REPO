@@ -163,7 +163,7 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
   const l = await loadBranch(c, db);
   const materials = await db.query(
     `select m.*, (select to_jsonb(b) from profittrack_material_balances b where b.material_id = m.id limit 1) as balance,
-       (select jsonb_build_object('id', p.id, 'name', p.name, 'sku', p.sku) from products p where p.id = m.warehouse_product_id) as warehouse_product
+       (select jsonb_build_object('id', p.id, 'name', p.name, 'sku', p.sku, 'category_id', p.category_id, 'category', coalesce((select c.name from product_categories c where c.id = p.category_id), p.category)) from products p where p.id = m.warehouse_product_id) as warehouse_product
      from profittrack_materials m where m.location_id = $1 and m.is_active = true order by m.name`, [l.id],
   );
   // Recent production usage, for the informational days-of-cover figure. Voiding a batch restores its
@@ -183,7 +183,7 @@ branchRoutes.get('/branches/:location/operations', adminOrLogistics, async (c) =
     const value = m.balance?.value_cents ?? null;
     const unitCost = m.balance?.unit_cost_micropesos ?? null;
     return {
-      id: m.id, name: m.name, variant: m.variant, unit: m.unit, source: m.source, warehouse_product: m.warehouse_product, on_hand: stock.on_hand, on_hand_display: formatQuantity(stock.on_hand, m.unit, reference),
+      id: m.id, name: m.name, variant: m.variant, unit: m.unit, source: m.source, warehouse_product: m.warehouse_product, category_id: m.warehouse_product?.category_id ?? null, category: m.warehouse_product?.category ?? null, on_hand: stock.on_hand, on_hand_display: formatQuantity(stock.on_hand, m.unit, reference),
       unit_cost: unitCost === null ? null : round(Number(unitCost) / 1_000_000, 2), stock_value: value === null ? null : round(Number(value) / 100, 2),
       daily_usage: round(usedPerDay, 3), days_cover: usedPerDay > 0 ? round(stock.on_hand / usedPerDay, 1) : null, low_level: stock.low_level, critical_level: stock.critical_level,
       low_level_display: formatQuantity(stock.low_level, m.unit, reference), critical_level_display: formatQuantity(stock.critical_level, m.unit, reference), reorder_level: stock.low_level,

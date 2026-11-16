@@ -13,6 +13,7 @@ import { formatDate, titleCase } from '../../../lib/format';
 import { Field, Notice } from '../../ApiUi';
 import { useAuth } from '../../../context/AuthContext';
 import { initialsOf } from '../../../lib/initials';
+import { roleTheme } from '../../../lib/roleTheme';
 
 /**
  * Header avatar dialog: one clean card (no title bar, no footer).
@@ -38,6 +39,7 @@ export default function ProfileModal({ onClose }) {
   const isAdmin = role === 'admin';
   const presence = user?.presence || {};
   const roleLabel = titleCase(role || '') || 'Team member';
+  const theme = roleTheme(role);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -185,8 +187,8 @@ export default function ProfileModal({ onClose }) {
           </div>
         </div>
 
-        <header className="relative flex items-center gap-5 mt-14 p-[20px_24px_18px] border-b border-b-[#252b3b] [background:#1a2133] max-[681px]:later:gap-[14px] max-[681px]:later:mt-13 max-[681px]:later:p-[16px_16px_14px]">
-          <span className="w-[96px] h-[96px] flex-[0_0_auto] grid place-items-center -mt-[58px] border-[5px] border-[#0b0f19] rounded-[50%] [background:radial-gradient(circle_at_32%_26%,_#8b8cff,_#5b5bd6_60%,_#4a49b8)] text-[#fff] text-[30px] font-[800] tracking-[0.01em] leading-[1] text-center [box-shadow:0_16px_34px_rgba(74,_73,_184,_0.35)] max-[681px]:later:w-[76px] max-[681px]:later:h-[76px] max-[681px]:later:-mt-[46px] max-[681px]:later:border-[4px] max-[681px]:later:text-[24px]" aria-hidden="true">{initialsOf(user?.full_name || 'User')}</span>
+        <header style={{ background: theme.banner }} className="relative flex items-center gap-5 mt-14 p-[20px_24px_18px] border-b border-b-[#252b3b] max-[681px]:later:gap-[14px] max-[681px]:later:mt-13 max-[681px]:later:p-[16px_16px_14px]">
+          <span className="w-[96px] h-[96px] flex-[0_0_auto] grid place-items-center -mt-[58px] border-[5px] border-[#0b0f19] rounded-[50%] text-[#fff] text-[30px] font-[800] tracking-[0.01em] leading-[1] text-center max-[681px]:later:w-[76px] max-[681px]:later:h-[76px] max-[681px]:later:-mt-[46px] max-[681px]:later:border-[4px] max-[681px]:later:text-[24px]" style={{ background: theme.avatar, boxShadow: `0 16px 34px ${theme.shadow}` }} aria-hidden="true">{initialsOf(user?.full_name || 'User')}</span>
           <div className="min-w-0 [&_h2]:m-0 [&_h2]:text-[#fff] [&_h2]:text-[22px] [&_h2]:font-[800] [&_h2]:leading-[1.2] [&_h2]:tracking-[-0.02em] [&_p]:m-[5px_0_0] [&_p]:text-[#9aa4bb] [&_p]:text-[12.5px] [&_p]:font-[600] max-[681px]:later:[&_h2]:text-[17px] max-[681px]:later:[&_p]:text-[11.5px]">
             <h2 id="profile-dialog-name">{user?.full_name || 'User'}</h2>
             <p>{roleLabel}</p>

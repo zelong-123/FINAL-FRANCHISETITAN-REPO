@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FaAngleLeft,
   FaAngleRight,
@@ -16,11 +17,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import useRemote from '../lib/useRemote';
 import useCosting from '../lib/useCosting';
-import { EmptyState, Field, LoadingState, Modal, Notice, StatusBadge } from '../components/ApiUi';
+import { EmptyState, Field, LoadingState, Modal, Notice, Pagination, StatusBadge } from '../components/ApiUi';
 import { defaultLevelsFor, formatQuantity, STOCK_STATUS_LABELS } from '../lib/quantity';
 import { formatDate, formatNumber } from '../lib/format';
 import { supplyStatusLabel } from '../lib/supplyActions';
-import { changedAgo, lastCountLabel, sortWorstFirst } from '../lib/stockView';
+import { changedAgo, lastCountLabel, sortWorstFirst, STOCK_ORDER } from '../lib/stockView';
 
 import dailyDashLogo from '../assets/dailydash_new.png';
 import goDoLogo from '../assets/godo_new.png';
@@ -30,9 +31,9 @@ import laPastaLogo from '../assets/lapasta_new.png';
 const metrics = [
   ['active_branches', 'Active branches', FaStore, (summary) => activeBreakdown(summary)],
   ['materials_tracked', 'Materials tracked', FaBoxesStacked, 'Inventory items across active branches'],
+  ['open_requests', 'Open requests', FaClipboardList, 'Awaiting completion'],
   ['low_stock_items', 'Low-stock items', FaTriangleExclamation, "At or below each material's low level"],
   ['critical_stock_items', 'Critical items', FaCircleExclamation, 'At or below the critical level, or no stock'],
-  ['open_requests', 'Open requests', FaClipboardList, 'Awaiting completion'],
   ['stale_branches', 'Stale data', FaClockRotateLeft, (summary) => `Branches with no count in ${summary?.stale_count_days ?? 3}+ days`],
 ];
 /** Cards that open an alert list (one open at a time). */
@@ -58,11 +59,18 @@ const FALLBACK_BRAND = { label: '', color: '#5b6478', logo: null };
 
 const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
 
+// Categories are matched by name: branch rows and the dropdown both carry the category name.
+const categoryKey = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+function brandKeyOf(branch) {
+  const key = [branch?.brand?.code, branch?.brand?.name, branch?.preferred_branch_type]
+    .map(normalize)
+    .find((candidate) => BRANDS[candidate]);
+  return key || '';
+}
+
 function getBrand(branch) {
-  return BRANDS[normalize(branch?.brand?.code)]
-    || BRANDS[normalize(branch?.brand?.name)]
-    || BRANDS[normalize(branch?.preferred_branch_type)]
-    || FALLBACK_BRAND;
+  return BRANDS[brandKeyOf(branch)] || FALLBACK_BRAND;
 }
 
 const brandLabelOf = (branch) => getBrand(branch).label
@@ -134,7 +142,7 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
   return (
     <div
       id={`branch-card-${branch.id}`}
-      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:var(--bp-surface)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
+      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:#161E30] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
       data-highlighted={highlighted || undefined}
       style={{ '--brand-color': brand.color, ...(highlighted ? { outline: '2px solid var(--accent)', outlineOffset: '3px', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent) 24%, transparent)' } : {}) }}
       role="button"
@@ -178,21 +186,21 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
         )}
 
         <div className="flex flex-col later:gap-0 later:mt-[6px]">
-          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-danger-text [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
+          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-[#ff1f3d] [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
             <small>Status</small>
             <b className={`bp-card-state is-${state}`}>{STOCK_STATUS_LABELS[state] || STOCK_STATUS_LABELS.none}</b>
           </span>
-          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-danger-text [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
+          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-[#ff1f3d] [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
             <small>Materials</small>
             <b>{materialsSummary(branch)}</b>
           </span>
-          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-danger-text [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
+          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-[#ff1f3d] [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
             <small>Request</small>
             <b>{formatNumber(branch.open_request_count)}</b>
           </span>
-          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-danger-text [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
+          <span className="last:border-b-0 [&_small]:text-muted [&_small]:font-[720] [&_small]:tracking-[.06em] [&_small]:uppercase [&_b]:text-text-secondary [&_b]:font-[720] [&_b.is-normal]:text-success-text [&_b.is-low]:text-[color:var(--warning-text)] [&_b.is-critical]:text-[#ff1f3d] [&_b.is-ok]:text-success-text [&_b.is-out]:text-danger-text [&_b.is-none]:text-muted flex items-baseline justify-between gap-3 later:p-[9px_0] border-b later:border-b-line [&_small]:flex-none later-7:[&_small]:text-[11px] later-2:[&_b]:text-[13.5px] [&_b]:text-right">
             <small>Last count</small>
-            <b className={branch.is_stale ? 'text-[color:var(--warning-text)]! font-[650]!' : ''} title={branch.is_stale ? 'No physical count in 3+ days: on-hand figures may be higher than actual' : undefined}>{lastCountLabel(branch.last_count_at)}{branch.is_stale && branch.materials_count ? ' · stale' : ''}</b>
+            <b className={branch.is_stale ? 'text-[color:var(--warning-text)]! font-[400]!' : ''} title={branch.is_stale ? 'No physical count in 3+ days: on-hand figures may be higher than actual' : undefined}>{lastCountLabel(branch.last_count_at)}{branch.is_stale && branch.materials_count ? ' · stale' : ''}</b>
           </span>
         </div>
 
@@ -215,8 +223,7 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
  * raw-material ledger: the same rows the branch portal reads.
  * ------------------------------------------------------------------ */
 function Section({ title, meta, className = '', children }) {
-  return (
-    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
+  return (                    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
       <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
         <h2>{title}</h2>
         {meta && <span>{meta}</span>}
@@ -226,8 +233,47 @@ function Section({ title, meta, className = '', children }) {
   );
 }
 
-function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevels, onBranchAction }) {
+const INVENTORY_PER_PAGE = 8;
+
+function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevels, onBranchAction, focusMaterial = null, animateFilters = false }) {
   const costing = useCosting();
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const [inventoryDirection, setInventoryDirection] = useState(1);
+  const [highlightMaterial, setHighlightMaterial] = useState(null);
+  useEffect(() => {
+    if (!focusMaterial) return undefined;
+    // Clear filters so the material is in the list, then go to its page.
+    setCategoryFilter('');
+    setStatusFilter('');
+    setHighlightMaterial(focusMaterial.id);
+    const timer = window.setTimeout(() => setHighlightMaterial(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [focusMaterial]);
+  const [openDeliveries, setOpenDeliveries] = useState({});
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [brandCategories, setBrandCategories] = useState([]);
+  const brandId = ops?.branch?.brand?.id ?? null;
+  useEffect(() => {
+    if (!brandId) return undefined;
+    let active = true;
+    api.get('/product-categories', { brand_id: brandId })
+      .then((response) => { if (active) setBrandCategories(response.data || []); })
+      .catch(() => { if (active) setBrandCategories([]); });
+    return () => { active = false; };
+  }, [brandId]);
+  // A category chosen for one branch must not carry over to another brand's list.
+  const activeCategoryFilter = brandCategories.some((c) => categoryKey(c.name) === categoryFilter) ? categoryFilter : '';
+  // Jump to the page that holds the focused material (list is worst-first, unfiltered after the reset).
+  useEffect(() => {
+    if (!focusMaterial || !ops) return;
+    const idx = sortWorstFirst(ops.inventory || []).findIndex((row) => Number(row.id) === focusMaterial.id);
+    if (idx >= 0) setInventoryPage(Math.floor(idx / INVENTORY_PER_PAGE) + 1);
+  }, [focusMaterial, ops]);
+  useEffect(() => {
+    if (highlightMaterial == null) return;
+    document.querySelector('[data-inv-focus="true"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightMaterial, inventoryPage]);
   if (loading && !ops) {
     return <Section title="Branch Inventory"><LoadingState label="Loading branch data…" /></Section>;
   }
@@ -237,7 +283,9 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   if (!ops) return null;
 
   // Worst status first (No stock, Critical, Low, Normal), then by name.
-  const inventory = sortWorstFirst(ops.inventory || []);
+  const inventory = sortWorstFirst(ops.inventory || [])
+    .filter((row) => !activeCategoryFilter || categoryKey(row.category) === activeCategoryFilter)
+    .filter((row) => !statusFilter || row.status === statusFilter);
   const summary = ops.inventory_summary || {};
   const activeRequests = ops.active_requests || [];
   const attention = ops.needs_attention || [];
@@ -246,18 +294,56 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   const brand = getBrand(branch);
   const thresholds = ops.thresholds || {};
 
+  // Inventory pages of 8 rows; the Pagination meta mirrors the server shape.
+  const filtered = Boolean(activeCategoryFilter || statusFilter);
+  const invLastPage = Math.max(1, Math.ceil(inventory.length / INVENTORY_PER_PAGE));
+  const invPage = Math.min(inventoryPage, invLastPage);
+  const invRows = inventory.slice((invPage - 1) * INVENTORY_PER_PAGE, invPage * INVENTORY_PER_PAGE);
+
+  const invMeta = { current_page: invPage, last_page: invLastPage, per_page: INVENTORY_PER_PAGE, total: inventory.length };
+  const goToInventoryPage = (page) => {
+    setInventoryDirection(page > invPage ? 1 : -1);
+    setInventoryPage(page);
+  };
+
   return (
     <>
       <Section
         title="Branch Inventory"
         className="bp-sec-inventory [grid-area:inventory]"
-        meta={inventory.length
-          ? `${formatNumber(summary.materials ?? summary.items)} material${Number(summary.materials ?? summary.items) === 1 ? '' : 's'}`
-          : 'No inventory yet'}
+        meta={(
+          <span className="inline-flex items-center gap-[12px]">
+            {brandCategories.length > 0 && (
+              <select
+                aria-label="Filter by category"
+                value={activeCategoryFilter}
+                onChange={(e) => { setCategoryFilter(e.target.value); setInventoryPage(1); }}
+                className="min-h-[40px] p-[0_12px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text text-[14px] font-[600] cursor-pointer"
+              >
+                <option value="">All categories</option>
+                {brandCategories.map((category) => <option key={category.id} value={categoryKey(category.name)}>{category.name}</option>)}
+              </select>
+            )}
+            <select
+              aria-label="Filter by status"
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setInventoryPage(1); }}
+              className="min-h-[40px] p-[0_12px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text text-[14px] font-[600] cursor-pointer"
+            >
+              <option value="">All statuses</option>
+              {Object.keys(STOCK_ORDER).map((key) => <option key={key} value={key}>{STOCK_STATUS_LABELS[key]}</option>)}
+            </select>
+            <span>
+              {inventory.length
+                ? `${formatNumber(filtered ? inventory.length : (summary.materials ?? summary.items))} material${Number(filtered ? inventory.length : (summary.materials ?? summary.items)) === 1 ? '' : 's'}`
+                : (filtered ? 'No materials match this filter' : 'No inventory yet')}
+            </span>
+          </span>
+        )}
       >
         {inventory.length > 0 && (
-          <div className="table-wrap [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer later:overflow-auto later:max-h-[none] later-2:overflow-x-auto later-2:[overflow-y:visible] later:[.bp-full-grid_.bp-sec-inventory_&]:max-h-[none] [.bp-full-grid_.bp-sec-inventory_&]:overflow-x-auto [.bp-full-grid_.bp-sec-inventory_&]:[overflow-y:visible]">
-            <table className="[&_th]:top-0 [&_td_small]:text-muted later:[&_tr.is-low_td]:[background:color-mix(in_srgb,_var(--warning)_5%,_transparent)] later-2:[&_tr.is-out_td]:[background:color-mix(in_srgb,_var(--danger)_6%,_transparent)] later:min-w-[620px] later:text-[13.5px] later:[&_th]:static later:[&_th]:p-[11px_14px] later:[&_th]:text-[11.5px] [&_th]:whitespace-nowrap later:[&_td]:p-[11px_14px] [&_td]:[vertical-align:top] later:[&_td_strong]:text-[13.5px] [&_td_small]:block later:[&_td_small]:text-[11.5px] [.bp-drawer-scroll_&]:min-w-0 [.bp-drawer-scroll_&_th]:p-[10px_12px] [.bp-drawer-scroll_&_td]:p-[10px_12px]">
+          <div key={`${invPage}-${animateFilters ? activeCategoryFilter : ''}-${animateFilters ? statusFilter : ''}`} style={animateFilters ? undefined : { animation: `${inventoryDirection > 0 ? 'bpInventoryFromRight' : 'bpInventoryFromLeft'} .24s ease-out both` }} className={`table-wrap ${animateFilters ? 'bp-inventory-filter-enter' : ''} [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer later:overflow-auto later:max-h-[none] later-2:overflow-x-auto later-2:[overflow-y:visible] later:[.bp-full-grid_.bp-sec-inventory_&]:max-h-[none] [.bp-full-grid_.bp-sec-inventory_&]:overflow-x-auto [.bp-full-grid_.bp-sec-inventory_&]:[overflow-y:visible]`}>
+            <table className="[&_th]:top-0 [&_td_small]:text-muted later:[&_tr.is-low_td]:[background:color-mix(in_srgb,_var(--warning)_5%,_transparent)] later-2:[&_tr.is-out_td]:[background:color-mix(in_srgb,_var(--danger)_6%,_transparent)] later:min-w-[620px] later:text-[13.5px] later:[&_th]:static later:[&_th]:p-[9px_14px] later:[&_th]:text-[11.5px] [&_th]:whitespace-nowrap later:[&_td]:p-[8px_14px] [&_td]:[vertical-align:top] later:[&_td_strong]:text-[13.5px] [&_td_small]:block later:[&_td_small]:text-[11.5px] [.bp-drawer-scroll_&]:min-w-0 [.bp-drawer-scroll_&_th]:p-[10px_12px] [.bp-drawer-scroll_&_td]:p-[10px_12px]">
               <thead>
                 <tr>
                   <th>Material</th>
@@ -272,8 +358,8 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                 </tr>
               </thead>
               <tbody>
-                {inventory.map((row) => (
-                  <tr key={row.id} className={row.status === 'out' ? 'is-out' : row.status === 'ok' ? '' : 'is-low'}>
+                {invRows.map((row) => (
+                  <tr key={row.id} data-inv-focus={Number(row.id) === highlightMaterial ? 'true' : undefined} className={`${row.status === 'out' ? 'is-out' : row.status === 'ok' ? '' : 'is-low'}${Number(row.id) === highlightMaterial ? ' [background:color-mix(in_srgb,_var(--accent)_22%,_transparent)]' : ''}`}>
                     <td>
                       <strong>{row.name}</strong>
                       {row.variant && <small>{row.variant}</small>}
@@ -285,7 +371,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                       {row.low_level_display || '—'} / {row.critical_level_display || '—'}
                       {row.levels_source === 'default' && <span className="ml-[6px] inline-flex p-[1px_6px] border border-line rounded-[999px] text-muted text-[10px] font-[650] align-middle" title="Unit defaults: Logistics has not set levels for this material">Default</span>}
                     </td>
-                    <td><b className={`font-[600] whitespace-nowrap later-5:[&.is-ok]:text-success-text later-6:[&.is-low]:text-[color:var(--warning-text)] later-7:[&.is-critical]:text-danger-text later-7:[&.is-out]:text-danger-text is-${row.status}`}>{STOCK_STATUS_LABELS[row.status] || '—'}</b></td>
+                    <td><b className={`font-[600] whitespace-nowrap later-5:[&.is-ok]:text-success-text later-6:[&.is-low]:text-[color:var(--warning-text)] later-7:[&.is-critical]:text-[#ff1f3d] later-7:[&.is-out]:text-danger-text is-${row.status}`}>{STOCK_STATUS_LABELS[row.status] || '—'}</b></td>
                     <td className={row.last_counted_at ? '' : 'text-muted'}>{lastCountLabel(row.last_counted_at)}</td>
                     {costing && <td>{row.unit_cost == null ? '—' : `₱${formatNumber(row.unit_cost, 2)}`}</td>}
                     {costing && <td>{row.stock_value == null ? '—' : `₱${formatNumber(row.stock_value, 2)}`}</td>}
@@ -296,24 +382,30 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                     )}
                   </tr>
                 ))}
+                {Array.from({ length: INVENTORY_PER_PAGE - invRows.length }, (_, index) => (
+                  <tr key={`empty-inventory-slot-${index}`} aria-hidden="true">
+                    <td colSpan={6 + (costing ? 2 : 0) + (role === 'logistics' ? 1 : 0)} style={{ height: 60, padding: 0, borderBottom: 0 }} />
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
+        {inventory.length > 0 && <Pagination meta={invMeta} onPage={goToInventoryPage} />}
       </Section>
 
       <Section
         title="Supply requests"
-        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests]"
+        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests] [&_.panel-title]:min-h-[58px] [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={activeRequests.length ? `${activeRequests.length} open` : 'No open requests'}
       >
         {activeRequests.length > 0 && (
           <ul className="m-0 p-0 [list-style:none] flex flex-col">
             {activeRequests.map((request) => (
-              <li className="flex items-start justify-between gap-[10px] p-[11px_15px] border-b border-b-line last:border-b-0" key={request.id}>
+              <li className="flex items-center justify-between gap-[14px] p-[14px_18px] border-b border-b-line last:border-b-0" key={request.id}>
                 <div className="min-w-0">
-                  <strong className="block text-text text-[12.5px] font-[760] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
-                  <small className="block mt-[2px] text-muted text-[10px] leading-[1.5]">
+                  <strong className="block text-text text-[16px] font-[760] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
+                  <small className="block mt-[4px] text-muted text-[13.5px] leading-[1.5]">
                     Target {formatDate(request.target_delivery_date) || '—'}
                     {' · '}
                     {(request.items || []).slice(0, 2).map((item) => item.name).join(', ')}{(request.items || []).length > 2 ? '…' : ''}
@@ -324,8 +416,8 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
             ))}
           </ul>
         )}
-        <div className="flex justify-end p-[10px_15px] border-t border-t-line">
-          <button type="button" className="ghost-button min-h-[34px] inline-flex items-center justify-center gap-[7px] p-[0_12px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[11px] font-[650] cursor-pointer hover:text-text hover:border-accent" onClick={onOpenRequests}>
+        <div className="flex justify-end p-[12px_18px] border-t border-t-line">
+          <button type="button" className="ghost-button min-h-[42px] inline-flex items-center justify-center gap-[8px] p-[0_16px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent" onClick={onOpenRequests}>
             Open in Supply Requests
           </button>
         </div>
@@ -333,16 +425,16 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Needs Attention"
-        className="[grid-area:attention] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch"
+        className="[grid-area:attention] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={attention.length
           ? (thresholds.description || "Based on each material's low and critical levels")
           : 'Nothing needs attention'}
       >
         {attention.length > 0 && (
-          <ul className="m-0 p-0 [list-style:none] flex flex-col [&_li]:p-[11px_15px] [&_li]:border-b [&_li]:border-b-line [&_li:last-child]:border-b-0 [&_small]:block later:[&_small]:mt-1 [&_small]:text-muted later-4:[&_small]:text-[9px] [&_small]:leading-[1.5] [&_li.is-critical_.bp-attention-tag]:text-[color:var(--warning-text)] [&_li.is-low_.bp-attention-tag]:text-accent-text [&_li.is-out_.bp-attention-tag]:text-danger-text">
+          <ul className="m-0 p-0 [list-style:none] flex flex-col [&_li]:p-[14px_18px] [&_li]:border-b [&_li]:border-b-line [&_li:last-child]:border-b-0 [&_small]:block [&_small]:mt-[5px] [&_small]:text-muted [&_small]:text-[13.5px] [&_small]:leading-[1.5] [&_li.is-critical_.bp-attention-tag]:text-[color:var(--warning-text)] [&_li.is-low_.bp-attention-tag]:text-accent-text [&_li.is-out_.bp-attention-tag]:text-danger-text">
             {attention.map((item, index) => (
               <li key={`${item.material_id || index}`} className={`is-${item.status || 'low'}`}>
-                <div className="flex items-center justify-between gap-[10px] [&_strong]:text-text later:[&_strong]:text-[11px] later:[&_strong]:font-[740]">
+                <div className="flex items-center justify-between gap-[12px] [&_strong]:text-text [&_strong]:text-[16px] [&_strong]:font-[740]">
                   <strong>{item.label}</strong>
                   <StatusBadge
                     value={item.status === 'out' || item.status === 'critical' ? 'critical' : 'low'}
@@ -358,40 +450,57 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Delivery Fulfillment"
-        className="bp-sec-deliveries [grid-area:deliveries] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch"
+        className="bp-sec-deliveries [grid-area:deliveries] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={deliveries.length ? `${deliveries.length} delivered` : 'No deliveries yet'}
       >
         {deliveries.length > 0 && (
           <div className="flex flex-col">
-            {deliveries.map((delivery) => (
-              <article className="p-[12px_15px] border-b border-b-line last:border-b-0" key={delivery.id}>
-                <header className="flex items-start justify-between gap-[10px] [&_strong]:block [&_strong]:text-text later:[&_strong]:text-[11px] later-2:[&_strong]:font-[760] [&_small]:block later-2:[&_small]:mt-[3px] [&_small]:text-muted later-4:[&_small]:text-[9px]">
-                  <div>
-                    <strong>{delivery.request_number}</strong>
-                    <small>{formatDate(delivery.delivered_at, true)}</small>
-                  </div>
-                  <span className="flex-none text-text-secondary text-[9px] font-[740]">{formatNumber(delivery.item_count ?? (delivery.items || []).length)} item{Number(delivery.item_count ?? (delivery.items || []).length) === 1 ? '' : 's'}</span>
-                </header>
-                <ul className="m-[10px_0_0] p-0 [list-style:none] flex flex-col gap-1 [&_li]:flex [&_li]:items-baseline [&_li]:justify-between [&_li]:gap-3 [&_li]:text-text-secondary [&_li]:text-[10px] [&_li_span:last-child]:text-text [&_li_span:last-child]:font-[720] [&_li_span:last-child]:whitespace-nowrap">
-                  {(delivery.items || []).map((item, index) => (
-                    <li key={`${delivery.id}-${index}`}>
-                      <span>{item.name}</span>
-                      <span>{formatQuantity(item.quantity, item.unit)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            ))}
+            {deliveries.map((delivery) => {
+              const items = delivery.items || [];
+              const itemCount = Number(delivery.item_count ?? items.length);
+              const isOpen = !!openDeliveries[delivery.id];
+              return (
+                <article className="p-[14px_18px] border-b border-b-line last:border-b-0" key={delivery.id}>
+                  <header className="flex items-start justify-between gap-[12px]">
+                    <div className="min-w-0">
+                      <strong className="block text-text text-[16px] font-[760] [font-family:ui-monospace,monospace]">{delivery.request_number}</strong>
+                      <small className="block mt-[4px] text-muted text-[13.5px]">{formatDate(delivery.delivered_at, true)}</small>
+                    </div>
+                    <div className="flex-none flex flex-col items-end gap-[8px]">
+                      <span className="text-text-secondary text-[14px] font-[740]">{formatNumber(itemCount)} item{itemCount === 1 ? '' : 's'}</span>
+                      <button
+                        type="button"
+                        aria-expanded={isOpen}
+                        className="ghost-button inline-flex items-center justify-center min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[13px] font-[650] cursor-pointer hover:text-text hover:border-accent"
+                        onClick={() => setOpenDeliveries((prev) => ({ ...prev, [delivery.id]: !prev[delivery.id] }))}
+                      >
+                        {isOpen ? 'Hide items' : 'Show items'}
+                      </button>
+                    </div>
+                  </header>
+                  {isOpen && (
+                    <ul className="m-[12px_0_0] p-0 [list-style:none] flex flex-col gap-[8px] [&_li]:flex [&_li]:items-baseline [&_li]:justify-between [&_li]:gap-[14px] [&_li]:text-text-secondary [&_li]:text-[14px] [&_li_span:last-child]:text-text [&_li_span:last-child]:font-[720] [&_li_span:last-child]:whitespace-nowrap">
+                      {items.map((item, index) => (
+                        <li key={`${delivery.id}-${index}`}>
+                          <span>{item.name}</span>
+                          <span>{formatQuantity(item.quantity, item.unit)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
       </Section>
 
       <Section
         title="Branch Detail"
-        className="[grid-area:detail]"
+        className="[grid-area:detail] [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={branch.archived_at ? 'Archived branch' : branch.is_active ? 'Active branch' : 'Inactive branch'}
       >
-        <dl className="m-0 p-[6px_15px_12px] grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0_22px] [&>div]:flex [&>div]:items-baseline [&>div]:justify-between [&>div]:gap-3 [&>div]:p-[8px_0] [&>div]:border-b [&>div]:border-b-[color:color-mix(in_srgb,_var(--border)_60%,_transparent)] [&_dt]:text-muted [&_dt]:text-[9px] [&_dt]:tracking-[.02em] [&_dd]:m-0 [&_dd]:text-text-secondary [&_dd]:text-[10px] [&_dd]:font-[700] [&_dd]:text-right [&_dd]:[overflow-wrap:anywhere] [.bp-full-grid_&]:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[1181px]:later:[.bp-full-grid_&]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[761px]:later:grid-cols-[minmax(0,_1fr)] max-[761px]:later-2:[.bp-full-grid_&]:grid-cols-[minmax(0,_1fr)]">
+        <dl className="m-0 p-[6px_15px_12px] grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0_22px] [&>div]:flex [&>div]:items-baseline [&>div]:justify-between [&>div]:gap-3 [&>div]:p-[10px_0] [&>div]:border-b [&>div]:border-b-[color:color-mix(in_srgb,_var(--border)_60%,_transparent)] [&_dt]:text-muted [&_dt]:text-[14px] [&_dt]:tracking-[.01em] [&_dd]:m-0 [&_dd]:text-text-secondary [&_dd]:text-[15px] [&_dd]:font-[700] [&_dd]:text-right [&_dd]:[overflow-wrap:anywhere] [.bp-full-grid_&]:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[1181px]:later:[.bp-full-grid_&]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[761px]:later:grid-cols-[minmax(0,_1fr)] max-[761px]:later-2:[.bp-full-grid_&]:grid-cols-[minmax(0,_1fr)]">
           <div><dt>Branch name</dt><dd>{branch.name || '—'}</dd></div>
           <div><dt>Branch code</dt><dd>{branch.branch_code || '—'}</dd></div>
           <div><dt>Brand</dt><dd style={{ color: brand.color }}>{brandLabelOf(branch)}</dd></div>
@@ -406,7 +515,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
           <div><dt>Last activity</dt><dd>{formatDate(branch.last_activity_at, true)}</dd></div>
         </dl>
         {role === 'admin' && (
-          <div className="flex flex-wrap gap-2 mt-3 [&_.danger]:text-danger-text">
+          <div className="flex flex-wrap gap-[10px] mt-[14px] [&_.danger]:text-danger-text [&_button]:min-h-[42px] [&_button]:p-[0_16px] [&_button]:text-[14px] [&_button]:font-[650]">
             <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onBranchAction?.('location', branch)}>Edit location</button>
             {branch.archived_at
               ? <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onBranchAction?.('restore', branch)}>Restore branch</button>
@@ -639,30 +748,95 @@ const CHIP = {
   out: 'text-danger-text [background:color-mix(in_srgb,var(--danger)_16%,transparent)]',
 };
 
-function AlertList({ kind, items, branches, newCount, marking, onMarkSeen, onClose, onViewBranch, error = '', loaded = true, onRetry }) {
+// Searchable branch dropdown: fixed-height, scrollable list so long branch lists stay usable.
+function BranchPicker({ branches, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState('');
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const btnRef = useRef(null);
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+    setOpen((o) => !o);
+  };
+  const selected = branches.find((branch) => String(branch.id) === String(value));
+  const shown = branches.filter((branch) => branch.name.toLowerCase().includes(term.trim().toLowerCase()));
+  const pick = (id) => { onChange(id); setOpen(false); setTerm(''); };
+  return (
+    <span className="relative inline-block">
+      <button ref={btnRef} type="button" aria-haspopup="listbox" aria-expanded={open} onClick={toggle} className="min-h-[36px] max-w-[220px] p-[0_12px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text text-[13px] font-[600] cursor-pointer truncate">
+        {selected ? selected.name : 'All branches'} ▾
+      </button>
+      {open && createPortal(
+        <div style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000 }} className="w-[260px] p-2 border border-line-strong rounded-[12px] [background:var(--panel)] [box-shadow:var(--shadow-sm)]">
+          <input type="search" autoFocus value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search branch…" aria-label="Search branch" className="w-full min-h-[34px] mb-2 p-[6px_10px] border border-line-strong rounded-[8px] [background:var(--input-bg)] text-text text-[13px]" />
+          <ul role="listbox" className="m-0 p-0 [list-style:none] max-h-[220px] overflow-y-auto">
+            <li><button type="button" onClick={() => pick('')} className="w-full text-left p-[6px_8px] border-0 rounded-[8px] [background:none] text-text text-[13px] cursor-pointer hover:[background:var(--hover)]">All branches</button></li>
+            {shown.map((branch) => (
+              <li key={branch.id}><button type="button" onClick={() => pick(String(branch.id))} className="w-full text-left p-[6px_8px] border-0 rounded-[8px] [background:none] text-text text-[13px] cursor-pointer hover:[background:var(--hover)]">{branch.name}</button></li>
+            ))}
+            {shown.length === 0 && <li className="p-[6px_8px] text-muted text-[13px]">No branch found</li>}
+          </ul>
+        </div>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
+function AlertList({ kind, closing = false, items, branches, newCount, marking, onMarkSeen, onClose, onViewBranch, error = '', loaded = true, onRetry }) {
   // Low / Critical come from GET /branches/stock-alerts; Stale comes from the overview already on the page.
   const fromAlerts = kind !== 'stale';
-  const rows = kind === 'stale'
+  const [brandFilter, setBrandFilter] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  // Click a row to highlight every row of the same branch; click again to clear.
+  const [markedBranch, setMarkedBranch] = useState(null);
+  const toggleMarked = (branchId) => setMarkedBranch((current) => (Number(current) === Number(branchId) ? null : branchId));
+  // Brand of each branch id, so alert items (which only carry branch_id) can be filtered by brand.
+  const brandByBranch = new Map(branches.map((branch) => [Number(branch.id), brandKeyOf(branch)]));
+  const rowsAll = kind === 'stale'
     ? branches.filter((branch) => branch.is_stale).sort((a, b) => new Date(a.last_count_at || 0) - new Date(b.last_count_at || 0))
     : items.filter((item) => (kind === 'low' ? item.status === 'low' : item.status !== 'low'));
+  const brandOfRow = (row) => (kind === 'stale' ? brandKeyOf(row) : brandByBranch.get(Number(row.branch_id)) || '');
+  const rowBranch = (row) => (kind === 'stale' ? Number(row.id) : Number(row.branch_id));
+  const byBrand = brandFilter ? rowsAll.filter((row) => brandOfRow(row) === brandFilter) : rowsAll;
+  const filteredRows = branchFilter ? byBrand.filter((row) => String(rowBranch(row)) === branchFilter) : byBrand;
+  // 10 rows per page; go back to page 1 whenever a filter changes.
+  const [alertPage, setAlertPage] = useState(1);
+  useEffect(() => { setAlertPage(1); }, [brandFilter, branchFilter, kind]);
+  const alertLastPage = Math.max(1, Math.ceil(filteredRows.length / 10));
+  const alertCurPage = Math.min(alertPage, alertLastPage);
+  const rows = filteredRows.slice((alertCurPage - 1) * 10, alertCurPage * 10);
   const subtitle = kind === 'stale'
     ? 'No physical count in 3+ days · On-hand figures may be higher than actual'
     : `${newCount ? `${newCount} new since you last checked` : 'Nothing new since you last checked'} · newest first`;
   const rowClass = 'grid grid-cols-[110px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,.8fr)_auto] max-[981px]:grid-cols-[1fr_1fr] items-center gap-[10px_16px] p-[12px_18px] border-t border-t-line text-[13px]';
   return (
-    <section id="branch-alert-list" className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]" aria-labelledby="branch-alert-list-title">
+    <section id="branch-alert-list" className={`bp-alert-list-enter data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]${closing ? ' is-closing' : ''}`} aria-labelledby="branch-alert-list-title">
       <div className="flex flex-wrap items-start justify-between gap-3 p-[14px_18px]">
         <div>
           <h2 id="branch-alert-list-title" className="m-0 text-text text-[16px] font-[780]">{ALERT_TITLES[kind]}</h2>
           <small className="text-muted text-[12px]">{subtitle}</small>
         </div>
         <span className="flex gap-2">
+          <BranchPicker branches={branches} value={branchFilter} onChange={setBranchFilter} />
+          <select
+            aria-label="Filter by brand"
+            value={brandFilter}
+            onChange={(event) => setBrandFilter(event.target.value)}
+            className="min-h-[36px] p-[0_12px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text text-[13px] font-[600] cursor-pointer"
+          >
+            <option value="">All brands</option>
+            {Object.entries(BRANDS).map(([key, brand]) => <option key={key} value={key}>{brand.label}</option>)}
+          </select>
           {kind !== 'stale' && (
             <button type="button" className="ghost-button min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] text-text-secondary text-[13px] font-[650] disabled:opacity-50" disabled={marking || !newCount} onClick={onMarkSeen}>
               {marking ? 'Saving…' : 'Mark as seen'}
             </button>
           )}
-          <button type="button" className="ghost-button w-[36px] h-[36px] inline-grid place-items-center border border-line-strong rounded-[10px] text-text-secondary" aria-label="Close the list" onClick={onClose}>
+          <button type="button" className="bp-alert-close" aria-label="Close the list" onClick={onClose}>
             <FaXmark aria-hidden="true" />
           </button>
         </span>
@@ -677,20 +851,20 @@ function AlertList({ kind, items, branches, newCount, marking, onMarkSeen, onClo
       ) : rows.length === 0 ? (
         <p className="m-0 p-[14px_18px] border-t border-t-line text-muted text-[13px]">{kind === 'stale' ? 'Every branch with materials was counted in the last 3 days.' : 'No items in this list right now.'}</p>
       ) : kind === 'stale' ? (
-        <ul className="m-0 p-0 [list-style:none]">
+        <ul className="bp-alert-rows m-0 p-0 [list-style:none]">
           {rows.map((branch) => (
-            <li key={branch.id} className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] max-[981px]:grid-cols-[1fr_1fr] items-center gap-[10px_16px] p-[12px_18px] border-t border-t-line text-[13px]">
+            <li key={branch.id} onClick={() => toggleMarked(branch.id)} className={`grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] max-[981px]:grid-cols-[1fr_1fr] items-center gap-[10px_16px] p-[12px_18px] border-t border-t-line text-[13px] cursor-pointer ${Number(markedBranch) === Number(branch.id) ? '[background:color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''}`}>
               <span><strong className="text-text">{branch.name}</strong>{branch.is_demo && <small className="ml-2 text-muted">Demo</small>}</span>
               <span><small className="block text-muted">Last count</small><b className="text-[color:var(--warning-text)] font-[650]">{lastCountLabel(branch.last_count_at)}</b></span>
               <span><small className="block text-muted">Last production or activity</small>{changedAgo(branch.last_production_at || branch.last_activity_at)}</span>
-              <button type="button" className="p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={() => onViewBranch(branch.id)}>View branch →</button>
+              <button type="button" className="p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={(event) => { event.stopPropagation(); onViewBranch(branch.id); }}>View branch →</button>
             </li>
           ))}
         </ul>
       ) : (
-        <ul className="m-0 p-0 [list-style:none]">
+        <ul className="bp-alert-rows m-0 p-0 [list-style:none]">
           {rows.map((item) => (
-            <li key={item.material_id} className={`${rowClass} ${item.is_new ? '[background:color-mix(in_srgb,var(--accent)_6%,transparent)]' : ''}`}>
+            <li key={item.material_id} onClick={() => toggleMarked(item.branch_id)} className={`${rowClass} cursor-pointer ${Number(markedBranch) === Number(item.branch_id) ? '[background:color-mix(in_srgb,var(--accent)_8%,transparent)]' : item.is_new ? '[background:color-mix(in_srgb,var(--accent)_6%,transparent)]' : ''}`}>
               <span className={`justify-self-start p-[3px_10px] rounded-[999px] text-[11px] font-[800] ${CHIP[item.status] || ''}`}>{item.status_label}</span>
               <span className="min-w-0">
                 <strong className="text-text">{item.material_name}</strong>
@@ -707,10 +881,19 @@ function AlertList({ kind, items, branches, newCount, marking, onMarkSeen, onClo
                   : <span className="text-[color:var(--warning-text)] font-[650]">No open supply request</span>}
               </span>
               <span className="text-muted">{changedAgo(item.stock_status_changed_at || item.source_at)}{item.source ? ` · ${item.source}` : ''}</span>
-              <button type="button" className="justify-self-end p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={() => onViewBranch(item.branch_id)}>View branch →</button>
+              <button type="button" className="justify-self-end p-0 border-0 [background:none] text-accent-text font-[700] cursor-pointer hover:underline" onClick={(event) => { event.stopPropagation(); onViewBranch(item.branch_id, item.material_id); }}>View branch →</button>
             </li>
           ))}
         </ul>
+      )}
+      {rowsAll.length > 0 && filteredRows.length > 10 && (
+        <div className="flex items-center justify-between gap-3 p-[12px_18px] border-t border-t-line text-[13px] text-text-secondary">
+          <small className="text-muted">Page {alertCurPage} of {alertLastPage} · {filteredRows.length} items</small>
+          <span className="flex gap-2">
+            <button type="button" className="min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text font-[650] cursor-pointer disabled:opacity-40 disabled:cursor-default" disabled={alertCurPage <= 1} onClick={() => setAlertPage(alertCurPage - 1)}>← Back</button>
+            <button type="button" className="min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text font-[650] cursor-pointer disabled:opacity-40 disabled:cursor-default" disabled={alertCurPage >= alertLastPage} onClick={() => setAlertPage(alertCurPage + 1)}>Next →</button>
+          </span>
+        </div>
       )}
     </section>
   );
@@ -723,6 +906,11 @@ export default function Branches() {
   const [view, setView] = useState('default');
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState('');
+  const [brandFilter, setBrandFilter] = useState('');
+  // Half view: 6 cards per page; a card picked from a lower page is pinned to the first slot.
+  const LIST_PER_PAGE = 6;
+  const [pinnedId, setPinnedId] = useState(null);
+  const [listPage, setListPage] = useState(1);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
   const [panelClosing, setPanelClosing] = useState(false);
@@ -745,6 +933,11 @@ export default function Branches() {
   // Stock alerts for the Low / Critical cards (refreshed with the page's live sync, no extra polling).
   const alerts = useRemote(() => api.get('/branches/stock-alerts', showArchived ? { include_archived: 1 } : {}), [showArchived]);
   const [alertList, setAlertList] = useState(null); // 'low' | 'critical' | 'stale' | null — closed by default
+  const [alertClosing, setAlertClosing] = useState(false);
+  const alertCloseTimer = useRef(null);
+  useEffect(() => () => {
+    if (alertCloseTimer.current) window.clearTimeout(alertCloseTimer.current);
+  }, []);
   const [markingSeen, setMarkingSeen] = useState(false);
   const ops = operations.data?.data ?? null;
   const opsMatch = ops && Number(ops.branch?.id) === Number(selectedId);
@@ -754,7 +947,8 @@ export default function Branches() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const visible = showDemo ? branches : branches.filter((branch) => !branch.is_demo);
+    const visible = (showDemo ? branches : branches.filter((branch) => !branch.is_demo))
+      .filter((branch) => !brandFilter || brandKeyOf(branch) === brandFilter);
     if (!term) return visible;
     return visible.filter((branch) => [
       branch.name,
@@ -766,7 +960,17 @@ export default function Branches() {
       branch.brand?.name,
       branch.preferred_branch_type,
     ].filter(Boolean).join(' ').toLowerCase().includes(term));
-  }, [branches, search, showDemo]);
+  }, [branches, search, showDemo, brandFilter]);
+
+  const pinnedFirst = useMemo(() => {
+    const pinned = filtered.find((branch) => Number(branch.id) === Number(pinnedId));
+    return pinned ? [pinned, ...filtered.filter((branch) => branch !== pinned)] : filtered;
+  }, [filtered, pinnedId]);
+  const listLastPage = Math.max(1, Math.ceil(pinnedFirst.length / LIST_PER_PAGE));
+  const listCurPage = Math.min(listPage, listLastPage);
+  const listItems = view === 'half'
+    ? pinnedFirst.slice((listCurPage - 1) * LIST_PER_PAGE, listCurPage * LIST_PER_PAGE)
+    : pinnedFirst;
 
   const selectedIndex = branches.findIndex((branch) => Number(branch.id) === Number(selectedId));
 
@@ -824,10 +1028,18 @@ export default function Branches() {
     }
     setPanelClosing(false);
     setSelectedId(branch.id);
+    // A card below the first row of the visible list is pinned to the top slot; a card in the first row goes back.
+    const cardEl = document.getElementById(`branch-card-${branch.id}`);
+    const firstEl = cardEl?.parentElement?.firstElementChild;
+    const onPage1 = listCurPage === 1 && pinnedFirst.findIndex((item) => Number(item.id) === Number(branch.id)) < LIST_PER_PAGE;
+    const isLower = !onPage1 || (cardEl && firstEl && cardEl.getBoundingClientRect().top > firstEl.getBoundingClientRect().top + 8);
+    setPinnedId(isLower ? branch.id : null);
+    setListPage(1);
     setView('half');
     setNotice('');
     setActionError('');
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Only jump to the top when opening from the default view; clicking cards while half view is open must stay put.
+    if (view !== 'half' && typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const backToList = () => {
@@ -846,6 +1058,7 @@ export default function Branches() {
       setPanelClosing(false);
       setView('default');
       setSelectedId(null);
+      setPinnedId(null);
     }, 220);
   };
 
@@ -878,7 +1091,25 @@ export default function Branches() {
       setMarkingSeen(false);
     }
   };
-  const toggleAlertList = (kind) => setAlertList((current) => (current === kind ? null : kind));
+  const closeAlertList = () => {
+    if (!alertList || alertClosing) return;
+    setAlertClosing(true);
+    alertCloseTimer.current = window.setTimeout(() => {
+      alertCloseTimer.current = null;
+      setAlertList(null);
+      setAlertClosing(false);
+    }, window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 240);
+  };
+  const toggleAlertList = (kind) => {
+    if (alertList === kind) {
+      closeAlertList();
+      return;
+    }
+    if (alertCloseTimer.current) window.clearTimeout(alertCloseTimer.current);
+    alertCloseTimer.current = null;
+    setAlertClosing(false);
+    setAlertList(kind);
+  };
   const alertItems = (alerts.data?.data?.items || []).filter((item) => showDemo || !item.is_demo);
   const newCounts = {
     low: alertItems.filter((item) => item.is_new && item.status === 'low').length,
@@ -891,7 +1122,9 @@ export default function Branches() {
   useEffect(() => () => {
     if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
   }, []);
-  const scrollToBranchCard = (id) => {
+  // Material row to highlight in Branch Inventory (set from a Low / Critical "View branch").
+  const [focusMaterial, setFocusMaterial] = useState(null);
+  const scrollToBranchCard = (id, materialId = null) => {
     const branch = branches.find((b) => Number(b.id) === Number(id));
     if (!branch) return;
     // Make sure the card is in the list: clear a search that hides it, show demo branches if needed.
@@ -899,6 +1132,9 @@ export default function Branches() {
       if (search) setSearch('');
       if (branch.is_demo && !showDemo) setShowDemo(true);
     }
+    // Open the branch in half view, pinned to the first slot like a normal card click.
+    openBranch(branch);
+    setFocusMaterial(materialId == null ? null : { id: Number(materialId), key: Date.now() });
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     let tries = 0;
     // Wait for the re-render (a few frames at most) before scrolling.
@@ -926,6 +1162,7 @@ export default function Branches() {
 
   const sections = (
     <BranchSections
+      focusMaterial={focusMaterial}
       ops={opsForBranch}
       loading={operations.loading}
       error={operations.error}
@@ -933,6 +1170,7 @@ export default function Branches() {
       onOpenRequests={() => navigate(`/supply-requests?tab=all&location_id=${selectedId}`)}
       onEditLevels={setLevelsTarget}
       onBranchAction={(kind, branch) => setBranchAction({ kind, branch })}
+      animateFilters={view === 'full'}
     />
   );
 
@@ -959,7 +1197,7 @@ export default function Branches() {
                     <div className="metric-top relative z-1 flex items-center justify-between gap-3 [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680]"><span className="inline-flex items-center gap-[6px]">{kind === 'critical' && fresh > 0 && <span className="w-[7px] h-[7px] rounded-[50%] [background:var(--danger)] motion-safe:animate-pulse" aria-hidden="true" />}{label}</span><span className="metric-icon w-[36px] h-[36px] later:grid place-items-center rounded-[12px] text-accent-text [background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] [.metric-tone-success_&]:text-success-text [.metric-tone-success_&]:[background:color-mix(in_srgb,_var(--success)_10%,_transparent)] later:[.metric-tone-warning_&]:text-[color:var(--warning-text)] later:[.metric-tone-warning_&]:[background:color-mix(in_srgb,_var(--warning)_10%,_transparent)] later-2:[.metric-tone-danger_&]:text-danger-text later-2:[.metric-tone-danger_&]:[background:color-mix(in_srgb,_var(--danger)_10%,_transparent)] later-3:[.metric-tone-purple_&]:text-[#b7a4ff] later-3:[.metric-tone-purple_&]:[background:rgba(139,109,255,.11)] [.dashboard-page_&]:w-[28px] [.dashboard-page_&]:h-[28px] [.dashboard-page_&]:rounded-[9px] later:[.dashboard-page_&]:text-[12px]"><Icon aria-hidden="true" /></span></div>
                     {fresh > 0 && <span className={`absolute top-[14px] right-[56px] z-2 p-[2px_8px] rounded-[999px] text-[11px] font-[800] ${kind === 'critical' ? 'text-[#fff] [background:var(--danger)]' : 'text-[#1a1305] [background:#fbbf24]'}`}>+{fresh} new</span>}
                     <strong className={kind === 'stale' && Number(value) ? 'text-[color:var(--warning-text)]!' : ''}>{formatNumber(value)}</strong>
-                    <small className="metric-caption relative z-1 mt-[7px] text-muted text-[8px] leading-[1.45]">{typeof caption === 'function' ? caption(payload?.summary) : caption}{kind ? ' · tap to view' : ''}</small>
+                    <small className="metric-caption relative z-1 mt-[7px] text-muted text-[8px] leading-[1.45]">{typeof caption === 'function' ? caption(payload?.summary) : caption}{kind && <span className="metric-action-hint"> · Click to view</span>}</small>
                   </>
                 );
                 if (!kind) return <article className="metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px]" key={key}>{body}</article>;
@@ -969,7 +1207,7 @@ export default function Branches() {
                   <button
                     type="button"
                     key={key}
-                    className={`metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px] w-full text-left cursor-pointer focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${tint} ${open ? 'border-accent! [box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent)_35%,transparent)]!' : ''}`}
+                    className={`metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px] w-full text-left cursor-pointer focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${kind ? 'metric-card-action' : ''} ${tint} ${open ? 'border-accent! [box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent)_35%,transparent)]!' : ''}`}
                     aria-pressed={open}
                     aria-expanded={open}
                     aria-controls="branch-alert-list"
@@ -986,12 +1224,13 @@ export default function Branches() {
           {view !== 'full' && alertList && (
             <AlertList
               kind={alertList}
+              closing={alertClosing}
               items={alertItems}
               branches={branches.filter((branch) => !branch.archived_at && (showDemo || !branch.is_demo))}
               newCount={alertList === 'low' ? newCounts.low : alertList === 'critical' ? newCounts.critical : 0}
               marking={markingSeen}
               onMarkSeen={() => void markSeen()}
-              onClose={() => setAlertList(null)}
+              onClose={closeAlertList}
               onViewBranch={scrollToBranchCard}
               error={alerts.error ? String(alerts.error) : ''}
               loaded={Boolean(alerts.data)}
@@ -1000,12 +1239,21 @@ export default function Branches() {
           )}
 
           {view === 'full' ? (
-            <section className="[animation:bpFadeUp_.3s_var(--bp-ease)_both] motion-reduce:later:[animation:none] [container-type:inline-size] [container-name:bp-full] min-w-0" aria-label="Branch overview">
-              <header className="relative flex items-center justify-between gap-4 mb-4 p-[8px_12px_8px_8px] overflow-hidden border-0 rounded-[16px] [background:var(--bp-surface)] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[0_0_0_auto] [&::after]:w-[46%] [&::after]:[background:linear-gradient(270deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_34%,_transparent),_transparent_88%)] [&::after]:pointer-events-none max-[761px]:flex-wrap max-[761px]:later:gap-2 max-[761px]:later:[&::after]:w-[60%] max-[761px]:[&::after]:opacity-[.7]" style={{ '--brand-color': getBrand(selected).color }}>
-                <div className="relative z-1 flex items-center gap-1 min-w-0">
+            <section className="mt-[-30px] [animation:bpFadeUp_.3s_var(--bp-ease)_both] motion-reduce:later:[animation:none] [container-type:inline-size] [container-name:bp-full] min-w-0" aria-label="Branch overview">
+              <header className="relative flex items-center justify-between gap-4 mb-3 min-h-[76px] p-[10px_18px] overflow-hidden border-0 rounded-[16px] [background:var(--bp-surface)] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[0_0_0_auto] [&::after]:w-[46%] [&::after]:[background:linear-gradient(270deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_44%,_transparent),_transparent_88%)] [&::after]:pointer-events-none max-[761px]:flex-wrap max-[761px]:later:gap-2 max-[761px]:later:[&::after]:w-[60%] max-[761px]:[&::after]:opacity-[.7]" style={{ '--brand-color': getBrand(selected).color }}>
+                <div className="relative z-1 flex items-center gap-2 min-w-0">
                   <button
                     type="button"
-                    className="w-[32px] h-[32px] inline-grid place-items-center flex-none p-0 border-0 rounded-[9px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                    className="w-[44px] h-[44px] text-[18px] inline-grid place-items-center flex-none p-0 border-0 rounded-[11px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ml-[2px]"
+                    onClick={backToList}
+                    aria-label="Close full view"
+                    title="Close"
+                  >
+                    <FaXmark aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="w-[44px] h-[44px] text-[18px] inline-grid place-items-center flex-none p-0 border-0 rounded-[11px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
                     onClick={() => selectAdjacent(-1)}
                     disabled={selectedIndex <= 0}
                     aria-label="Previous branch"
@@ -1013,10 +1261,10 @@ export default function Branches() {
                   >
                     <FaAngleLeft aria-hidden="true" />
                   </button>
-                  <span className="min-w-0 overflow-hidden text-text text-[15px] font-[780] tracking-[-.02em] text-ellipsis whitespace-nowrap [animation:bpTitleIn_.22s_var(--bp-ease)_both] motion-reduce:later:[animation:none]" key={selectedId}>{selected?.name || 'Branch'}</span>
+                  <span className="min-w-0 overflow-hidden text-text text-[22px] font-[780] tracking-[-.02em] text-ellipsis whitespace-nowrap [animation:bpTitleIn_.22s_var(--bp-ease)_both] motion-reduce:later:[animation:none]" key={selectedId}>{selected?.name || 'Branch'}</span>
                   <button
                     type="button"
-                    className="w-[32px] h-[32px] inline-grid place-items-center flex-none p-0 border-0 rounded-[9px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                    className="w-[44px] h-[44px] text-[18px] inline-grid place-items-center flex-none p-0 border-0 rounded-[11px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
                     onClick={() => selectAdjacent(1)}
                     disabled={selectedIndex < 0 || selectedIndex >= branches.length - 1}
                     aria-label="Next branch"
@@ -1024,17 +1272,8 @@ export default function Branches() {
                   >
                     <FaAngleRight aria-hidden="true" />
                   </button>
-                  <button
-                    type="button"
-                    className="w-[32px] h-[32px] inline-grid place-items-center flex-none p-0 border-0 rounded-[9px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] [&:hover:not(:disabled)]:text-text [&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ml-[2px]"
-                    onClick={backToList}
-                    aria-label="Close full view"
-                    title="Close"
-                  >
-                    <FaXmark aria-hidden="true" />
-                  </button>
                 </div>
-                <div className="relative z-1 flex-none pr-[6px] later-2:[&_span]:text-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_82%,_white)] later-3:[&_span]:text-[11px] later-2:[&_span]:font-[820] later:[&_span]:tracking-[.12em] [&_span]:uppercase">
+                <div className="relative z-1 flex-none pr-[6px] later-2:[&_span]:text-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_68%,_white)] later-3:[&_span]:text-[15px] later-2:[&_span]:font-[820] later:[&_span]:tracking-[.12em] [&_span]:uppercase">
                   <span>{brandLabelOf(selected)}</span>
                 </div>
               </header>
@@ -1045,10 +1284,18 @@ export default function Branches() {
             </section>
           ) : (
             <div className={`bp-body grid grid-cols-[minmax(0,_1fr)_0px] [align-items:start] gap-0 [transition:grid-template-columns_.32s_var(--bp-ease),_gap_.32s_var(--bp-ease)] [&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(340px,_440px)] [&.is-open]:gap-4 max-[1181px]:later:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:gap-[14px] max-[1181px]:later:[&.is-open]:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:[&.is-open]:gap-[14px] motion-reduce:later:[transition:none] min-[1181px]:later-2:[&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(400px,_38%)] ${view === 'half' ? ' is-open' : ''}${panelClosing ? ' is-closing' : ''}`}>
-              <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
+              <section className="data-panel overflow-hidden mb-[18px] min-[1182px]:mb-0 border border-line rounded-[19px] [background:#0A0E19] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
                 <div className="bp-list-head flex flex-wrap items-center justify-between gap-[12px_20px] p-[14px_18px] border-b border-b-line later-2:[&_h2]:m-0 [&_h2]:text-text later-2:[&_h2]:text-[20px] later:[&_h2]:font-[760] later-2:[&_h2]:tracking-[-.015em]">
                   <h2 id="bp-list-title">Branches</h2>
-                  <div className="flex items-center gap-3 mb-[14px] [&_input]:flex-[1_1_auto] [&_input]:min-w-0 [&_input]:min-h-[40px] [&_input]:p-[9px_13px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[12px] [&_input]:[outline:none] [&_input]:text-text [&_input]:[background:var(--input-bg)] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_input::placeholder]:text-placeholder [&_input:hover]:border-line-strong later:[&_input:focus]:border-accent [&_input:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_input:focus]:[background:var(--input-focus-bg)] [&_small]:flex-none [&_small]:text-muted later:[&_small]:text-[10px] [&_small]:whitespace-nowrap max-[761px]:flex-wrap max-[761px]:[&_small]:w-full [.bp-list-head_&]:flex-[1_1_260px] [.bp-list-head_&]:max-w-[520px] [.bp-list-head_&]:m-0">
+                  <div className="flex items-center gap-3 mb-[14px] [&_select]:min-h-[40px] [&_select]:p-[0_12px] [&_select]:border [&_select]:border-line-strong [&_select]:rounded-[12px] [&_select]:[background:var(--panel)] [&_select]:text-text [&_select]:text-[14px] [&_select]:font-[600] [&_select]:cursor-pointer [&_input]:flex-[1_1_auto] [&_input]:min-w-0 [&_input]:min-h-[40px] [&_input]:p-[9px_13px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[12px] [&_input]:[outline:none] [&_input]:text-text [&_input]:[background:var(--input-bg)] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_input::placeholder]:text-placeholder [&_input:hover]:border-line-strong later:[&_input:focus]:border-accent [&_input:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_input:focus]:[background:var(--input-focus-bg)] [&_small]:flex-none [&_small]:text-muted later:[&_small]:text-[10px] [&_small]:whitespace-nowrap max-[761px]:flex-wrap max-[761px]:[&_small]:w-full [.bp-list-head_&]:flex-[1_1_260px] [.bp-list-head_&]:max-w-[520px] [.bp-list-head_&]:m-0">
+                    <select
+                      aria-label="Sort by brand"
+                      value={brandFilter}
+                      onChange={(event) => setBrandFilter(event.target.value)}
+                    >
+                      <option value="">All brands</option>
+                      {Object.entries(BRANDS).map(([key, brand]) => <option key={key} value={key}>{brand.label}</option>)}
+                    </select>
                     <input
                       type="search"
                       value={search}
@@ -1065,6 +1312,13 @@ export default function Branches() {
                     {role === 'admin' && (
                       <label><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} /> Show archived</label>
                     )}
+                    {view === 'half' && listLastPage > 1 && (
+                      <span className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
+                        <button type="button" className="inline-grid place-items-center w-[52px] h-[52px] p-0 border-0 [background:transparent] text-[34px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage <= 1} onClick={() => setListPage(listCurPage - 1)} aria-label="Previous page">‹</button>
+                        <span>{listCurPage} / {listLastPage}</span>
+                        <button type="button" className="inline-grid place-items-center w-[52px] h-[52px] p-0 border-0 [background:transparent] text-[34px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage >= listLastPage} onClick={() => setListPage(listCurPage + 1)} aria-label="Next page">›</button>
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -1075,7 +1329,7 @@ export default function Branches() {
                   />
                 ) : (
                   <div className="grid gap-[14px] max-[1381px]:later:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[761px]:later-2:grid-cols-[minmax(0,_1fr)] later-4:grid-cols-[repeat(auto-fill,_minmax(280px,_1fr))] p-[14px_18px_18px]" aria-label="Branches">
-                    {filtered.map((branch) => (
+                    {listItems.map((branch) => (
                       <BranchCard
                         key={branch.id}
                         branch={branch}
@@ -1091,12 +1345,12 @@ export default function Branches() {
               </section>
 
               <aside
-                className="min-w-0 max-h-[calc(100dvh_-_150px)] overflow-hidden opacity-[0] [transform:translateX(18px)] [transition:opacity_.26s_var(--bp-ease),_transform_.32s_var(--bp-ease)] pointer-events-none [.bp-body.is-open_&]:opacity-[1] [.bp-body.is-open_&]:[transform:translateX(0)] [.bp-body.is-open_&]:pointer-events-auto later:[.bp-body.is-closing_&]:opacity-[0] later:[.bp-body.is-closing_&]:[transform:translateX(22px)] max-[1181px]:later:max-h-[none] max-[1181px]:later:[transform:translateY(12px)] max-[1181px]:later-2:[.bp-body.is-open_&]:[transform:translateY(0)] max-[1181px]:later-3:[.bp-body.is-closing_&]:[transform:translateY(10px)] motion-reduce:later:[transition:none]"
+                className="relative min-w-0 self-stretch overflow-hidden min-[1182px]:[&>div]:absolute min-[1182px]:[&>div]:inset-0 opacity-[0] [transform:translateX(18px)] [transition:opacity_.26s_var(--bp-ease),_transform_.32s_var(--bp-ease)] pointer-events-none [.bp-body.is-open_&]:opacity-[1] [.bp-body.is-open_&]:[transform:translateX(0)] [.bp-body.is-open_&]:pointer-events-auto later:[.bp-body.is-closing_&]:opacity-[0] later:[.bp-body.is-closing_&]:[transform:translateX(22px)] max-[1181px]:later:max-h-[none] max-[1181px]:later:[transform:translateY(12px)] max-[1181px]:later-2:[.bp-body.is-open_&]:[transform:translateY(0)] max-[1181px]:later-3:[.bp-body.is-closing_&]:[transform:translateY(10px)] motion-reduce:later:[transition:none]"
                 aria-label="Selected branch"
                 aria-hidden={view !== 'half'}
               >
                 {selected && (
-                  <div className="h-full max-h-[inherit] flex flex-col overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[var(--bp-radius)] [background:var(--bp-surface)]">
+                  <div className="h-full flex flex-col overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[var(--bp-radius)] [background:var(--bp-surface)]">
                     <header className="flex-none flex items-start justify-between gap-3 p-[16px_16px_14px] border-b border-b-line [background:linear-gradient(120deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_12%,_transparent),_transparent_62%)]" style={{ '--brand-color': getBrand(selected).color }}>
                       <div className="min-w-0 later:[&_h2]:m-[4px_0_2px] [&_h2]:text-text later:[&_h2]:text-[16px] [&_h2]:font-[780] later:[&_h2]:tracking-[-.02em] [&_small]:text-muted later-3:[&_small]:text-[10px]">
                         <span className="text-[color:var(--brand-color,_var(--accent))] text-[9px] font-[780] tracking-[.1em] uppercase">{brandLabelOf(selected)}</span>
