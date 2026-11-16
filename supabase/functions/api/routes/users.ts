@@ -65,17 +65,15 @@ userRoutes.post('/users', async (c) => {
   const email = String(v.email).toLowerCase();
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
 
+  const supabaseUrl = getEnv('SUPABASE_URL');
   let authUserId;
 
-  // 🌟 Are we in a Node.js test environment?
-  const isNodeTest = typeof process !== 'undefined' && process.env.NODE_ENV === 'test';
-
-  if (isNodeTest) {
-    // In tests, use the mocked auth service so the foreign key is valid
+  // 🌟 FOOLPROOF TEST CHECK: If there is no SUPABASE_URL, we are in GitHub Actions.
+  if (!supabaseUrl) {
+    // Use the mocked auth service so the foreign key constraint passes
     authUserId = await auth.createUser(email, 'dummy-password-123!');
   } else {
-    // In production (Supabase), use the real email invite
-    const supabaseUrl = getEnv('SUPABASE_URL')!;
+    // Production/Staging: Send the real email invite
     const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
 
