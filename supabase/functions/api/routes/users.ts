@@ -16,6 +16,13 @@ const STAFF = ['admin', 'sales', 'marketing', 'logistics'];
 const STAFF_CREATABLE = ['marketing', 'sales', 'logistics'];
 const AUDIT_KEYS = ['full_name', 'email', 'phone', 'role_id', 'account_status', 'suspended_from', 'suspended_until'];
 
+// 🌟 SAFE ENV: Works in Deno (Supabase) and Node.js (GitHub Actions)
+const getEnv = (key: string) => {
+  if (typeof Deno !== 'undefined') return Deno.env.get(key);
+  if (typeof process !== 'undefined') return process.env[key];
+  return undefined;
+};
+
 userRoutes.get('/users', async (c) => {
   const { db } = c.get('deps');
   await liftExpiredSuspensions(db);
@@ -59,9 +66,9 @@ userRoutes.post('/users', async (c) => {
   const email = String(v.email).toLowerCase();
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
 
-  // 🌟 USE RAW SUPABASE CLIENT TO SEND THE INVITE
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseKey = Deno.env.get('APP_SECRET_KEY') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  // 🌟 USE SAFE ENV HERE
+  const supabaseUrl = getEnv('SUPABASE_URL')!;
+  const supabaseKey = getEnv('APP_SECRET_KEY') || getEnv('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabaseAdmin = createClient(supabaseUrl, supabaseKey);
 
   const redirectTo = input.redirect_to || `${new URL(c.req.url).origin}/reset-password`;
