@@ -178,7 +178,7 @@ function unlockBodyScroll() {
 }
 
 function Dialog({
-  title, onClose, footer, children, size = 'large', zIndex = 2147482000, closeOnEscape = true, modalClass = '',
+  title, onClose, footer, children, size = 'large', zIndex = 2147482000, closeOnEscape = true, modalClass = '', animated = false,
 }) {
   const titleId = useRef(`ap-dialog-title-${++dialogCounter}`).current;
   const closeRef = useRef(onClose);
@@ -200,9 +200,9 @@ function Dialog({
 
   return createPortal(
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] modal-portal-root" style={{ display: 'contents' }}>
-      <div className="fixed inset-0 flex items-center justify-center [box-sizing:border-box] p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] [overscroll-behavior:contain] max-[721px]:later:p-[10px] print:[body.ap-print-report_&]:static print:[body.ap-print-report_&]:p-0 print:[body.ap-print-report_&]:[background:#fff]" style={{ zIndex }}>
+      <div className={`fixed inset-0 flex items-center justify-center [box-sizing:border-box] p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] [overscroll-behavior:contain] max-[721px]:later:p-[10px] print:[body.ap-print-report_&]:static print:[body.ap-print-report_&]:p-0 print:[body.ap-print-report_&]:[background:#fff]${animated ? ' animate-overlay-in' : ''}`} style={{ zIndex }}>
         <div
-          className={`ap-dialog flex flex-col [box-sizing:border-box] w-[min(900px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[10px] [background:#0f1626] text-[#e7ebf5] [box-shadow:0_28px_80px_rgba(2,_6,_18,_.65),_0_0_0_1px_rgba(129,_117,_255,_.05)] [&.is-medium]:w-[min(680px,_100%)] later:[&.is-small]:w-[min(460px,_100%)] max-[721px]:later:w-full max-[721px]:later:max-h-[calc(100dvh_-_20px)] print:[body.ap-print-report_&]:w-full print:[body.ap-print-report_&]:max-w-[none] print:[body.ap-print-report_&]:max-h-[none] print:[body.ap-print-report_&]:h-auto print:[body.ap-print-report_&]:border-0 print:[body.ap-print-report_&]:rounded-[0] print:[body.ap-print-report_&]:[box-shadow:none] later-3:[&.is-payment]:w-[min(1120px,_100%)] [&.is-qualification]:w-[min(1180px,_100%)] [&.is-qualification]:h-[min(820px,_calc(100dvh_-_40px))] is-${size}${modalClass ? ` ${modalClass}` : ''}`}
+          className={`ap-dialog${animated ? ' animate-modal-pop' : ''} flex flex-col [box-sizing:border-box] w-[min(900px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[10px] [background:#0f1626] text-[#e7ebf5] [box-shadow:0_28px_80px_rgba(2,_6,_18,_.65),_0_0_0_1px_rgba(129,_117,_255,_.05)] [&.is-medium]:w-[min(680px,_100%)] later:[&.is-small]:w-[min(460px,_100%)] max-[721px]:later:w-full max-[721px]:later:max-h-[calc(100dvh_-_20px)] print:[body.ap-print-report_&]:w-full print:[body.ap-print-report_&]:max-w-[none] print:[body.ap-print-report_&]:max-h-[none] print:[body.ap-print-report_&]:h-auto print:[body.ap-print-report_&]:border-0 print:[body.ap-print-report_&]:rounded-[0] print:[body.ap-print-report_&]:[box-shadow:none] later-3:[&.is-payment]:w-[min(1120px,_100%)] [&.is-qualification]:w-[min(1180px,_100%)] [&.is-qualification]:h-[min(820px,_calc(100dvh_-_40px))] is-${size}${modalClass ? ` ${modalClass}` : ''}`}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
@@ -1154,6 +1154,7 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
       onClose={onCancel}
       size="medium"
       zIndex={2147482500}
+      animated
       footer={(
         <>
           <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={onCancel}>Cancel</button>
