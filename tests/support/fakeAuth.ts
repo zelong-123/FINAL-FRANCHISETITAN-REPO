@@ -32,6 +32,12 @@ export type FakeAuth = AuthProvider & {
   acceptInvite(email: string, password: string): Promise<void>;
   /** The next invitation fails, as when the email cannot be sent. */
   failNextInvite(message: string): void;
+  /** "Reset password" emails sent so far (newest last). */
+  resets: { email: string; redirectTo: string | null }[];
+  /** The next sign-in removal fails, as when Supabase refuses to delete it. */
+  failNextDelete(message: string): void;
+  /** Whether this sign-in still exists. */
+  exists(authUserId: string): boolean;
 };
 
 export function fakeAuth(db: Db): FakeAuth {
@@ -39,6 +45,8 @@ export function fakeAuth(db: Db): FakeAuth {
   const accounts = new Map<string, { email: string; password: string | null }>();
   const invites: Invite[] = [];
   let nextInviteError: string | null = null;
+  let nextDeleteError: string | null = null;
+  const resets: { email: string; redirectTo: string | null }[] = [];
   const byEmail = (email: string) => [...accounts].find(([, a]) => a.email === email);
 
   const newSession = async (uid: string, email: string): Promise<AuthSession> => {
@@ -50,6 +58,8 @@ export function fakeAuth(db: Db): FakeAuth {
 
   const provider = {
     invites,
+    resets,
+    exists: (authUserId: string) => accounts.has(authUserId),
     async addUser(email: string, password: string | null) {
       const uid = randomUUID();
       await db.query(`insert into auth.users (id, email) values ($1::uuid, $2)`, [uid, email]);
@@ -82,11 +92,17 @@ export function fakeAuth(db: Db): FakeAuth {
       found[1].password = password;
     },
     failNextInvite(message: string) { nextInviteError = message; },
+    failNextDelete(message: string) { nextDeleteError = message; },
+    async sendPasswordReset(email: string, { redirectTo = null }: { redirectTo?: string | null } = {}) {
+      if (!byEmail(email)) return; // Supabase does not reveal unknown addresses either.
+      resets.push({ email, redirectTo });
+    },
     async updateUser(uid: string, changes: { email?: string; password?: string }) {
       const account = accounts.get(uid);
       if (account) Object.assign(account, changes);
     },
     async deleteUser(uid: string) {
+      if (nextDeleteError) { const message = nextDeleteError; nextDeleteError = null; throw new Error(message); }
       accounts.delete(uid);
       await db.query(`delete from auth.users where id = $1::uuid`, [uid]);
     },

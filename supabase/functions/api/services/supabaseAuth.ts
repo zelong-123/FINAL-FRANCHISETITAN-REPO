@@ -45,6 +45,11 @@ export function supabaseAuth(url: string, anonKey: string, serviceKey: string, d
       if (error || !data?.user) throw new Error(error?.message || 'The invitation email could not be sent.');
       return data.user.id;
     },
+    // Supabase sends its "Reset Password" template (set in the dashboard).
+    async sendPasswordReset(email, { redirectTo } = {}) {
+      const { error } = await publicClient().auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : {});
+      if (error) throw new Error(error.message || 'The reset email could not be sent.');
+    },
     async updateUser(authUserId, changes) {
       const { error } = await admin.auth.admin.updateUserById(authUserId, {
         ...changes,
@@ -53,7 +58,9 @@ export function supabaseAuth(url: string, anonKey: string, serviceKey: string, d
       if (error) throw new Error(`Could not update the sign-in: ${error.message}`);
     },
     async deleteUser(authUserId) {
-      await admin.auth.admin.deleteUser(authUserId);
+      const { error } = await admin.auth.admin.deleteUser(authUserId);
+      // Already gone (404) is fine: the goal is that it no longer exists.
+      if (error && error.status !== 404) throw new Error(`Could not remove the sign-in: ${error.message}`);
     },
     async revoke(token) {
       await admin.auth.admin.signOut(token, 'local');

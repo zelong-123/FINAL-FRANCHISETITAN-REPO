@@ -147,7 +147,9 @@ authRoutes.post('/invite/accept', async (c) => {
   }
   await db.tx(async (tx) => {
     if (user.role?.name === 'franchisee') await activateAcceptedFranchisee(c, tx, user);
-    await tx.query(`update users set account_status = 'active', invite_accepted_at = now(), email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [user.id]);
+    // They chose their own password on the link, so no forced first-password change afterwards
+    // (older accounts that had a temporary password were flagged for one).
+    await tx.query(`update users set account_status = 'active', invite_accepted_at = now(), must_change_password = false, email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [user.id]);
   });
   await audit(c, db, 'user.invite_accepted', { type: USER_MODEL, id: user.id }, { account_status: 'invited' }, { account_status: 'active' }, user.id);
   return ok(c, { status: 'active', role: user.role?.name }, 'Your account is ready.');

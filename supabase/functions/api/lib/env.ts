@@ -23,7 +23,13 @@ export interface AuthProvider {
    * `redirectTo`). Returns the new auth user id. Throws when the invitation cannot be sent.
    */
   inviteUser(email: string, options?: { redirectTo?: string | null; fullName?: string | null }): Promise<string>;
+  /**
+   * Emails a "Reset password" link for an existing sign-in (it opens `redirectTo`, i.e. /reset-password).
+   * Throws when the email cannot be sent.
+   */
+  sendPasswordReset(email: string, options?: { redirectTo?: string | null }): Promise<void>;
   updateUser(authUserId: string, changes: { email?: string; password?: string }): Promise<void>;
+  /** Removes the sign-in. Throws when Supabase refuses (callers that do not care catch it). */
   deleteUser(authUserId: string): Promise<void>;
   /** Ends this session only (sign out, or a sign-in rejected after the password check). */
   revoke(accessToken: string): Promise<void>;

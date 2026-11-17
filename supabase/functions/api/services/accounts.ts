@@ -59,31 +59,46 @@ export async function inviteAccount(c: Context<AppEnv>, fields: Row, role: strin
 }
 
 /**
- * A fresh invitation for an account nobody accepted (invited, expired or declined): the old pending
- * sign-in is removed and a new one invited, so the new link works whether or not the old one was opened.
+ * Sends an invitation nobody accepted (invited, expired or declined) again. Normally the old pending
+ * sign-in is removed and a fresh one invited (the "Invite user" email), so the new link works whether
+ * or not the old one was opened. If Supabase will not remove the old sign-in (e.g. an older account
+ * created with a temporary password), it is kept and a "Reset password" email is sent instead; that
+ * link opens the same /reset-password page, where setting the password still accepts the invitation.
+ * Returns the saved row and which email went out.
  */
-export async function resendInvite(c: Context<AppEnv>, target: Row): Promise<Row> {
+export async function resendInvite(c: Context<AppEnv>, target: Row): Promise<{ user: Row; email: 'invite' | 'reset_password' }> {
   const { db, auth } = c.get('deps');
   if (!NEVER_ACCEPTED.includes(target.account_status)) fail('user', 'Only an invitation that was not accepted yet can be sent again.');
   const role = target.role?.name ?? (await db.query(`select r.name from roles r where r.id = $1`, [target.role_id]))[0]?.name;
   const redirectTo = inviteRedirect(c, role);
-  if (target.auth_user_id) {
-    await db.query(`update users set auth_user_id = null where id = $1`, [target.id]);
-    await auth.deleteUser(target.auth_user_id).catch(() => {});
-  }
-  let authUserId: string;
-  try {
-    authUserId = await auth.inviteUser(target.email, { redirectTo, fullName: target.full_name });
-  } catch (error) {
-    fail('email', `The invitation email could not be sent: ${error instanceof Error ? error.message : String(error)}`);
+  const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+  let authUserId: string | null = target.auth_user_id ?? null;
+  let email: 'invite' | 'reset_password' = 'invite';
+  const removed = authUserId ? await auth.deleteUser(authUserId).then(() => true, () => false) : true;
+  if (removed) {
+    // The old sign-in is gone; until the new one exists the row points at nothing.
+    if (authUserId) await db.query(`update users set auth_user_id = null where id = $1`, [target.id]);
+    try {
+      authUserId = await auth.inviteUser(target.email, { redirectTo, fullName: target.full_name });
+    } catch (error) {
+      fail('email', `The invitation email could not be sent: ${reason(error)}`);
+    }
+  } else {
+    email = 'reset_password';
+    try {
+      await auth.sendPasswordReset(target.email, { redirectTo });
+    } catch (error) {
+      fail('email', `The email could not be sent: ${reason(error)}`);
+    }
   }
   const [saved] = await db.query(
     `update users set auth_user_id = $2::uuid, account_status = 'invited', invited_at = now(), invited_by_user_id = $3, invite_declined_at = null where id = $1 returning *`,
-    [target.id, authUserId!, c.get('user')?.id ?? null],
+    [target.id, authUserId, c.get('user')?.id ?? null],
   );
   await audit(c, db, 'user.invite_resent', { type: USER, id: target.id },
-    { account_status: target.account_status, invited_at: target.invited_at }, { account_status: 'invited', sent_to: target.email });
-  return saved;
+    { account_status: target.account_status, invited_at: target.invited_at }, { account_status: 'invited', sent_to: target.email, email });
+  return { user: saved, email };
 }
 
 /**
