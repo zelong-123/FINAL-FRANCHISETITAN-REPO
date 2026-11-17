@@ -3959,7 +3959,7 @@ export default function Applicants() {
 
       {editing && draft && (
         <Dialog
-          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle] font-[400]">Update <strong className="font-[700]">{editing.full_name}</strong>{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && <span className="ml-2 text-[14px] font-[700] uppercase">({editing.preferred_brand?.name})</span>}</span>}
+          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle] font-[400]">Applicant: <strong className="text-[1.2rem] font-[800]">{editing.full_name}</strong>{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && <span className="ml-2 text-[14px] font-[700] uppercase">{editing.preferred_brand?.name}</span>}</span>}
           onClose={closeEditor}
           modalClass={paymentsVisible && stage === 'payment_submitted' ? 'is-payment' : (isAdminRole && stage === 'converted' ? 'is-qualification' : '')}
           closeOnEscape={updateEscapeEnabled}
