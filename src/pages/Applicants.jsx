@@ -934,7 +934,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   };
 
   return (
-    <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
+    <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#0C111D] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 id="ap-payment-record-title" className="m-0 text-[0.8rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
         <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
