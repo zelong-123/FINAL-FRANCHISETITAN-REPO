@@ -940,6 +940,8 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
         <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
       </div>
       {fresh.error && <p className="m-[10px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="alert">Could not refresh the Payment Record: {fresh.error}</p>}
+      {salesView && <p className="m-[10px_0_0] text-[#9aa6c4]">Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.</p>}
+
       <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[#9aa6c4]">{salesView ? 'Required payments (set by Admin):' : 'Required payments:'}</span>
