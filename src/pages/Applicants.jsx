@@ -3306,6 +3306,8 @@ export default function Applicants() {
       portalInvitePending: ['invited', 'declined'].includes(editing?.user?.account_status),
     })
     : null;
+  // Confirm Qualified moves to the footer (replacing SAVE CHANGES) once it is enabled.
+  const footerPrimary = Boolean(primary?.enabled && primary.run === 'qualified');
   const showSchedule = Boolean(draft) && (scheduleRevealed || SCHEDULE_VISIBLE_FROM.includes(stage));
 
   // Applicant-level "Set Again" (Section 4): the NEXT activity step only, shown
@@ -3983,7 +3985,17 @@ export default function Applicants() {
                   {acting ? 'APPROVING…' : 'APPROVE APPLICANT'}
                 </button>
               )}
-              {stage !== 'for_approval'
+              {footerPrimary && (
+                <button
+                  type="button"
+                  className="primary-button min-h-[42px] inline-flex items-center justify-center p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760] tracking-[.01em] ap-modal-save"
+                  disabled={acting || saving}
+                  onClick={() => setQualifiedConfirm(true)}
+                >
+                  {primary.label}
+                </button>
+              )}
+              {stage !== 'for_approval' && !footerPrimary
                 && (canEditDetails || (isSalesRole && ['converted', 'qualified'].includes(stage))) && (
                   <button
                     className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] ap-modal-save"
@@ -4033,7 +4045,7 @@ export default function Applicants() {
               <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} scheduleHalves={scheduleHalves} />
 
               <div className="ap-actions flex flex-wrap items-center gap-[10px] mt-[14px]">
-                {primary && (
+                {primary?.enabled && (
                   <button
                     type="button"
                     className={`primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.ap-actions_&]:m-0 [.ap-actions_&:disabled]:text-[#7d879e] [.ap-actions_&:disabled]:border [.ap-actions_&:disabled]:border-[#2b344c] [.ap-actions_&:disabled]:[background:#131a29] later:[.ap-actions_&:disabled]:[box-shadow:none] [.ap-actions_&:disabled]:opacity-[1] [.ap-actions_&:disabled]:cursor-not-allowed later-2:[.ap-actions_&:disabled]:[transform:none] ${stage === 'converted' ? ' [#update-applicant-form_&]:min-h-[34px] [#update-applicant-form_&]:p-[0_16px] [#update-applicant-form_&]:border [#update-applicant-form_&]:border-[#6861d9] [#update-applicant-form_&]:rounded-[7px] [#update-applicant-form_&]:[background:linear-gradient(135deg,_#4d65d9,_#7757d9)] [#update-applicant-form_&]:[box-shadow:none] [#update-applicant-form_&]:text-[11px] [#update-applicant-form_&]:tracking-[.04em] [#update-applicant-form_&:disabled]:border-[#32394b] [#update-applicant-form_&:disabled]:[background:#202636] [#update-applicant-form_&:disabled]:text-[#737d93] [#update-applicant-form_&:disabled]:[box-shadow:none] [#update-applicant-form_&:disabled]:opacity-[1]' : ''}`}
