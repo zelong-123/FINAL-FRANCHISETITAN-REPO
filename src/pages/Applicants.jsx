@@ -4792,10 +4792,10 @@ export default function Applicants() {
           animated
           footer={(
             <>
-              <button type="button" onClick={() => setAssignForm(null)}>Cancel</button>
+              <button type="button" className="min-h-[42px] min-w-[104px] inline-flex items-center justify-center p-[0_16px] border border-[#353e57] rounded-[12px] text-[#e7ebf5] [background:#1a2133] hover:[background:#222b42] transition-colors" onClick={() => setAssignForm(null)}>Cancel</button>
               <button
                 type="button"
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] min-w-[104px] inline-flex items-center justify-center p-[0_16px] border border-transparent rounded-[12px] text-[#fff] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-[.55] disabled:cursor-not-allowed"
                 disabled={acting || !assignForm.assigned_sales_user_id || (Boolean(editing.assigned_sales_user_id) && assignForm.reason.trim().length < 5)}
                 onClick={() => void saveAssignment()}
               >
