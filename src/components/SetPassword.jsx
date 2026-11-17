@@ -69,7 +69,9 @@ export default function SetPassword() {
         setStatus('declined');
         return;
       }
-      setLink({ kind: who.kind === 'recovery' || parsed.kind === 'recovery' ? 'recovery' : 'invite', token: parsed.accessToken, ...who });
+      // The account decides, not the email: a "Reset password" link sent for an invitation nobody
+      // accepted yet still accepts it once the password is set.
+      setLink({ ...who, kind: who.kind === 'invite' ? 'invite' : 'recovery', token: parsed.accessToken });
       setStatus('ready');
     })().catch((err) => {
       setInvalidMessage(err.message || 'This link has expired or was already used. Ask your Admin to resend the invite.');

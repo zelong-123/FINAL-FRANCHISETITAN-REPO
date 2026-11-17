@@ -84,8 +84,10 @@ userRoutes.post('/users', async (c) => {
 userRoutes.post('/users/:user/resend-invite', async (c) => {
   const { db } = c.get('deps');
   const target = await loadTarget(db, routeId(c, 'user'));
-  await resendInvite(c, target);
-  return ok(c, await loadUser(db, target.id), `Invite email sent to ${target.email}.`);
+  const { email } = await resendInvite(c, target);
+  return ok(c, await loadUser(db, target.id), email === 'invite'
+    ? `Invite email sent to ${target.email}.`
+    : `Password setup email ("Reset password") sent to ${target.email}. The link sets their password and accepts the invite.`);
 });
 
 /** Cancel an invitation nobody accepted: the account and its pending sign-in are removed completely. */
