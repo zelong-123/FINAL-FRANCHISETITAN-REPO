@@ -4225,7 +4225,7 @@ export default function Applicants() {
 
             {stage !== 'payment_submitted' && doneSections}
 
-            {!['active_franchisee', 'rejected'].includes(editing.status) && (
+            {stage !== 'payment_submitted' && !['active_franchisee', 'rejected'].includes(editing.status) && (
               <FollowUpLog
                 items={editing.follow_ups || []}
                 events={editing.follow_up_events || []}
@@ -4310,6 +4310,34 @@ export default function Applicants() {
                 onReject={rejectPaymentEntry}
                 onMove={moveToForApproval}
                 onError={setActionError}
+              />
+            )}
+            {stage === 'payment_submitted' && !['active_franchisee', 'rejected'].includes(editing.status) && (
+              <FollowUpLog
+                items={editing.follow_ups || []}
+                events={editing.follow_up_events || []}
+                title="Follow-up"
+                id={FOLLOW_UP_SECTION_ID}
+                highlight={followUpFlash}
+                addLabel={isAssignedSales && ['overdue', 'stalled'].includes(editing.follow_up?.state) ? 'Log contact attempt' : 'Log follow-up'}
+                summary={(
+                  <FollowUpSummary
+                    applicant={editing}
+                    role={role}
+                    isAdmin={isAdminRole}
+                    isAssignedSales={isAssignedSales}
+                    busy={acting}
+                    onAction={(kind) => {
+                      if (kind === 'reassign') void openAssign();
+                      else if (kind === 'release') void runRequest(() => api.post(`/applicants/${editing.id}/hold/release`), 'Hold released.');
+                      else setFollowUpAction({ kind, applicant: editing });
+                    }}
+                  />
+                )}
+                canAdd={isAssignedSales && !editing.archived_at}
+                busy={acting}
+                onAdd={logApplicantFollowUp}
+                surfaceClass="[background:#0C111D]"
               />
             )}
             {editRequiredOpen && editing?.payment_record && (
