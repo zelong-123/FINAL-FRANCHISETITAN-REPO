@@ -1077,7 +1077,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
           {readOnly ? '' : 'The applicant moves to For Approval once all required payments are Verified.'}
         </p>
         {!readOnly && isAdminRole && editing.status === 'payment_submitted' && (
-          <button type="button" className={`${PAY_PRIMARY} disabled:[background:#070A13]! disabled:opacity-100`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
+          <button type="button" className={`${PAY_PRIMARY} disabled:[background:#070A13]!`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
             Move to For Approval
           </button>
         )}
