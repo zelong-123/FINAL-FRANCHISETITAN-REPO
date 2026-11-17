@@ -664,7 +664,7 @@ function QualificationAssessment({ draft, onToggle, readOnly = false, log = [], 
       </div>
       <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
         {isSalesRole && !readOnly
-          ? 'Tick the accomplished items, then click SAVE APPLICANT. Nothing is recorded until you save — closing the form keeps the last saved record.'
+          ? 'Tick the accomplished items, then click SAVE CHANGES. Nothing is recorded until you save — closing the form keeps the last saved record.'
           : 'Only Sales can change these five items. Admin confirms the applicant as Qualified once all five are saved.'}
       </p>
     </section>
@@ -1874,7 +1874,7 @@ function ScheduleSection({
                   title={saved
                     ? 'Attended is saved and locked.'
                     : canMark
-                      ? 'Mark Attended, then Save Applicant to record it.'
+                      ? 'Mark Attended, then Save Changes to record it.'
                       : 'Sales must mark this activity Complete first.'}
                   onClick={() => onPickChecked(tracked, info)}
                 >
@@ -1893,7 +1893,7 @@ function ScheduleSection({
         <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
           {doneCount === TRACKED_ACTIVITIES.length
             ? 'Both activities are Done — Scheduled is checked.'
-            : 'Attended is recorded only when you click Save Applicant.'}
+            : 'Attended is recorded only when you click Save Changes.'}
         </p>
       )}
     </section>
@@ -3990,7 +3990,7 @@ export default function Applicants() {
                     form="update-applicant-form"
                     disabled={saving || acting || !hasChanges}
                   >
-                    {saving ? 'SAVING…' : 'SAVE APPLICANT'}
+                    {saving ? 'SAVING…' : 'SAVE CHANGES'}
                   </button>
                 )}
             </>
