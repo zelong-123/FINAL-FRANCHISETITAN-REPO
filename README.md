@@ -122,6 +122,35 @@ sign-in, on every request and when the user list loads, so no scheduled job is n
 archive yourself or the last active Admin. Every archive, restore and automatic restore is in the
 audit log; accounts that ever signed in are never deleted.
 
+### Applicant follow-up (Overdue / Stalled)
+
+Rules (`supabase/functions/api/services/followUp.ts`, thresholds in Admin settings → **Follow-up rules**):
+
+- **Overdue**: 7 or more days in the same stage with no Sales update. A Sales update is a stage move, a
+  follow-up, or a requirement, activity or payment submission. **Stalled**: 14 or more days.
+- Not Overdue when an activity is scheduled in the future, or when the latest follow-up's next action
+  date has not passed yet.
+- **Waiting on Admin** (blue) when something waits for Admin: a submitted requirement (LOI, Proposed site …),
+  an activity awaiting approval or attendance, a payment entry For verification, or For approval. It
+  counts against Admin, not Sales.
+- **On hold** (Admin, with a reason and an end date) pauses the timer and shows "On hold until …".
+- Not followed up: Approved (waiting for the franchisee to accept the invite), Active Franchisee,
+  Rejected, archived.
+
+Actions:
+
+- **Admin**: click the Overdue/Stalled chip (list or applicant modal) → **Send reminder** (an in-app
+  notification to the assigned Sales user, at most one per applicant per 24 hours). At Stalled:
+  Reassign Sales (the existing reassign), Put on hold / Release, and Close (archives with a reason).
+- **Sales**: **Log follow-up** on an Overdue/Stalled applicant (reason, note, next action date). It
+  clears Overdue until that date and notifies Admin. The Sales dashboard has **Needs attention**, and
+  their Overdue/Stalled applicants are pinned at the top of the pipeline.
+- **Automatic alerts**: entering Overdue notifies the assigned Sales user; entering Stalled notifies the
+  Admins. Each is sent once per episode. The check runs (throttled to every 5 minutes) when the bell or
+  the applicant list loads, so no scheduled job is needed.
+- Every reminder, hold, release, close and follow-up is in the applicant's Follow-up log, the action
+  history and the audit log. The Executive dashboard (Inquiries tab) shows **Follow-up by Sales**.
+
 ## Deploy to Supabase (first setup)
 
 The steps for a new project:

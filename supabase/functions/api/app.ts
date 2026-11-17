@@ -11,6 +11,7 @@ import { notificationRoutes } from './routes/notifications.ts';
 import { userRoutes } from './routes/users.ts';
 import { archiveRoutes, inquiryRoutes } from './routes/inquiries.ts';
 import { applicantRoutes } from './routes/applicants.ts';
+import { followUpRoutes } from './routes/followUp.ts';
 import { requirementRoutes } from './routes/requirements.ts';
 import { paymentRecordRoutes } from './routes/paymentRecord.ts';
 import { activityRoutes } from './routes/activities.ts';
@@ -87,6 +88,7 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   }
   app.route('/', requirementRoutes);
   app.route('/', paymentRecordRoutes);
+  app.route('/', followUpRoutes);
   app.route('/', applicantRoutes);
   app.route('/', activityRoutes);
   app.route('/', sessionRoutes);

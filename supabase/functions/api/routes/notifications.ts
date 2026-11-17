@@ -5,6 +5,7 @@ import { abort, boolParam, ok, paginate, perPage, routeId } from '../lib/http.ts
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound } from '../lib/middleware.ts';
 import { deliverDueReminders } from '../services/monitoring.ts';
+import { runFollowUpAlertsQuietly } from '../services/followUp.ts';
 
 export const notificationRoutes = new Hono<AppEnv>();
 
@@ -18,6 +19,8 @@ const RECORD_KEYS: Record<string, string> = {
 notificationRoutes.get('/', async (c) => {
   const { db } = c.get('deps');
   await deliverDueReminders(db, c.get('user'));
+  // Overdue (to Sales) / Stalled (to Admins) alerts: throttled, never fails the bell.
+  await runFollowUpAlertsQuietly(db);
   const where = ['user_id = $1'];
   if (boolParam(c.req.query('unread_only'))) where.push('read_at is null');
   return paginate(c, db, {

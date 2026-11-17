@@ -15,6 +15,8 @@ import {
 } from '../lib/api';
 import { downloadCsv, downloadPdf } from '../lib/export';
 import FollowUpLog from '../components/FollowUpLog';
+import { FollowUpCard, FollowUpChip, FollowUpDialogs } from '../components/applicants/FollowUp';
+import { FOLLOW_UP_FILTER_PREFIX, FOLLOW_UP_STATES, splitStatusFilter } from '../lib/followUpState';
 import ApplicationDetailReport from '../components/applicants/ApplicationDetailReport';
 import useRemote from '../lib/useRemote';
 import {
@@ -2447,6 +2449,8 @@ export default function Applicants() {
   const [report, setReport] = useState(null);
   const [activateForm, setActivateForm] = useState(null);
   const [acting, setActing] = useState(false);
+  // The open follow-up dialog: { kind: 'remind' | 'log' | 'hold' | 'close', applicant }.
+  const [followUpAction, setFollowUpAction] = useState(null);
   const scheduleRef = useRef(null);
 
   // The signed-in user, used for "Marked by". The backend names users with `full_name`.
@@ -2474,7 +2478,7 @@ export default function Applicants() {
           page,
           per_page: PAGE_SIZE,
           search,
-          status,
+          ...splitStatusFilter(status),
           ...filterParams,
           ...(tab === 'archived' ? { archived: 1 } : {}),
         }),
@@ -2533,7 +2537,7 @@ export default function Applicants() {
     try {
       const detail = tab === 'detail';
       const path = detail ? '/applicants/application-detail' : '/applicants';
-      const base = detail ? { search, folder: detailFolder, status, ...filterParams } : { search, status, ...filterParams, ...(tab === 'archived' ? { archived: 1 } : {}) };
+      const base = detail ? { search, folder: detailFolder, status, ...filterParams } : { search, ...splitStatusFilter(status), ...filterParams, ...(tab === 'archived' ? { archived: 1 } : {}) };
       const all = [];
       for (let p = 1; p <= 100; p += 1) {
         const result = await api.get(path, { ...base, page: p, per_page: 100 });
@@ -3667,6 +3671,11 @@ export default function Applicants() {
             >
               <option value="">All statuses</option>
               {activeStatuses.map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}
+              {tab === 'pipeline' && canManage && (
+                <optgroup label="Follow-up">
+                  {Object.entries(FOLLOW_UP_STATES).map(([key, meta]) => <option key={key} value={`${FOLLOW_UP_FILTER_PREFIX}${key}`}>{meta.filterLabel}</option>)}
+                </optgroup>
+              )}
             </select>
           </div>
         )}
@@ -3821,7 +3830,9 @@ export default function Applicants() {
                         {typeof applicant.days_in_stage === 'number' && (
                           <small className="block text-[#9aa6c4]">
                             {applicant.days_in_stage} day{applicant.days_in_stage === 1 ? '' : 's'} in stage
-                            {applicant.overdue && (
+                            {applicant.follow_up ? (
+                              <FollowUpChip followUp={applicant.follow_up} className="ml-[6px]" canRemind={isAdminRole} onRemind={() => setFollowUpAction({ kind: 'remind', applicant })} />
+                            ) : applicant.overdue && (
                               <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_92,_102,_.6)] text-[#ff5c66] text-[11px] font-normal" title={`More than ${applicant.overdue_after_days} days in this stage`}>Overdue</span>
                             )}
                           </small>
@@ -3988,9 +3999,22 @@ export default function Applicants() {
               {typeof editing.days_in_stage === 'number' && (
                 <p className="m-[0_0_10px] text-[14px] text-[#9aa6c4]">
                   {editing.days_in_stage} day{editing.days_in_stage === 1 ? '' : 's'} in the current stage
-                  {editing.overdue && <span className="ml-2 font-normal text-[#ff5c66]">Overdue (more than {editing.overdue_after_days} days)</span>}
+                  {editing.follow_up ? (
+                    <FollowUpChip followUp={editing.follow_up} className="ml-2" canRemind={isAdminRole} onRemind={() => setFollowUpAction({ kind: 'remind', applicant: editing })} />
+                  ) : editing.overdue && <span className="ml-2 font-normal text-[#ff5c66]">Overdue (more than {editing.overdue_after_days} days)</span>}
                 </p>
               )}
+              <FollowUpCard
+                applicant={editing}
+                isAdmin={isAdminRole}
+                isAssignedSales={isAssignedSales}
+                busy={acting}
+                onAction={(kind) => {
+                  if (kind === 'reassign') void openAssign();
+                  else if (kind === 'release') void runRequest(() => api.post(`/applicants/${editing.id}/hold/release`), 'Hold released.');
+                  else setFollowUpAction({ kind, applicant: editing });
+                }}
+              />
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
               <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} scheduleHalves={scheduleHalves} />
 
@@ -4178,6 +4202,7 @@ export default function Applicants() {
             {!['active_franchisee', 'rejected'].includes(editing.status) && (
               <FollowUpLog
                 items={editing.follow_ups || []}
+                events={editing.follow_up_events || []}
                 canAdd={isAssignedSales && !editing.archived_at}
                 busy={acting}
                 onAdd={logApplicantFollowUp}
@@ -4721,6 +4746,19 @@ export default function Applicants() {
       )}
 
       {/* "Mark as Active Franchisee" needs the business + location record. */}
+      <FollowUpDialogs
+        action={followUpAction}
+        onClose={() => setFollowUpAction(null)}
+        onDone={async (message, extra = {}) => {
+          const target = followUpAction?.applicant;
+          setFollowUpAction(null);
+          setActionError('');
+          if (extra.closed && editing && target && Number(editing.id) === Number(target.id)) closeEditor();
+          else if (editing && target && Number(editing.id) === Number(target.id)) { detailCache.current.clear(); await loadApplicant(editing.id); }
+          await remote.reload();
+          setSuccess(message);
+        }}
+      />
       {activateForm && editing && (
         <Dialog
           title={`Mark ${editing.full_name} as active franchisee`}
