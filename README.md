@@ -88,19 +88,39 @@ each Admin can dismiss (remembered per browser).
 - CI also runs `npm run check:imports`: an import whose letter case differs from the file name
   works on Windows but breaks the Linux build on Vercel.
 
-### Staff invitation emails
+### Account invitations (every account type)
 
-New staff accounts (User Management) get an invitation email from Supabase Auth and set their own
-password on the app's `/reset-password` page. Nothing about email is stored in code; set it up in
-the Supabase dashboard:
+Every new account — Marketing, Sales, Logistics, Admin (after an extra confirmation) and Franchisee
+(from its applicant) — is created as **Invited** and gets an email from Supabase Auth. The person
+opens it, sees their role and username (email) on `/reset-password`, sets their own password and
+clicks **Accept & set password**; the account becomes **Active** and they are signed in. **Decline
+invitation** marks it **Declined**. A Franchisee's Approved applicant becomes Active Franchisee only
+when they accept. The system never creates, shows, stores or logs a password.
 
-- Authentication → URL Configuration → Redirect URLs: add every app address that opens the link,
-  e.g. `https://<your-vercel-app>/reset-password` (and preview URLs if you test invites there).
-- Authentication → Emails → SMTP Settings: configure a custom SMTP sender for real use. The built-in
-  sender is heavily rate-limited and meant for testing only.
+User management shows Invited / Expired (older than the link lifetime) / Declined, with **Resend
+invite** (a fresh link) and **Cancel invite** (removes the account and its pending sign-in).
 
-Franchisee portal accounts keep the system-generated temporary password (shown once, changed at
-first sign-in).
+Set up once:
+
+- Supabase secrets (where the email link opens; `<url>/reset-password`):
+  `npx supabase secrets set APP_STAFF_URL=https://franchise-titan.vercel.app APP_BRANCH_URL=https://franchise-titan.vercel.app --project-ref <ref>`
+  (the same site serves both portals today; use the branch site's URL if the branch portal moves to its own project).
+  Optional: `INVITE_TTL_HOURS` (default 24) when the dashboard's email link expiry changes.
+- Authentication → URL Configuration → Site URL and Redirect URLs (`https://<app>/**`, `http://localhost:5173/**`).
+- Authentication → Emails → SMTP Settings: a custom SMTP sender (e.g. Brevo); the built-in sender is rate-limited.
+- Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user**
+  (subject "You've been invited to Franchise Titan") and `docs/email-templates/reset-password.html`
+  into **Reset Password** (subject "Reset your Franchise Titan password").
+
+### Archive (suspend) users
+
+User management → Update → **Archive (suspend)**: a start (now or later), an optional end and a
+reason. While suspended the person cannot sign in and their open sessions stop working; archived
+users leave the main lists and appear in Admin settings → Archive → Users, where **Restore**
+reactivates them at once. With an end time they are restored automatically: the check runs on
+sign-in, on every request and when the user list loads, so no scheduled job is needed. You cannot
+archive yourself or the last active Admin. Every archive, restore and automatic restore is in the
+audit log; accounts that ever signed in are never deleted.
 
 ## Deploy to Supabase (first setup)
 

@@ -31,21 +31,56 @@ export async function loadUserRelations(db: Db, id: number): Promise<Row> {
   return { applicant: applicant ? applicantJson(applicant) : null, franchisee: franchisee ?? null };
 }
 
-/** Suspensions end by themselves once their end date has passed. */
+const at = (v: unknown) => (v ? new Date(v as string).getTime() : null);
+
+/**
+ * The archive (suspension) clock, checked on sign-in, on every request and on list load — no
+ * scheduled job: a suspended account cannot do anything until it is checked anyway.
+ *  - A scheduled suspension (start time later than the archive action) begins once its start passes.
+ *  - A suspension with an end time ends by itself once the end passes: the account is active again,
+ *    unarchived, and the restore is written to audit_logs as "user.auto_restored".
+ * Returns true when the account changed.
+ */
 export async function liftExpiredSuspension(db: Db, user: Row): Promise<boolean> {
-  if (user.account_status !== 'suspended' || !user.suspended_until) return false;
-  if (String(user.suspended_until).slice(0, 10) >= manilaToday()) return false;
-  await db.query(`update users set account_status = 'active', suspended_from = null, suspended_until = null where id = $1`, [user.id]);
-  Object.assign(user, { account_status: 'active', suspended_from: null, suspended_until: null });
-  return true;
+  const now = Date.now();
+  const from = at(user.suspended_from);
+  const until = at(user.suspended_until);
+  const inWindow = user.account_status === 'suspended' || (user.account_status === 'active' && from !== null);
+  if (inWindow && until !== null && until <= now) {
+    const old = { account_status: user.account_status, suspended_from: user.suspended_from, suspended_until: user.suspended_until, archived_at: user.archived_at, archive_reason: user.archive_reason ?? null };
+    const cleared = { account_status: 'active', suspended_from: null, suspended_until: null, archived_at: null, archived_by_user_id: null, archive_reason: null };
+    await db.query(
+      `update users set account_status = 'active', suspended_from = null, suspended_until = null, archived_at = null, archived_by_user_id = null, archive_reason = null where id = $1`,
+      [user.id],
+    );
+    await db.query(
+      `insert into audit_logs (user_id, action, auditable_type, auditable_id, old_values, new_values, created_at) values (null, 'user.auto_restored', 'App\\Models\\User', $1, $2, $3, now())`,
+      [user.id, JSON.stringify(old), JSON.stringify({ account_status: 'active', note: 'The suspension end time passed.' })],
+    );
+    Object.assign(user, cleared);
+    return true;
+  }
+  if (user.account_status === 'active' && from !== null && from <= now) {
+    await db.query(`update users set account_status = 'suspended' where id = $1 and account_status = 'active'`, [user.id]);
+    user.account_status = 'suspended';
+    return true;
+  }
+  return false;
 }
 
+/** The same clock for every account with a suspension window (run when the user list loads). */
 export async function liftExpiredSuspensions(db: Db): Promise<void> {
-  await db.query(
-    `update users set account_status = 'active', suspended_from = null, suspended_until = null
-     where account_status = 'suspended' and suspended_until is not null and suspended_until < $1::date`,
-    [manilaToday()],
+  const rows = await db.query(
+    `select * from users where suspended_from is not null or suspended_until is not null or account_status = 'suspended'`,
   );
+  for (const user of rows) await liftExpiredSuspension(db, user);
+}
+
+/** "Mon DD, YYYY h:mm AM" in Manila, for suspension messages. */
+export function manilaTimeLabel(value: unknown, withTime = true): string {
+  return new Date(value as string).toLocaleString('en-US', {
+    month: 'short', day: '2-digit', year: 'numeric', ...(withTime ? { hour: 'numeric', minute: '2-digit' } : {}), timeZone: 'Asia/Manila',
+  });
 }
 
 /** HasPublicCode: USR-YYYY-NNNNN from the primary key, written once in the insert's transaction. */

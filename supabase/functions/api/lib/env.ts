@@ -48,6 +48,13 @@ export interface Deps {
   costingEnabled: boolean;
   /** Removed: FEATURE_PAYMENT_ADVANCED (billing) is permanently off and ignored. */
   paymentAdvanced?: boolean;
+  /**
+   * Where invitation and password-reset links open (APP_STAFF_URL / APP_BRANCH_URL): the site's
+   * /reset-password page. Unset: the link the browser sent is used (local development).
+   */
+  appUrls?: { staff: string | null; branch: string | null };
+  /** How long an invitation link stays valid, in hours (Supabase "Email OTP expiration"; default 24). */
+  inviteTtlHours?: number;
 }
 
 export type AppEnv = {

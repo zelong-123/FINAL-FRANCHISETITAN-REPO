@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
-import { createStaff, firstSignIn } from '../support/accounts.ts';
+import { createStaff, signInInvited } from '../support/accounts.ts';
 
 const { pg, call, login, files } = await setup();
 const admin = await login(ADMIN);
@@ -281,6 +281,14 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal(portal.status, 201);
   assert.equal(portal.json.data.role.name, 'franchisee');
   assert.ok(!('auth_user_id' in portal.json.data));
+  assert.deepEqual(portal.json.data.credentials, { method: 'email_link', sent_to: 'juan@branch.test', note: 'Invite email sent to juan@branch.test. They set their own password when they open the link.' });
+  // Until the franchisee accepts, the applicant stays Approved, waiting for the invite.
+  assert.equal((await q(`select status from applicants where id = $1`, [applicantId]))[0].status, 'approved');
+  const waiting = (await call('GET', path, { token: admin })).json.data.user;
+  assert.deepEqual([waiting.email, waiting.account_status], ['juan@branch.test', 'invited']);
+  assert.equal((await q(`select count(*)::int c from franchise_locations l join franchisees f on f.id = l.franchisee_id where f.applicant_id = $1`, [applicantId]))[0].c, 0, 'no branch yet');
+  // The franchisee opens the link, sets a password and accepts: the applicant becomes Active Franchisee.
+  const branchToken = await signInInvited(call, 'juan@branch.test', 'branch');
   assert.equal((await q(`select status from applicants where id = $1`, [applicantId]))[0].status, 'active_franchisee');
   const [branch] = await q(`select l.* from franchise_locations l join franchisees f on f.id = l.franchisee_id where f.applicant_id = $1`, [applicantId]);
   assert.match(branch.name, / Las Piñas City – Talon Uno$/, 'a new branch is named "<Brand> <City> – <Barangay/St>" from the verified Proposed site, never the person');
@@ -291,7 +299,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal((await call('DELETE', path, { token: admin })).status, 422);
 
   // The branch account signs in through the branch portal.
-  await firstSignIn(call, 'juan@branch.test', portal.json.data.credentials.temporary_password, 'branch');
+  assert.ok(branchToken);
   const branchLogin = await call('POST', '/auth/login', { body: { email: 'juan@branch.test', password: 'Passw0rd!', portal: 'branch' } });
   assert.equal(branchLogin.status, 200);
   const me = await call('GET', '/auth/me', { token: branchLogin.json.data.token });

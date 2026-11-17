@@ -6,7 +6,8 @@ import type { Db, Row } from '../lib/db.ts';
 import { abort, boolParam, fail, Filter, intParam, manilaToday, ok, paginate, perPage, routeId } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
-import { audit } from '../services/users.ts';
+import { audit, liftExpiredSuspensions } from '../services/users.ts';
+import { restoreUser } from '../services/accounts.ts';
 import { notifyRoles, notifyUser } from '../services/notifications.ts';
 import { applyRecordSearch } from '../services/recordSearch.ts';
 import { APPLICANT_MODEL, applicantJson, loadApplicant } from '../services/applicantModel.ts';
@@ -528,13 +529,20 @@ archiveRoutes.get('/archive', adminOnly, async (c) => {
   const payload: Row = {};
 
   if (['all', 'users'].includes(type)) {
+    await liftExpiredSuspensions(db);
     const rows = await db.query(
-      `select u.id, u.full_name, u.email, u.archived_at, r.label as role_label, (select a.full_name from users a where a.id = u.archived_by_user_id) as archived_by
+      `select u.id, u.full_name, u.email, u.archived_at, u.account_status, u.suspended_from, u.suspended_until, u.archive_reason,
+         r.label as role_label, (select a.full_name from users a where a.id = u.archived_by_user_id) as archived_by
        from users u left join roles r on r.id = u.role_id where u.archived_at is not null order by u.archived_at desc limit ${limit}`,
     );
     payload.users = {
-      count: counts.users,
-      items: rows.map((u) => ({ id: u.id, label: u.full_name, detail: u.email, badge: u.role_label, archived_at: iso(u.archived_at), archived_by: u.archived_by })),
+      count: (await db.query<Row>(`select count(*)::int as n from users where archived_at is not null`))[0].n,
+      items: rows.map((u) => ({
+        id: u.id, label: u.full_name, detail: u.email, badge: u.role_label, archived_at: iso(u.archived_at), archived_by: u.archived_by,
+        // Suspended now, or "scheduled" when the suspension starts later.
+        status: u.account_status === 'suspended' ? 'suspended' : 'scheduled',
+        suspended_from: iso(u.suspended_from), suspended_until: iso(u.suspended_until), reason: u.archive_reason ?? null,
+      })),
     };
   }
   if (['all', 'inquiries'].includes(type)) {
@@ -617,6 +625,13 @@ archiveRoutes.post('/archive/:type/:id/restore', adminOnly, async (c) => {
   requireFound(record);
   const old = { archived_at: record.archived_at, archived_by_user_id: record.archived_by_user_id };
 
+  if (type === 'users') {
+    // Restoring an archived (suspended) account reactivates it at once; audited as user.restored.
+    const [target] = await db.query(`select u.*, to_jsonb(r) as role from users u left join roles r on r.id = u.role_id where u.id = $1`, [id]);
+    const saved = await restoreUser(c, target);
+    const { auth_user_id: _hidden, ...visible } = saved;
+    return ok(c, visible, 'User restored.');
+  }
   if (type === 'inquiries') {
     const [archiver] = await db.query(`select r.name from users u join roles r on r.id = u.role_id where u.id = $1`, [record.archived_by_user_id]);
     if (archiver?.name !== 'admin') abort(404, 'Record not found.');

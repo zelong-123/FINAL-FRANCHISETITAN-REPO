@@ -6,25 +6,24 @@ import useRemote from '../lib/useRemote';
 import { formatDate, titleCase } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
+import { accountBadge, localDateTimeInput } from '../lib/accountStatus';
 
 const blank = { full_name: '', email: '', phone: '', role: 'marketing', applicant_id: '' };
 
-/** Roles User Management can create. Admin is never offered. */
+/** Every account type is invited by email. Admin asks for an extra confirmation. */
 const CREATE_ROLES = [
   { value: 'marketing', label: 'Marketing' },
   { value: 'sales', label: 'Sales' },
   { value: 'logistics', label: 'Logistics' },
+  { value: 'admin', label: 'Admin' },
   { value: 'franchisee', label: 'Franchisee (branch)' },
 ];
 
 const cleanPhone = (value) => String(value || '').replace(/\D/g, '').slice(0, 11);
 
-// Orange pill for accounts that were invited but have not signed in yet.
-const INVITED_STYLE = {
-  color: '#fb923c',
-  background: 'rgba(251, 146, 60, 0.12)',
-  borderColor: 'rgba(251, 146, 60, 0.4)',
-};
+const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]';
+const DANGER = 'min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_#ef596b,_#c9374a)] text-[12px] font-[760] disabled:opacity-60';
+const FORM_GRID = 'form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr]';
 
 // Same rules as the API (services/credentials.ts).
 const NAME_PATTERN = /^[\p{L}\p{M} .'’-]+$/u;
@@ -46,12 +45,6 @@ const clock = (value) => {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
 };
 
-/** YYYY-MM-DD in the browser's own timezone (form date inputs use local dates). */
-const localDate = (date = new Date()) => {
-  const offset = date.getTimezoneOffset();
-  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10);
-};
-
 export default function Users() {
   const location = useLocation();
   const { user: currentUser } = useAuth();
@@ -61,19 +54,20 @@ export default function Users() {
   // Franchisee: the applicants who may get an account (Approved or Active Franchisee, no account yet).
   const [candidates, setCandidates] = useState({ key: null, status: 'loading', list: [] });
   const [candidateAttempt, setCandidateAttempt] = useState(0);
-  const [issued, setIssued] = useState(null);
-  const [copied, setCopied] = useState(false);
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmAdmin, setConfirmAdmin] = useState(false);
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
-  // Suspending always asks for the window first, then applies it on Confirm.
-  const [suspendTarget, setSuspendTarget] = useState(null);
-  const [suspendForm, setSuspendForm] = useState({ from: '', until: '' });
-  const [suspendError, setSuspendError] = useState('');
-  const [suspending, setSuspending] = useState(false);
+  // Archive (suspend): a warning first, then the window and reason.
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiveStep, setArchiveStep] = useState('warn');
+  const [archiveForm, setArchiveForm] = useState({ from: '', until: '', reason: '' });
+  const [archiveError, setArchiveError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState(null);
   const remote = useRemote(async () => api.get('/users', {
     page,
     per_page: 20,
@@ -126,7 +120,7 @@ export default function Users() {
   }, [location.state]);
 
   const openCreate = () => { setForm(blank); setActionError(''); setShowCreate(true); };
-  const closeCreate = () => { setShowCreate(false); setForm(blank); setActionError(''); };
+  const closeCreate = () => { setShowCreate(false); setConfirmAdmin(false); setForm(blank); setActionError(''); };
 
   const changeRole = (role) => {
     // Switching between staff and Franchisee starts the identity fields again.
@@ -149,69 +143,46 @@ export default function Users() {
 
   const nameError = !isFranchisee && form.full_name ? nameProblem(form.full_name) : '';
 
-  const createUser = async (event) => {
-    event.preventDefault();
-    setActionError('');
-    setSuccess('');
-    if (isFranchisee && !form.applicant_id) {
-      setActionError('Choose the applicant for this Franchisee account.');
-      return;
-    }
+  const checkForm = () => {
+    if (isFranchisee && !form.applicant_id) return 'Choose the applicant for this Franchisee account.';
     if (!isFranchisee) {
       const problem = nameProblem(form.full_name);
-      if (problem) { setActionError(problem); return; }
+      if (problem) return problem;
     }
-    if (!EMAIL_PATTERN.test(form.email.trim())) {
-      setActionError('Enter a valid email address.');
-      return;
-    }
-    if (form.phone && !/^[0-9]{11}$/.test(form.phone)) {
-      setActionError('Phone / Contact must be exactly 11 digits, or left empty.');
-      return;
-    }
+    if (!EMAIL_PATTERN.test(form.email.trim())) return 'Enter a valid email address.';
+    if (form.phone && !/^[0-9]{11}$/.test(form.phone)) return 'Phone / Contact must be exactly 11 digits, or left empty.';
+    return '';
+  };
 
+  const sendInvite = async (adminConfirmed = false) => {
+    setActionError('');
+    setSuccess('');
+    const problem = checkForm();
+    if (problem) { setActionError(problem); return; }
+    // Another Admin has full access: ask first.
+    if (form.role === 'admin' && !adminConfirmed) { setConfirmAdmin(true); return; }
+    setConfirmAdmin(false);
     setSaving(true);
     try {
       const email = form.email.trim();
       const full_name = (isFranchisee ? (chosenApplicant?.full_name || form.full_name) : form.full_name).trim();
-      const roleLabel = isFranchisee ? 'Franchisee (branch)' : titleCase(form.role);
-      // Staff: the API emails an invitation link that opens /reset-password.
-      // Franchisee: the API returns a temporary password to share privately.
+      // The API decides where the email link opens (APP_STAFF_URL / APP_BRANCH_URL); this address is
+      // only used when those are not set (local development).
       const invite = {
         email,
         full_name,
         role: form.role,
         phone: form.phone || null,
         redirect_to: `${window.location.origin}/reset-password`,
+        ...(form.role === 'admin' ? { confirm_admin: true } : {}),
       };
-
       const response = isFranchisee
         ? await api.post(`/applicants/${form.applicant_id}/portal-user`, invite)
         : await api.post('/users', invite);
-
-      const created = response.data?.profile || response.data;
-      if (!created) {
-        setActionError('User created but no profile returned.');
-        return;
-      }
-
-      const credentials = created.credentials;
+      const created = response.data;
       setShowCreate(false);
       setForm(blank);
-      if (credentials?.method === 'email_link') {
-        if (/could not be sent/i.test(credentials.note || '')) setActionError(credentials.note);
-        else setSuccess(credentials.note || `Invite emailed to ${created.email || email}. They set their own password when they open the link.`);
-      } else if (credentials?.temporary_password) {
-        setCopied(false);
-        setIssued({
-          name: created.full_name || full_name,
-          email: created.email || email,
-          role: roleLabel,
-          credentials,
-        });
-      } else {
-        setActionError(`Account created for ${created.email || email}, but no invite email was sent.`);
-      }
+      setSuccess(`Invite email sent to ${created?.credentials?.sent_to || created?.email || email}. They set their own password when they open the link.`);
       await remote.reload();
       if (isFranchisee) window.dispatchEvent(new CustomEvent('herald:branch-account-created'));
     } catch (error) {
@@ -221,51 +192,72 @@ export default function Users() {
     }
   };
 
-  const copyPassword = async () => {
-    try {
-      await navigator.clipboard.writeText(issued.credentials.temporary_password);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
+  const createUser = (event) => { event.preventDefault(); void sendInvite(false); };
 
-  const openSuspend = (user) => {
+  const resend = async (user) => {
     setActionError('');
     setSuccess('');
-    setSuspendError('');
-    setSuspendForm({ from: localDate(), until: '' });
-    setSuspendTarget(user);
-  };
-
-  const confirmSuspend = async (event) => {
-    event.preventDefault();
-    const { from, until } = suspendForm;
-    if (!until) {
-      setSuspendError('Choose the date this suspension ends.');
-      return;
-    }
-    if (until < from) {
-      setSuspendError('The suspension must end on or after the date it starts.');
-      return;
-    }
-    setSuspending(true);
-    setSuspendError('');
     try {
-      await api.put(`/users/${suspendTarget.id}`, {
-        account_status: 'suspended',
-        suspended_from: from,
-        suspended_until: until,
-      });
-      const name = suspendTarget.full_name;
-      setSuspendTarget(null);
-      setSuccess(`${name}'s account is suspended until ${formatDate(until)}. It returns to Active automatically after that date.`);
+      const response = await api.post(`/users/${user.id}/resend-invite`);
+      setSuccess(response.message || `Invite email sent to ${user.email}.`);
       await remote.reload();
     } catch (error) {
-      setSuspendError(firstValidationMessage(error));
-    } finally {
-      setSuspending(false);
+      setActionError(firstValidationMessage(error));
     }
+  };
+
+  const confirmCancel = async () => {
+    setBusy(true);
+    try {
+      const response = await api.delete(`/users/${cancelTarget.id}/invite`);
+      setSuccess(response.message || `The invitation for ${cancelTarget.email} was cancelled.`);
+      setCancelTarget(null);
+      await remote.reload();
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+      setCancelTarget(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openArchive = (user) => {
+    setActionError('');
+    setSuccess('');
+    setArchiveError('');
+    setArchiveStep('warn');
+    setArchiveForm({ from: localDateTimeInput(), until: '', reason: '' });
+    setArchiveTarget(user);
+  };
+
+  const confirmArchive = async (event) => {
+    event.preventDefault();
+    const from = archiveForm.from ? new Date(archiveForm.from) : new Date();
+    const until = archiveForm.until ? new Date(archiveForm.until) : null;
+    if (until && until <= from) { setArchiveError('The suspension must end after it starts.'); return; }
+    setBusy(true);
+    setArchiveError('');
+    try {
+      const response = await api.post(`/users/${archiveTarget.id}/archive`, {
+        suspended_from: from.toISOString(),
+        suspended_until: until ? until.toISOString() : null,
+        reason: archiveForm.reason.trim() || null,
+      });
+      const name = archiveTarget.full_name;
+      setArchiveTarget(null);
+      setSuccess(`${name} was archived${until ? ` until ${formatDate(until, true)}` : ' until an Admin restores them'}. ${response.data?.account_status === 'suspended' ? 'They are signed out now.' : 'The suspension starts at the time you chose.'}`);
+      await remote.reload();
+    } catch (error) {
+      setArchiveError(firstValidationMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUpdate = (user, action) => {
+    if (action === 'archive') openArchive(user);
+    else if (action === 'resend') void resend(user);
+    else if (action === 'cancel') { setActionError(''); setSuccess(''); setCancelTarget(user); }
   };
 
   return (
@@ -292,18 +284,18 @@ export default function Users() {
         )}
         <button
           type="button"
-          className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.unified-toolbar-container_&]:flex-[0_0_auto] [.unified-toolbar-container_&]:inline-flex [.unified-toolbar-container_&]:items-center [.unified-toolbar-container_&]:justify-center [.unified-toolbar-container_&]:gap-2 [.unified-toolbar-container_&]:h-[44px] [.unified-toolbar-container_&]:min-h-[44px] [.unified-toolbar-container_&]:p-[0_18px] [.unified-toolbar-container_&]:rounded-[10px] [.unified-toolbar-container_&]:text-[13px] [.unified-toolbar-container_&]:font-[700] max-[721px]:later:[.unified-toolbar-container_&]:flex-[1_1_100%]"
+          className={`${PRIMARY} [.unified-toolbar-container_&]:flex-[0_0_auto] [.unified-toolbar-container_&]:h-[44px] [.unified-toolbar-container_&]:min-h-[44px] [.unified-toolbar-container_&]:p-[0_18px] [.unified-toolbar-container_&]:rounded-[10px] [.unified-toolbar-container_&]:text-[13px] [.unified-toolbar-container_&]:font-[700] max-[721px]:later:[.unified-toolbar-container_&]:flex-[1_1_100%]`}
           onClick={openCreate}
         >
           <FaUserPlus aria-hidden="true" /> New user
         </button>
       </div>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)]">
         {remote.loading ? <LoadingState /> : !visibleUsers.length ? (
-          <EmptyState label={tab === 'branch' ? 'No branch accounts match this search.' : 'No staff users match this search.'} detail="Clear the search or create a new account." />
+          <EmptyState label={tab === 'branch' ? 'No branch accounts match this search.' : 'No staff users match this search.'} detail="Clear the search or create a new account. Archived users are in Admin settings → Archive." />
         ) : (
-          <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
+          <div className="table-wrap overflow-x-auto">
             <table>
               <thead>
                 <tr>
@@ -318,12 +310,8 @@ export default function Users() {
                 {visibleUsers.map((user) => {
                   const presence = user.presence || {};
                   const isSelf = String(user.id) === String(currentUser?.id);
-                  const online = Boolean(presence.is_online);
-                  const badge = user.account_status === 'suspended'
-                    ? 'suspended'
-                    : online ? 'active' : 'inactive';
-                  // Never signed in yet: show "Invited" in its own (orange) style, not the red InActive one.
-                  const invited = badge === 'inactive' && !presence.last_active;
+                  const badge = accountBadge(user, presence);
+                  const pending = ['invited', 'expired', 'declined'].includes(user.invite_state);
                   return (
                     <tr key={user.id}>
                       <td><strong>{user.full_name}</strong><small>{user.email}</small>{user.user_code && <small>{user.user_code}</small>}</td>
@@ -336,18 +324,13 @@ export default function Users() {
                       )}
                       <td>
                         <span
-                          className={`status-pill min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-line rounded-[999px] text-text-secondary [background:var(--surface-subtle)] text-[8px] font-[720] capitalize whitespace-nowrap [.readable-list_&]:text-[12px] status-${invited ? 'invited' : badge}`}
-                          style={invited ? INVITED_STYLE : undefined}
+                          className={`status-pill min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-line rounded-[999px] text-text-secondary [background:var(--surface-subtle)] text-[8px] font-[720] capitalize whitespace-nowrap status-${badge.key}`}
+                          style={badge.style}
                         >
                           <span className="w-[6px] h-[6px] rounded-[50%] [background:currentColor] [box-shadow:0_0_0_3px_color-mix(in_srgb,_currentColor_11%,_transparent)]" aria-hidden="true" />
-                          {badge === 'active' ? 'Active' : badge === 'suspended' ? 'Suspended' : (presence.last_active ? 'InActive' : 'Invited')}
+                          {badge.label}
                         </span>
-                        {badge === 'suspended' && (
-                          <small>
-                            {user.suspended_from ? formatDate(user.suspended_from) : 'Now'} – {user.suspended_until ? formatDate(user.suspended_until) : 'no end date'}
-                          </small>
-                        )}
-                        {badge === 'inactive' && presence.last_active && <small>Last active {formatDate(presence.last_active, true)}</small>}
+                        {badge.detail && <small>{badge.detail}</small>}
                       </td>
                       <td>
                         {isSelf ? (
@@ -357,10 +340,17 @@ export default function Users() {
                             className="border border-input-line rounded-[11px] later:[outline:none] text-text [background:var(--input-bg)] [transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] hover:border-line-strong later:focus:border-accent focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] focus:[background:var(--input-focus-bg)] w-[min(180px,_100%)] later:min-h-[34px] later:p-[6px_8px] text-[8px]"
                             value=""
                             aria-label={`Update ${user.full_name}`}
-                            onChange={(e) => { if (e.target.value === 'suspend') openSuspend(user); }}
+                            onChange={(e) => onUpdate(user, e.target.value)}
                           >
                             <option value="">Update</option>
-                            <option value="suspend">{user.account_status === 'suspended' ? 'Suspend again' : 'Suspend'}</option>
+                            {pending ? (
+                              <>
+                                <option value="resend">Resend invite</option>
+                                <option value="cancel">Cancel invite</option>
+                              </>
+                            ) : (
+                              <option value="archive">Archive (suspend)</option>
+                            )}
                           </select>
                         )}
                       </td>
@@ -376,23 +366,19 @@ export default function Users() {
 
       {showCreate && (
         <Modal
-          title={isFranchisee ? 'Create branch account' : 'Create user account'}
+          title={isFranchisee ? 'Invite a branch account' : 'Invite a user'}
           onClose={closeCreate}
           footer={(
             <>
               <button type="button" onClick={closeCreate}>Cancel</button>
-              <button
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
-                form="user-form"
-                disabled={saving || Boolean(nameError) || (isFranchisee && !form.applicant_id)}
-              >
-                {saving ? 'Saving…' : 'Create user'}
+              <button className={PRIMARY} form="user-form" disabled={saving || Boolean(nameError) || (isFranchisee && !form.applicant_id)}>
+                {saving ? 'Sending…' : 'Send invite'}
               </button>
             </>
           )}
         >
           <Notice type="error">{actionError}</Notice>
-          <form id="user-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={createUser}>
+          <form id="user-form" className={FORM_GRID} onSubmit={createUser}>
             <Field label="Role" required>
               <select value={form.role} onChange={(e) => changeRole(e.target.value)} aria-label="Role">
                 {CREATE_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
@@ -421,7 +407,7 @@ export default function Users() {
                 <input required value={form.full_name} maxLength={255} autoComplete="off" aria-invalid={Boolean(nameError)} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
               </Field>
             )}
-            <Field label="Email" required>
+            <Field label="Email (their username)" required>
               <input required type="email" maxLength={255} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             </Field>
             <Field label="Phone / Contact" hint="Optional. Exactly 11 digits, e.g. 09123456789.">
@@ -433,69 +419,84 @@ export default function Users() {
               </Field>
             )}
             <p className="col-span-full m-0 text-muted text-[0.8rem]">
-              {isFranchisee
-                ? 'A temporary password will be shown once after the account is created. Share it privately.'
-                : 'An invite link will be emailed to this address. The user sets their own password when they click it.'}
+              An invitation is emailed to this address. They open it, set their own password and accept.
+              {isFranchisee ? ' An Approved applicant becomes Active Franchisee when they accept.' : ''}
             </p>
           </form>
         </Modal>
       )}
 
-      {issued && (
-        <Modal title="Account created" size="small" onClose={() => setIssued(null)} footer={<button type="button" className="primary-button" onClick={() => setIssued(null)}>Done</button>}>
-          <p>{issued.name} · {issued.role}<br /><span>{issued.email}</span></p>
-          {issued.credentials?.method === 'temporary_password' ? (
-            <div>
-              <span>Temporary password (shown only once). No email was sent.</span>
-              <div>
-                <code aria-label="Temporary password">{issued.credentials.temporary_password}</code>
-                <button type="button" onClick={copyPassword}>{copied ? 'Copied' : 'Copy'}</button>
-              </div>
-              <p>{issued.credentials.note}</p>
-            </div>
-          ) : null}
-        </Modal>
-      )}
-
-      {suspendTarget && (
+      {confirmAdmin && (
         <Modal
-          title={`Suspend ${suspendTarget.full_name}`}
-          onClose={() => setSuspendTarget(null)}
+          title="Create another Admin?"
           size="small"
+          onClose={() => setConfirmAdmin(false)}
           footer={(
             <>
-              <button type="button" onClick={() => setSuspendTarget(null)}>Cancel</button>
-              <button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="suspend-form" disabled={suspending}>
-                {suspending ? 'Suspending…' : 'Confirm suspension'}
-              </button>
+              <button type="button" onClick={() => setConfirmAdmin(false)}>Go back</button>
+              <button type="button" className={PRIMARY} disabled={saving} onClick={() => sendInvite(true)}>{saving ? 'Sending…' : 'Yes, invite this Admin'}</button>
             </>
           )}
         >
-          <Notice type="error">{suspendError}</Notice>
-          <p className="muted-note text-muted text-[8px] leading-[1.6]" style={{ marginTop: 0 }}>
-            Pick when the suspension starts and when it ends. The account is blocked as soon as you
-            confirm and returns to Active automatically after the end date; setting it back to Active
-            lifts the suspension early.
-          </p>
-          <form id="suspend-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={confirmSuspend}>
-            <Field label="Start date" required>
-              <input
-                required
-                type="date"
-                value={suspendForm.from}
-                onChange={(e) => setSuspendForm({ ...suspendForm, from: e.target.value })}
-              />
-            </Field>
-            <Field label="End date" required hint="The account returns to Active after this date.">
-              <input
-                required
-                type="date"
-                min={suspendForm.from}
-                value={suspendForm.until}
-                onChange={(e) => setSuspendForm({ ...suspendForm, until: e.target.value })}
-              />
-            </Field>
-          </form>
+          <p className="m-0 text-[14px] leading-[1.6]">You are creating another Admin with full access.</p>
+          <p className="m-[8px_0_0] text-[13px] text-muted">{form.full_name || 'This person'} ({form.email}) will be able to manage every user, applicant, branch and setting. This is recorded in the audit log.</p>
+        </Modal>
+      )}
+
+      {cancelTarget && (
+        <Modal
+          title="Cancel this invitation?"
+          size="small"
+          onClose={() => setCancelTarget(null)}
+          footer={(
+            <>
+              <button type="button" onClick={() => setCancelTarget(null)}>Keep it</button>
+              <button type="button" className={DANGER} disabled={busy} onClick={confirmCancel}>{busy ? 'Cancelling…' : 'Cancel invite'}</button>
+            </>
+          )}
+        >
+          <p className="m-0 text-[14px] leading-[1.6]">The invitation for <strong>{cancelTarget.email}</strong> is removed completely, with its pending sign-in. The email link stops working.</p>
+          <p className="m-[8px_0_0] text-[13px] text-muted">You can invite the same address again later.</p>
+        </Modal>
+      )}
+
+      {archiveTarget && (
+        <Modal
+          title={`Archive ${archiveTarget.full_name}`}
+          onClose={() => setArchiveTarget(null)}
+          size="small"
+          footer={archiveStep === 'warn' ? (
+            <>
+              <button type="button" onClick={() => setArchiveTarget(null)}>Cancel</button>
+              <button type="button" className={PRIMARY} onClick={() => setArchiveStep('form')}>Continue</button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => setArchiveStep('warn')}>Back</button>
+              <button className={DANGER} form="archive-form" disabled={busy}>{busy ? 'Archiving…' : 'Confirm'}</button>
+            </>
+          )}
+        >
+          {archiveStep === 'warn' ? (
+            <p className="m-0 text-[14px] leading-[1.6]">
+              Archiving this user will suspend their account. They won&apos;t be able to sign in until the suspension ends or an Admin restores them.
+            </p>
+          ) : (
+            <>
+              <Notice type="error">{archiveError}</Notice>
+              <form id="archive-form" className={FORM_GRID} onSubmit={confirmArchive}>
+                <Field label="Suspension start" required hint="Now, or a later date and time.">
+                  <input required type="datetime-local" value={archiveForm.from} onChange={(e) => setArchiveForm({ ...archiveForm, from: e.target.value })} />
+                </Field>
+                <Field label="End (optional)" hint="Empty: until an Admin restores them. Restored automatically after this time.">
+                  <input type="datetime-local" min={archiveForm.from} value={archiveForm.until} onChange={(e) => setArchiveForm({ ...archiveForm, until: e.target.value })} />
+                </Field>
+                <Field label="Reason (optional)" full>
+                  <textarea rows={3} maxLength={2000} value={archiveForm.reason} onChange={(e) => setArchiveForm({ ...archiveForm, reason: e.target.value })} placeholder="e.g. On leave, left the company" />
+                </Field>
+              </form>
+            </>
+          )}
         </Modal>
       )}
     </div>

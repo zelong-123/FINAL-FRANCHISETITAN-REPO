@@ -123,6 +123,11 @@ export default function Log() {
             <p className="mt-2.5 mb-0 max-w-[440px] text-[13.5px] leading-[1.65] text-muted short-laptop:text-[13px] short-laptop:leading-[1.55]">Sign in to your secure Franchise workspace and continue managing the franchise network.</p>
           </div>
 
+          {!error && location.state?.successNotice && (
+            <div className="mb-4 flex items-start gap-2.5 rounded-[13px] border border-success/30 bg-success/8 px-3.5 py-3 text-xs leading-normal text-success-text" role="status">
+              <span>{location.state.successNotice}</span>
+            </div>
+          )}
           {error && (
             <div className="mb-4 flex animate-shake-in items-start gap-2.5 rounded-[13px] border border-danger/30 bg-danger/8 px-3.5 py-3 text-xs leading-normal text-danger-text [&>svg]:mt-0.5 [&>svg]:shrink-0" role="alert">
               <FaCircleExclamation /><span>{error}</span>

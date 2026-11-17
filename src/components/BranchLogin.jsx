@@ -65,6 +65,11 @@ export default function BranchLogin() {
           <p className="mt-[9px] mb-0 text-xs leading-[1.55] text-[#929bad]">Sign in to securely manage your assigned branch.</p>
         </header>
 
+        {!error && location.state?.successNotice && (
+          <div className="mt-[22px] flex items-start gap-2.5 rounded-xl border border-[rgba(50,201,151,.3)] bg-[rgba(50,201,151,.08)] px-[13px] py-3 text-[11px] leading-normal text-[#75e2bd]" role="status">
+            <span>{location.state.successNotice}</span>
+          </div>
+        )}
         {error && (
           <div className="mt-[22px] flex items-start gap-2.5 rounded-xl border border-[rgba(245,109,125,.24)] bg-[rgba(245,109,125,.07)] px-[13px] py-3 text-[11px] leading-normal text-[#ffacb5] [&>svg]:mt-0.5 [&>svg]:shrink-0" role="alert">
             <FaCircleExclamation aria-hidden="true" /><span>{error}</span>

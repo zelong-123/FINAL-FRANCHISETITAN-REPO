@@ -394,7 +394,7 @@ const PAYMENT_PANEL_FROM = ['payment_submitted', 'for_approval', 'approved', 'ac
  * the handler key depend on the current stage and on the role permission matrix.
  * A button a role cannot use stays visible but disabled, with a short reason.
  */
-function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, qualificationMissing = [], activationMissing = [], paymentsComplete = false, hasPortalAccount, isAdminRole, isSalesRole }) {
+function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady, qualificationDone, qualificationMissing = [], activationMissing = [], paymentsComplete = false, hasPortalAccount, portalInvitePending = false, isAdminRole, isSalesRole }) {
   const adminOnly = 'Admin action — your role can only view this stage.';
 
   // Sales only gets a "View" button before the Scheduled stage: no actions yet.
@@ -453,6 +453,10 @@ function resolvePrimaryAction({ stage, allAttended, pendingActivities, loiReady,
       }
       if (activationMissing.length) {
         return { label: hasPortalAccount ? 'Mark as Active Franchisee' : 'Create Account', enabled: false, reason: `The signed franchise agreement must be Accepted first. Missing: ${activationMissing.join(', ')}.` };
+      }
+      // The branch account was invited: the applicant becomes Active Franchisee when the franchisee accepts.
+      if (portalInvitePending) {
+        return { label: 'Resend invite', enabled: isAdminRole, reason: isAdminRole ? '' : adminOnly, run: 'resendInvite', note: 'Approved – waiting for franchisee to accept invite' };
       }
       return hasPortalAccount
         ? { label: 'Mark as Active Franchisee', enabled: isAdminRole, reason: isAdminRole ? '' : adminOnly, run: 'activate' }
@@ -3082,6 +3086,19 @@ export default function Applicants() {
   };
 
   /** Activation collects business + location, prefilled from the applicant record. */
+  /** Approved, branch account invited but not accepted yet: send the invitation again. */
+  const resendPortalInvite = async () => {
+    if (!editing?.user?.id) return;
+    setActionError('');
+    setSuccess('');
+    try {
+      const response = await api.post(`/users/${editing.user.id}/resend-invite`);
+      setSuccess(response.message || `Invite email sent to ${editing.user.email}.`);
+    } catch (error) {
+      setActionError(firstValidationMessage(error));
+    }
+  };
+
   const openActivateForm = () => {
     const existing = editing?.franchisee;
     const location = existing?.locations?.[0];
@@ -3258,6 +3275,7 @@ export default function Applicants() {
       isAdminRole,
       isSalesRole,
       hasPortalAccount: Boolean(editing?.has_portal_account),
+      portalInvitePending: ['invited', 'declined'].includes(editing?.user?.account_status),
     })
     : null;
   const showSchedule = Boolean(draft) && (scheduleRevealed || SCHEDULE_VISIBLE_FROM.includes(stage));
@@ -3994,7 +4012,8 @@ export default function Applicants() {
                           preferred_brand_id: editing.preferred_brand_id || null,
                           status: draft.status,
                         } } });
-                      } else if (primary.run === 'activate') openActivateForm();
+                      } else if (primary.run === 'resendInvite') void resendPortalInvite();
+                      else if (primary.run === 'activate') openActivateForm();
                       else if (primary.run === 'completeActivities') void performStageAction('loi');
                       else if (primary.run === 'loiComplete') void completeLoiStage();
                       else if (primary.run === 'approve') setApproveForm({ remarks: '' });
@@ -4005,6 +4024,11 @@ export default function Applicants() {
                   >
                     {primary.label}
                   </button>
+                )}
+                {primary?.note && (
+                  <span className="inline-flex items-center gap-[6px] p-[4px_10px] rounded-[999px] border border-[rgba(251,_146,_60,_0.4)] [background:rgba(251,_146,_60,_0.12)] text-[#fb923c] text-[11px] font-[700]" role="status">
+                    {primary.note}{editing?.user?.account_status === 'declined' ? ' (declined)' : ''}
+                  </span>
                 )}
                 {draft.status === 'loi_submitted' && isAdminRole && (
                   <button type="button" className="min-h-[34px] p-[0_12px] border border-[#3a4256] rounded-[10px] [background:#181d29] text-[#d6dcea] text-[11px] font-[700] [transition:background_.18s_ease,_border-color_.18s_ease] [&:hover:not(:disabled)]:[background:rgba(244,_184,_74,_.16)] [&:hover:not(:disabled)]:border-[rgba(244,_184,_74,_.7)]" disabled={acting} onClick={() => setUndoLoiForm({ remarks: '' })}>
