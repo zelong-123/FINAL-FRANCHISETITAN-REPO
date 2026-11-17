@@ -128,20 +128,26 @@ Rules (`supabase/functions/api/services/followUp.ts`, thresholds in Admin settin
 
 - **Overdue**: 7 or more days in the same stage with no Sales update. A Sales update is a stage move, a
   follow-up, or a requirement, activity or payment submission. **Stalled**: 14 or more days.
+- Also Overdue: a scheduled activity that has passed without being marked complete, until Sales
+  updates the applicant.
 - Not Overdue when an activity is scheduled in the future, or when the latest follow-up's next action
   date has not passed yet.
-- **Waiting on Admin** (blue) when something waits for Admin: a submitted requirement (LOI, Proposed site …),
-  an activity awaiting approval or attendance, a payment entry For verification, or For approval. It
-  counts against Admin, not Sales.
+- Not counted at all while something waits for Admin review: a submitted requirement (LOI, Proposed
+  site …), an activity awaiting approval or attendance, a payment entry For verification, or For
+  approval. Requirement rows that are no longer in the requirement config (e.g. business_background)
+  are ignored.
 - **On hold** (Admin, with a reason and an end date) pauses the timer and shows "On hold until …".
 - Not followed up: Approved (waiting for the franchisee to accept the invite), Active Franchisee,
   Rejected, archived.
 
 Actions:
 
-- **Admin**: click the Overdue/Stalled chip (list or applicant modal) → **Send reminder** (an in-app
-  notification to the assigned Sales user, at most one per applicant per 24 hours). At Stalled:
-  Reassign Sales (the existing reassign), Put on hold / Release, and Close (archives with a reason).
+- The chip (Overdue · 12d, Stalled · 15d, Reminder sent / Reminder from Admin, On hold) shows in the
+  pipeline row and next to "days in the current stage"; clicking it goes to the applicant's
+  **Follow-up** section (summary, buttons and the whole log in one place).
+- **Admin**: **Send reminder** (an in-app notification to the assigned Sales user, at most one per
+  applicant per 24 hours). At Stalled: Reassign Sales (the existing reassign), Put on hold / Release,
+  and Close (archives with a reason).
 - **Sales**: **Log follow-up** on an Overdue/Stalled applicant (reason, note, next action date). It
   clears Overdue until that date and notifies Admin. The Sales dashboard has **Needs attention**, and
   their Overdue/Stalled applicants are pinned at the top of the pipeline.

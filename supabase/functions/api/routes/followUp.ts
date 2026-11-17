@@ -63,7 +63,7 @@ followUpRoutes.get('/applicants/needs-attention', staff, async (c) => {
   return ok(c, rows.map((r) => ({ id: r.id, full_name: r.full_name, applicant_code: r.applicant_code, status: r.status, status_label: stageLabel(r.status), follow_up: followUpView(r) })));
 });
 
-/** Executive dashboard: Overdue / Stalled / Waiting on Admin per Sales user (plus unassigned). */
+/** Executive dashboard: Overdue / Stalled / On hold per Sales user (plus unassigned). */
 followUpRoutes.get('/applicants/follow-up-by-sales', admin, async (c) => {
   const { db } = c.get('deps');
   const counts = await db.query(
@@ -75,7 +75,7 @@ followUpRoutes.get('/applicants/follow-up-by-sales', admin, async (c) => {
     `select u.id, u.full_name from users u join roles r on r.id = u.role_id
      where r.name = 'sales' and u.account_status = 'active' and u.archived_at is null order by u.full_name`,
   );
-  const rows = sales.map((u) => ({ sales_user_id: u.id, full_name: u.full_name, overdue: 0, stalled: 0, waiting_admin: 0, on_hold: 0 }));
+  const rows = sales.map((u) => ({ sales_user_id: u.id, full_name: u.full_name, overdue: 0, stalled: 0, on_hold: 0 }));
   const byId = new Map(rows.map((r) => [String(r.sales_user_id), r]));
   let unassigned: Row | null = null;
   for (const c2 of counts) {
@@ -83,11 +83,11 @@ followUpRoutes.get('/applicants/follow-up-by-sales', admin, async (c) => {
     if (!target) {
       if (c2.sales_id) {
         const [u] = await db.query(`select id, full_name from users where id = $1`, [c2.sales_id]);
-        target = { sales_user_id: c2.sales_id, full_name: u?.full_name ?? 'Former Sales user', overdue: 0, stalled: 0, waiting_admin: 0, on_hold: 0 };
+        target = { sales_user_id: c2.sales_id, full_name: u?.full_name ?? 'Former Sales user', overdue: 0, stalled: 0, on_hold: 0 };
         byId.set(String(c2.sales_id), target);
         rows.push(target);
       } else {
-        unassigned ??= { sales_user_id: null, full_name: 'Unassigned', overdue: 0, stalled: 0, waiting_admin: 0, on_hold: 0 };
+        unassigned ??= { sales_user_id: null, full_name: 'Unassigned', overdue: 0, stalled: 0, on_hold: 0 };
         target = unassigned;
       }
     }

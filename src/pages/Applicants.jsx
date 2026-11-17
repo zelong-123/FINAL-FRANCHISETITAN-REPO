@@ -15,8 +15,8 @@ import {
 } from '../lib/api';
 import { downloadCsv, downloadPdf } from '../lib/export';
 import FollowUpLog from '../components/FollowUpLog';
-import { FollowUpCard, FollowUpChip, FollowUpDialogs } from '../components/applicants/FollowUp';
-import { FOLLOW_UP_FILTER_PREFIX, FOLLOW_UP_STATES, splitStatusFilter } from '../lib/followUpState';
+import { FollowUpChip, FollowUpDialogs, FollowUpSummary } from '../components/applicants/FollowUp';
+import { FOLLOW_UP_FILTER_PREFIX, FOLLOW_UP_SECTION_ID, FOLLOW_UP_STATES, splitStatusFilter } from '../lib/followUpState';
 import ApplicationDetailReport from '../components/applicants/ApplicationDetailReport';
 import useRemote from '../lib/useRemote';
 import {
@@ -2570,6 +2570,30 @@ export default function Applicants() {
   const isAdminRole = can(role, 'applicants.transition');
   // Only the assigned Sales user acts for an applicant (the API enforces the same).
   const isAssignedSales = isSalesRole && Boolean(editing?.assigned_sales_user_id) && Number(editing.assigned_sales_user_id) === Number(user?.id);
+  // A follow-up chip leads to the applicant's Follow-up section: scroll there smoothly and highlight it.
+  const [followUpFlash, setFollowUpFlash] = useState(false);
+  const pendingFollowUpJump = useRef(false);
+  const goToFollowUp = () => {
+    const section = document.getElementById(FOLLOW_UP_SECTION_ID);
+    if (!section) return false;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    section.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    section.focus({ preventScroll: true });
+    setFollowUpFlash(true);
+    window.setTimeout(() => setFollowUpFlash(false), 1600);
+    return true;
+  };
+  /** From the pipeline row (or the dashboard): open the applicant, then go to its Follow-up section. */
+  const openAtFollowUp = (applicant) => {
+    pendingFollowUpJump.current = true;
+    if (editing && Number(editing.id) === Number(applicant.id)) goToFollowUp();
+    else void loadApplicant(applicant.id, applicant.status);
+  };
+  useEffect(() => {
+    if (!pendingFollowUpJump.current || !editing) return undefined;
+    const timer = window.setTimeout(() => { if (goToFollowUp()) pendingFollowUpJump.current = false; }, 120);
+    return () => window.clearTimeout(timer);
+  }, [editing]);
 
   // Save is enabled only when the draft differs from the loaded record.
   const hasChanges = Boolean(draft && baseline && JSON.stringify(draft) !== baseline);
@@ -3546,6 +3570,7 @@ export default function Applicants() {
   useEffect(() => {
     const focusTab = location.state?.focusTab;
     const focusId = location.state?.focusApplicantId;
+    if (location.state?.focusFollowUp) pendingFollowUpJump.current = true;
     if (!focusTab && !focusId) return undefined;
     const tabQuery = focusTab && focusTab !== 'pipeline' ? `?tab=${focusTab}` : '';
     navigate(`${location.pathname}${tabQuery}`, { replace: true, state: null });
@@ -3831,7 +3856,7 @@ export default function Applicants() {
                           <small className="block text-[#9aa6c4]">
                             {applicant.days_in_stage} day{applicant.days_in_stage === 1 ? '' : 's'} in stage
                             {applicant.follow_up ? (
-                              <FollowUpChip followUp={applicant.follow_up} className="ml-[6px]" canRemind={isAdminRole} onRemind={() => setFollowUpAction({ kind: 'remind', applicant })} />
+                              <FollowUpChip followUp={applicant.follow_up} role={role} className="ml-[6px]" onOpen={() => openAtFollowUp(applicant)} />
                             ) : applicant.overdue && (
                               <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_92,_102,_.6)] text-[#ff5c66] text-[11px] font-normal" title={`More than ${applicant.overdue_after_days} days in this stage`}>Overdue</span>
                             )}
@@ -4000,21 +4025,10 @@ export default function Applicants() {
                 <p className="m-[0_0_10px] text-[14px] text-[#9aa6c4]">
                   {editing.days_in_stage} day{editing.days_in_stage === 1 ? '' : 's'} in the current stage
                   {editing.follow_up ? (
-                    <FollowUpChip followUp={editing.follow_up} className="ml-2" canRemind={isAdminRole} onRemind={() => setFollowUpAction({ kind: 'remind', applicant: editing })} />
+                    <FollowUpChip followUp={editing.follow_up} role={role} className="ml-2" onOpen={goToFollowUp} />
                   ) : editing.overdue && <span className="ml-2 font-normal text-[#ff5c66]">Overdue (more than {editing.overdue_after_days} days)</span>}
                 </p>
               )}
-              <FollowUpCard
-                applicant={editing}
-                isAdmin={isAdminRole}
-                isAssignedSales={isAssignedSales}
-                busy={acting}
-                onAction={(kind) => {
-                  if (kind === 'reassign') void openAssign();
-                  else if (kind === 'release') void runRequest(() => api.post(`/applicants/${editing.id}/hold/release`), 'Hold released.');
-                  else setFollowUpAction({ kind, applicant: editing });
-                }}
-              />
               {/* Display-only tracker: no click-to-check, the API owns every move. */}
               <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} scheduleHalves={scheduleHalves} />
 
@@ -4203,6 +4217,24 @@ export default function Applicants() {
               <FollowUpLog
                 items={editing.follow_ups || []}
                 events={editing.follow_up_events || []}
+                title="Follow-up"
+                id={FOLLOW_UP_SECTION_ID}
+                highlight={followUpFlash}
+                addLabel={isAssignedSales && ['overdue', 'stalled'].includes(editing.follow_up?.state) ? 'Log contact attempt' : 'Log follow-up'}
+                summary={(
+                  <FollowUpSummary
+                    applicant={editing}
+                    role={role}
+                    isAdmin={isAdminRole}
+                    isAssignedSales={isAssignedSales}
+                    busy={acting}
+                    onAction={(kind) => {
+                      if (kind === 'reassign') void openAssign();
+                      else if (kind === 'release') void runRequest(() => api.post(`/applicants/${editing.id}/hold/release`), 'Hold released.');
+                      else setFollowUpAction({ kind, applicant: editing });
+                    }}
+                  />
+                )}
                 canAdd={isAssignedSales && !editing.archived_at}
                 busy={acting}
                 onAdd={logApplicantFollowUp}

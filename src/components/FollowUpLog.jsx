@@ -32,7 +32,14 @@ function EventEntry({ event }) {
   );
 }
 
-export default function FollowUpLog({ items = [], events = [], canAdd = false, busy = false, onAdd, title = 'Follow-up log', surfaceClass = '[background:#141a28]' }) {
+/**
+ * Applicant extras (all optional; inquiries pass none and render exactly as before): `id` and `highlight`
+ * for the chip's jump-to-section, `summary` shown at the top, `addLabel` for the contact-form button.
+ */
+export default function FollowUpLog({
+  items = [], events = [], canAdd = false, busy = false, onAdd, title = 'Follow-up log', surfaceClass = '[background:#141a28]',
+  id, highlight = false, summary = null, addLabel = 'Log follow-up',
+}) {
   // Without events the list is exactly the follow-ups, in their own order (as before).
   const entries = events.length
     ? [...items.map((item) => ({ type: 'follow_up', at: item.created_at || item.contacted_at, item })), ...events.map((event) => ({ type: 'event', at: event.created_at, item: event }))]
@@ -56,11 +63,16 @@ export default function FollowUpLog({ items = [], events = [], canAdd = false, b
     setOpen(false);
   };
   return (
-    <section className={`ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] ${surfaceClass} light:[background:var(--panel)] light:border-line text-[14px] leading-[1.5] text-[#c9d0e0] light:text-text-secondary`}>
+    <section
+      id={id}
+      tabIndex={id ? -1 : undefined}
+      className={`ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] ${surfaceClass} light:[background:var(--panel)] light:border-line text-[14px] leading-[1.5] text-[#c9d0e0] light:text-text-secondary [transition:box-shadow_.4s_ease,_border-color_.4s_ease] focus:[outline:none] ${highlight ? 'border-[#7b88ff] [box-shadow:0_0_0_3px_rgba(123,136,255,.35)] light:border-accent' : ''}`}
+    >
       <div className="flex items-center justify-between gap-3">
         <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa] light:text-text">{title}</h3>
         <small className="text-[#9ba5bd] light:text-muted">{entries.length} logged</small>
       </div>
+      {summary}
       {!entries.length && <p className="m-[8px_0_0] text-muted">No follow-up logged yet.</p>}
       {entries.length > 0 && (
         <ul className="m-[10px_0_0] p-0 [list-style:none] grid gap-2">
@@ -79,7 +91,7 @@ export default function FollowUpLog({ items = [], events = [], canAdd = false, b
           )))}
         </ul>
       )}
-      {canAdd && !open && <button type="button" className="mt-3 min-h-[32px] p-[0_16px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] light:bg-white light:text-text-secondary light:border-line-strong text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] light:hover:bg-[#f1f4fb] disabled:opacity-50" disabled={busy} onClick={start}>Log follow-up</button>}
+      {canAdd && !open && <button type="button" className="mt-3 min-h-[32px] p-[0_16px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] light:bg-white light:text-text-secondary light:border-line-strong text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] light:hover:bg-[#f1f4fb] disabled:opacity-50" disabled={busy} onClick={start}>{addLabel}</button>}
       {canAdd && form && (
         <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`} aria-hidden={!open}>
         <div className="min-h-0 overflow-hidden">

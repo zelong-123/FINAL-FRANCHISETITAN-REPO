@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FaBell, FaCircleCheck, FaClock, FaHourglassHalf, FaPause, FaTriangleExclamation, FaXmark } from 'react-icons/fa6';
+import { FaBell, FaClock, FaPause, FaTriangleExclamation, FaXmark } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../../lib/api';
 import { manilaDateTimeLabel } from '../../lib/format';
 import {
@@ -12,110 +12,100 @@ import {
 
 const TONES = {
   overdue: 'text-[#fb923c] border-[rgba(251,146,60,.45)] [background:rgba(251,146,60,.12)] light:text-[#c2410c] light:border-[rgba(194,65,12,.4)] light:[background:rgba(251,146,60,.14)]',
+  reminded: 'text-[#fbbf24] border-[rgba(251,191,36,.5)] [background:rgba(251,191,36,.12)] light:text-[#a16207] light:border-[rgba(161,98,7,.4)] light:[background:rgba(251,191,36,.16)]',
   stalled: 'text-[#f87171] border-[rgba(248,113,113,.5)] [background:rgba(248,113,113,.12)] light:text-[#b91c1c] light:border-[rgba(185,28,28,.4)] light:[background:rgba(248,113,113,.14)]',
-  waiting: 'text-[#60a5fa] border-[rgba(96,165,250,.45)] [background:rgba(96,165,250,.12)] light:text-[#1d4ed8] light:border-[rgba(29,78,216,.35)] light:[background:rgba(96,165,250,.14)]',
   hold: 'text-[#a3adc2] border-[rgba(163,173,194,.45)] [background:rgba(163,173,194,.12)] light:text-[#475569] light:border-[rgba(71,85,105,.35)] light:[background:rgba(148,163,184,.16)]',
 };
-const ICONS = { overdue: FaClock, stalled: FaTriangleExclamation, waiting: FaHourglassHalf, hold: FaPause };
-const CHIP = 'inline-flex items-center gap-[5px] p-[1px_8px] rounded-[999px] border text-[11px] font-[600] leading-[18px] whitespace-nowrap align-middle';
+const ICONS = { clock: FaClock, warning: FaTriangleExclamation, bell: FaBell, pause: FaPause };
+// The same size and shape as the stage status chips (ApiUi StatusBadge), without their status colors.
+const CHIP = 'min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border rounded-[999px] text-[8px] font-[720] whitespace-nowrap align-middle [.readable-list_&]:text-[12px]';
 
 /**
- * The follow-up chip. For Admin, Overdue/Stalled is a button ("Remind") that opens Send reminder; otherwise a
- * static chip. The reason is the tooltip (title) and is read out by screen readers.
+ * The follow-up chip: Overdue, Stalled, Reminder sent / Reminder from Admin, On hold — nothing otherwise.
+ * With onOpen it is a button: click or Enter goes to the applicant's Follow-up section.
  */
-export function FollowUpChip({ followUp, canRemind = false, onRemind, className = '' }) {
+export function FollowUpChip({ followUp, role = 'admin', onOpen, className = '' }) {
   const describedBy = useId();
-  const chip = followUpChip(followUp);
+  const chip = followUpChip(followUp, role);
   if (!chip) return null;
-  const Icon = ICONS[chip.tone];
+  const Icon = ICONS[chip.icon];
   const body = (
     <>
-      <Icon aria-hidden="true" className="text-[10px]" />
+      <Icon aria-hidden="true" className="text-[1em] flex-none" />
       <span>{chip.text}</span>
+      <span id={describedBy} className="sr-only">{chip.tooltip}</span>
     </>
   );
-  if (canRemind && chip.remindable && onRemind) {
+  if (onOpen) {
     return (
       <button
         type="button"
         className={`${CHIP} ${TONES[chip.tone]} cursor-pointer [transition:filter_.15s_ease,_box-shadow_.15s_ease] hover:[filter:brightness(1.18)] hover:[box-shadow:0_0_0_3px_color-mix(in_srgb,_currentColor_16%,_transparent)] focus-visible:[outline:2px_solid_currentColor] focus-visible:[outline-offset:2px] ${className}`}
-        title={`${chip.tooltip} — click to send a reminder`}
+        title={`${chip.tooltip} — open the Follow-up section`}
         aria-describedby={describedBy}
-        onClick={(event) => { event.stopPropagation(); onRemind(); }}
+        onClick={(event) => { event.stopPropagation(); onOpen(); }}
       >
         {body}
-        <span className="inline-flex items-center gap-[3px] ml-[2px] pl-[6px] border-l border-l-[color-mix(in_srgb,_currentColor_35%,_transparent)]"><FaBell aria-hidden="true" className="text-[9px]" />Remind</span>
-        <span id={describedBy} className="sr-only">{chip.tooltip}</span>
       </button>
     );
   }
-  return (
-    <span className={`${CHIP} ${TONES[chip.tone]} ${className}`} title={chip.tooltip} tabIndex={0} aria-describedby={describedBy}>
-      {body}
-      <span id={describedBy} className="sr-only">{chip.tooltip}</span>
-    </span>
-  );
+  return <span className={`${CHIP} ${TONES[chip.tone]} ${className}`} title={chip.tooltip} aria-describedby={describedBy}>{body}</span>;
 }
 
-const BUTTON = 'min-h-[34px] inline-flex items-center justify-center gap-[6px] p-[0_12px] border border-[#3a4256] rounded-[9px] [background:#121826] text-[#d6dcea] text-[13px] font-[650] cursor-pointer hover:border-[#5a6480] hover:[background:#1a2133] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px] light:[background:var(--panel)] light:border-line light:text-text light:hover:[background:var(--hover)]';
-const PRIMARY = 'min-h-[34px] inline-flex items-center justify-center gap-[6px] p-[0_14px] border border-transparent rounded-[9px] text-[#fff] text-[13px] font-[700] cursor-pointer [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px]';
+const BUTTON = 'min-h-[32px] inline-flex items-center justify-center gap-[6px] p-[0_12px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px] light:bg-white light:text-text-secondary light:border-line-strong light:hover:bg-[#f1f4fb]';
+const PRIMARY = 'min-h-[32px] inline-flex items-center justify-center gap-[6px] p-[0_14px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] cursor-pointer [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:[outline:2px_solid_#8175ff] focus-visible:[outline-offset:2px]';
+const dateOnly = (value) => manilaDateTimeLabel(value).replace(/,? \d+:\d+.*$/, '');
 
 /**
- * The compact Follow-up card in the applicant modal: current state, last reminder, last follow-up and the
- * actions for the role. Hidden for stages that are not followed up (Approved, Active Franchisee, Rejected).
+ * The top of the applicant's Follow-up section: state chip, why, last reminder, last follow-up, next
+ * action date, hold, and the role's buttons. The log entries and the contact form follow it (FollowUpLog).
  */
-export function FollowUpCard({ applicant, isAdmin, isAssignedSales, busy, onAction }) {
+export function FollowUpSummary({ applicant, role, isAdmin, isAssignedSales, busy, onAction }) {
   const fu = applicant?.follow_up;
-  if (!fu || applicant.archived_at || ['approved', 'active_franchisee', 'rejected'].includes(applicant.status)) return null;
+  if (!fu) return null;
   const state = fu.state;
-  const remindable = state === 'overdue' || state === 'stalled';
+  const late = state === 'overdue' || state === 'stalled';
   const lastFollowUp = fu.last_follow_up;
   const nextReminder = fu.next_reminder_at;
+  const nextAction = fu.next_action_at && new Date(fu.next_action_at) > new Date() ? fu.next_action_at : null;
+  const rows = [
+    state && fu.tooltip ? ['Why', fu.tooltip] : null,
+    fu.last_reminder ? ['Last reminder', `Reminder sent by ${fu.last_reminder.by || 'Admin'} · ${manilaDateTimeLabel(fu.last_reminder.at)}`] : null,
+    lastFollowUp ? ['Last follow-up', [
+      lastFollowUp.kind === 'overdue' ? reasonLabel(lastFollowUp.reason) : 'Contact logged',
+      lastFollowUp.notes || null,
+      lastFollowUp.by ? `by ${lastFollowUp.by}` : null,
+    ].filter(Boolean).join(' · ')] : null,
+    nextAction ? ['Next action date', dateOnly(nextAction)] : null,
+    fu.hold ? ['On hold', `until ${dateOnly(fu.hold.until)}${fu.hold.reason ? ` · ${fu.hold.reason}` : ''}`] : null,
+  ].filter(Boolean);
+  const adminButtons = isAdmin && (late || state === 'on_hold');
+  const salesButton = isAssignedSales && late;
+  if (!state && !rows.length) return null;
   return (
-    <section className="m-[0_0_14px] p-[12px_14px] border border-[#2a3041] rounded-[12px] [background:#0C111D] light:[background:var(--panel)] light:border-line text-[13.5px] leading-[1.5] text-[#c9d0e0] light:text-text-secondary" aria-label="Follow-up">
-      <div className="flex flex-wrap items-center justify-between gap-[8px]">
-        <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa] light:text-text">Follow-up</h3>
-        {state ? <FollowUpChip followUp={fu} /> : (
-          <span className={`${CHIP} text-[#4ade80] border-[rgba(74,222,128,.4)] [background:rgba(74,222,128,.1)] light:text-[#15803d] light:border-[rgba(21,128,61,.35)]`}>
-            <FaCircleCheck aria-hidden="true" className="text-[10px]" />On track
-          </span>
-        )}
-      </div>
-      {fu.tooltip && <p className="m-[6px_0_0]">{fu.tooltip}</p>}
-      {!state && fu.upcoming_activity_at && <p className="m-[6px_0_0] text-[#9aa6c4] light:text-muted">Next scheduled activity: {manilaDateTimeLabel(fu.upcoming_activity_at)}</p>}
-      {!state && fu.next_action_at && new Date(fu.next_action_at) > new Date() && <p className="m-[6px_0_0] text-[#9aa6c4] light:text-muted">Next action date: {manilaDateTimeLabel(fu.next_action_at).replace(/,? \d+:\d+.*$/, '')}</p>}
-      <dl className="grid gap-[4px] m-[8px_0_0] text-[12.5px] [&_dt]:inline [&_dt]:text-[#8f9bbd] light:[&_dt]:text-muted [&_dd]:inline [&_dd]:m-0">
-        <div><dt>Last reminder: </dt><dd>{fu.last_reminder ? `Reminder sent by ${fu.last_reminder.by || 'Admin'} · ${manilaDateTimeLabel(fu.last_reminder.at)}` : 'None yet'}</dd></div>
-        <div>
-          <dt>Last follow-up: </dt>
-          <dd>
-            {lastFollowUp ? (
-              <>
-                {lastFollowUp.kind === 'overdue' ? reasonLabel(lastFollowUp.reason) : 'Contact logged'}
-                {lastFollowUp.notes ? ` — ${lastFollowUp.notes}` : ''}
-                {lastFollowUp.next_action_at ? ` · Next action ${manilaDateTimeLabel(lastFollowUp.next_action_at).replace(/,? \d+:\d+.*$/, '')}` : ''}
-                {lastFollowUp.by ? ` · by ${lastFollowUp.by}` : ''}
-              </>
-            ) : 'None yet'}
-          </dd>
-        </div>
-      </dl>
-      {(isAdmin || (isAssignedSales && remindable)) && (
-        <div className="flex flex-wrap items-center gap-[8px] mt-[10px]">
-          {isAdmin && remindable && (
+    <div className="grid gap-[8px] m-[10px_0_0] p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] light:border-line light:[background:var(--panel-2)]">
+      {state && <span><FollowUpChip followUp={fu} role={role} /></span>}
+      {rows.length > 0 && (
+        <dl className="grid gap-[3px] m-0 text-[13px] [&_dt]:inline [&_dt]:text-[#8f9bbd] light:[&_dt]:text-muted [&_dd]:inline [&_dd]:m-0">
+          {rows.map(([label, text]) => <div key={label}><dt>{label}: </dt><dd>{text}</dd></div>)}
+        </dl>
+      )}
+      {(adminButtons || salesButton) && (
+        <div className="flex flex-wrap items-center gap-[8px]">
+          {isAdmin && late && (
             <button type="button" className={PRIMARY} disabled={busy || Boolean(nextReminder)} onClick={() => onAction('remind')} title={nextReminder ? `Next reminder available at ${manilaDateTimeLabel(nextReminder)}` : undefined}>
               <FaBell aria-hidden="true" />Send reminder
             </button>
           )}
-          {isAdmin && remindable && nextReminder && <small className="text-[#9aa6c4] light:text-muted">Next reminder available at {manilaDateTimeLabel(nextReminder)}</small>}
-          {isAdmin && state === 'stalled' && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('reassign')}>Reassign Sales</button>}
-          {isAdmin && remindable && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('hold')}><FaPause aria-hidden="true" />Put on hold</button>}
+          {isAdmin && late && nextReminder && <small className="text-[#8f9bbd] light:text-muted">Next reminder available at {manilaDateTimeLabel(nextReminder)}</small>}
+          {isAdmin && late && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('hold')}><FaPause aria-hidden="true" />Put on hold</button>}
           {isAdmin && state === 'on_hold' && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('release')}>Release hold</button>}
+          {isAdmin && state === 'stalled' && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('reassign')}>Reassign Sales</button>}
           {isAdmin && state === 'stalled' && <button type="button" className={BUTTON} disabled={busy} onClick={() => onAction('close')}>Close / Archive…</button>}
-          {isAssignedSales && remindable && <button type="button" className={PRIMARY} disabled={busy} onClick={() => onAction('log')}>Log follow-up</button>}
+          {salesButton && <button type="button" className={PRIMARY} disabled={busy} onClick={() => onAction('log')}>Log follow-up</button>}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -174,12 +164,12 @@ const DIALOG_SECONDARY = 'min-h-[36px] p-[0_14px] border border-line rounded-[9p
 const FieldError = ({ id, children }) => (children ? <small id={id} className="text-danger-text text-[12.5px] font-[600]" role="alert">{children}</small> : null);
 const ErrorBox = ({ children }) => (children ? <p className="m-0 p-[9px_12px] rounded-[10px] border border-[rgba(248,113,113,.4)] [background:rgba(248,113,113,.1)] text-danger-text text-[13px]" role="alert">{children}</p> : null);
 
-function Summary({ applicant, followUp }) {
+function Summary({ applicant, followUp, role = 'admin' }) {
   return (
     <div className="grid gap-[4px] p-[10px_12px] border border-line rounded-[12px] [background:var(--surface-subtle)]">
       <div className="flex flex-wrap items-center justify-between gap-[8px]">
         <strong className="text-text text-[15px]">{applicant.full_name}{applicant.applicant_code ? <span className="ml-[6px] text-muted text-[12.5px] font-[600]">{applicant.applicant_code}</span> : null}</strong>
-        <FollowUpChip followUp={followUp} />
+        <FollowUpChip followUp={followUp} role={role} />
       </div>
       <span className="text-[13px]">Stage: <strong className="text-text">{followUp?.stage_label || applicant.status_label || applicant.status}</strong></span>
       <span className="text-[13px]">Last update: {followUp?.last_update?.at ? `${manilaDateTimeLabel(followUp.last_update.at)}${followUp.last_update.by ? ` by ${followUp.last_update.by}` : ''}` : 'none recorded'}</span>
@@ -277,7 +267,7 @@ function LogFollowUpDialog({ applicant, onClose, onDone }) {
         </>
       )}
     >
-      <Summary applicant={applicant} followUp={applicant.follow_up} />
+      <Summary applicant={applicant} followUp={applicant.follow_up} role="sales" />
       <label className={LABEL}>
         Reason
         <select className={INPUT} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} aria-invalid={Boolean(show('reason'))} aria-describedby="fu-reason-error">
