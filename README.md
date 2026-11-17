@@ -149,8 +149,13 @@ Actions:
   applicant per 24 hours). At Stalled: Reassign Sales (the existing reassign), Put on hold / Release,
   and Close (archives with a reason).
 - **Sales**: **Log follow-up** on an Overdue/Stalled applicant (reason, note, next action date). It
-  clears Overdue until that date and notifies Admin. The Sales dashboard has **Needs attention**, and
-  their Overdue/Stalled applicants are pinned at the top of the pipeline.
+  clears Overdue until that date and notifies Admin. Their Overdue/Stalled applicants are pinned at the
+  top of the pipeline.
+- **Notification bell** (Admin and Sales): two tabs. **Notifications** has everything that is not about
+  follow-up (Mark all read, unread count). **Follow-ups** lists Sales' own Overdue/Stalled/On hold
+  applicants (with Log follow-up) or, for Admin, every Overdue/Stalled applicant with its Sales user (with
+  Send reminder) and the recent "Follow-up logged" entries; items disappear once resolved. While there are
+  follow-up items the bell shows the count and shakes briefly every 12 seconds (not with reduced motion).
 - **Automatic alerts**: entering Overdue notifies the assigned Sales user; entering Stalled notifies the
   Admins. Each is sent once per episode. The check runs (throttled to every 5 minutes) when the bell or
   the applicant list loads, so no scheduled job is needed.

@@ -99,7 +99,6 @@ export const DASHBOARD_PANELS = {
     'transactions',
   ],
   sales: [
-    'needsAttention',
     'kpi',
     'dateFilter',
     'salesTrend',

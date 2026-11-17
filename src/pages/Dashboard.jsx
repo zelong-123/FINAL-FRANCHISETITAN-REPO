@@ -31,7 +31,7 @@ import {
   SupplyStageTracker,
   TopBranchesBars,
 } from '../components/dashboard/Charts';
-import { FollowUpBySalesTable, NeedsAttentionList } from '../components/dashboard/FollowUpPanels';
+import { FollowUpBySalesTable } from '../components/dashboard/FollowUpPanels';
 
 /* ------------------------------------------------------------------ */
 /* Shared building blocks                                              */
@@ -828,8 +828,6 @@ function DashboardBody({ role, panels }) {
             )}
           </div>
         );
-      case 'needsAttention':
-        return <PanelShell key="needsAttention" title="Needs attention" subtitle="Your Overdue and Stalled applicants, most days first"><NeedsAttentionList /></PanelShell>;
       case 'followUpBySales':
         return <PanelShell key="followUpBySales" title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user"><FollowUpBySalesTable /></PanelShell>;
       case 'kpi':

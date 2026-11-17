@@ -320,3 +320,28 @@ test('Close: Admin only, needs a reason, archives with the reason (existing arch
   assert.equal((await call('POST', `/applicants/${other}/assign-sales`, { token: sales, body: { assigned_sales_user_id: otherSalesUser.id, reason: 'Workload' } })).status, 403);
   assert.equal((await call('POST', `/applicants/${other}/assign-sales`, { token: admin, body: { assigned_sales_user_id: otherSalesUser.id, reason: 'Workload balancing' } })).status, 200);
 });
+
+test('bell: notifications split into general and follow-up (scope), read-all per scope; Follow-ups list per role', async () => {
+  const id = await applicant(9);
+  await call('POST', `/applicants/${id}/reminders`, { token: admin, body: { message: 'Please call them today.' } });
+  await q(`insert into system_notifications (user_id, type, title, message, data) values ($1, 'applicant_assigned', 'Applicant assigned to you', 'General one', $2)`, [salesUser.id, JSON.stringify({ applicant_id: id })]);
+  const types = async (scope: string, extra = '') => ((await call('GET', `/notifications?per_page=200&scope=${scope}${extra}`, { token: sales })).json.data as any[]).map((n) => n.type);
+  const general = await types('general');
+  const followUps = await types('follow_up');
+  assert.ok(general.includes('applicant_assigned') && !general.includes('applicant_reminder'), 'reminders are not general');
+  assert.ok(followUps.includes('applicant_reminder') && !followUps.includes('applicant_assigned'));
+  assert.equal((await call('GET', '/notifications?per_page=200', { token: sales })).json.data.length >= general.length + followUps.length, true, 'no scope: everything, as before');
+  assert.equal((await call('PATCH', '/notifications/read-all?scope=general', { token: sales })).status, 200);
+  assert.equal((await types('general', '&unread_only=1')).length, 0);
+  assert.ok((await types('follow_up', '&unread_only=1')).length > 0, 'follow-up items stay unread');
+
+  // Sales: own Overdue / Stalled / On hold; Admin: every Overdue / Stalled with the Sales name.
+  const held = await applicant(9);
+  await call('POST', `/applicants/${held}/hold`, { token: admin, body: { reason: 'Applicant abroad for now', until: manilaDay(5) } });
+  const mine = (await call('GET', '/applicants/needs-attention', { token: sales })).json.data as any[];
+  assert.ok(mine.some((r) => r.id === held && r.follow_up.state === 'on_hold'), 'Sales sees their On hold applicants');
+  assert.equal(mine[mine.length - 1].follow_up.state, 'on_hold', 'On hold after the late ones');
+  const all = (await call('GET', '/applicants/needs-attention', { token: admin })).json.data as any[];
+  assert.ok(!all.some((r) => r.follow_up.state === 'on_hold'), 'Admin: Overdue / Stalled only');
+  assert.equal(all.find((r) => r.id === id).assigned_sales.full_name, salesUser.full_name);
+});

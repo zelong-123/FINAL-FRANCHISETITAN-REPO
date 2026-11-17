@@ -48,19 +48,29 @@ const fresh = async (db: Db, id: number) => {
 
 // ---- lists ----
 
-/** Sales: their Overdue / Stalled applicants, the most days first ("Needs attention"). Admin may pass sales_user_id. */
+/**
+ * The bell's Follow-ups tab. Sales: their own Overdue / Stalled / On hold applicants. Admin: every Overdue /
+ * Stalled applicant (or one Sales user's with sales_user_id), with the assigned Sales name. Most days first.
+ */
 followUpRoutes.get('/applicants/needs-attention', staff, async (c) => {
   const { db } = c.get('deps');
   const user = c.get('user');
-  const salesId = roleName(c) === 'sales' ? user.id : (c.req.query('sales_user_id') ? Number(c.req.query('sales_user_id')) : null);
+  const isSales = roleName(c) === 'sales';
+  const salesId = isSales ? user.id : (c.req.query('sales_user_id') ? Number(c.req.query('sales_user_id')) : null);
+  const states = isSales ? ['overdue', 'stalled', 'on_hold'] : ['overdue', 'stalled'];
   const rows = await db.query(
-    `select a.id, a.full_name, a.applicant_code, a.status, a.assigned_sales_user_id, a.on_hold_until, a.on_hold_reason, a.on_hold_at, ${FOLLOW_UP_COLUMNS}
+    `select a.id, a.full_name, a.applicant_code, a.status, a.assigned_sales_user_id, a.on_hold_until, a.on_hold_reason, a.on_hold_at,
+       (select u.full_name from users u where u.id = a.assigned_sales_user_id) as assigned_sales_name, ${FOLLOW_UP_COLUMNS}
      from applicants a ${followUpJoin('a')}
-     where a.archived_at is null and fu.state in ('overdue', 'stalled') and ($1::bigint is null or a.assigned_sales_user_id = $1::bigint)
-     order by fu.idle_days desc, a.id limit 50`,
-    [salesId],
+     where a.archived_at is null and fu.state = any($2::text[]) and ($1::bigint is null or a.assigned_sales_user_id = $1::bigint)
+     order by (fu.state = 'on_hold'), fu.idle_days desc, a.id limit 50`,
+    [salesId, `{${states.join(',')}}`],
   );
-  return ok(c, rows.map((r) => ({ id: r.id, full_name: r.full_name, applicant_code: r.applicant_code, status: r.status, status_label: stageLabel(r.status), follow_up: followUpView(r) })));
+  return ok(c, rows.map((r) => ({
+    id: r.id, full_name: r.full_name, applicant_code: r.applicant_code, status: r.status, status_label: stageLabel(r.status),
+    assigned_sales: r.assigned_sales_user_id ? { id: r.assigned_sales_user_id, full_name: r.assigned_sales_name } : null,
+    follow_up: followUpView(r),
+  })));
 });
 
 /** Executive dashboard: Overdue / Stalled / On hold per Sales user (plus unassigned). */
