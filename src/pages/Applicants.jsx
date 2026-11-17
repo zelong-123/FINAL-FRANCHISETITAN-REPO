@@ -35,6 +35,7 @@ import { RecordFolderGrid, RecordFolderTable } from '../components/applicants/Re
 import RecordCode from '../components/RecordCode';
 import { RECORD_FOLDERS } from '../lib/recordFolders';
 import { loiHalves, qualificationFill } from '../lib/stepperProgress';
+import { brandColor } from '../lib/brandColors';
 
 const statuses = [
   'converted', 'qualified', 'scheduled', 'loi_submitted',
@@ -1141,7 +1142,11 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
     items: rows.map((r) => (r.id ? { id: r.id, name: r.name.trim() } : { name: r.name.trim() })),
     basis_note: note.trim() || null,
   });
-  const subtitle = [applicant.full_name, applicant.applicant_code, applicant.preferred_brand?.name].filter(Boolean).join(' · ');
+  const subtitle = [
+    applicant.full_name && <strong key="name" className="font-[700] text-[#D4AF37]">{applicant.full_name}</strong>,
+    applicant.applicant_code,
+    applicant.preferred_brand?.name && <strong key="brand" className="font-[700]" style={{ color: brandColor(applicant.preferred_brand.name) }}>{applicant.preferred_brand.name}</strong>,
+  ].filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part]));
 
   return (
     <Dialog
