@@ -119,8 +119,8 @@ export default function Log() {
             <span className="mb-3 inline-flex items-center gap-2 text-[10px] font-extrabold tracking-[.13em] text-accent-text uppercase">
               <span className="size-[7px] rounded-full bg-accent shadow-[0_0_0_5px_color-mix(in_srgb,var(--accent)_13%,transparent)]" /> Enterprise operations platform
             </span>
-            <h1 className="m-0 text-[clamp(32px,3.6vw,44px)] leading-[1.04] tracking-[-.05em] text-text short-laptop:text-[clamp(30px,3.2vw,38px)] max-[620px]:text-[37px]">Welcome back.</h1>
-            <p className="mt-2.5 mb-0 max-w-[440px] text-[13.5px] leading-[1.65] text-muted short-laptop:text-[13px] short-laptop:leading-[1.55]">Sign in to your secure Herald workspace and continue managing the franchise network.</p>
+            <h1 className="m-0 text-[clamp(32px,3.6vw,44px)] leading-[1.04] tracking-[-.05em] text-text short-laptop:text-[clamp(30px,3.2vw,38px)] max-[620px]:text-[37px]">WELCOME</h1>
+            <p className="mt-2.5 mb-0 max-w-[440px] text-[13.5px] leading-[1.65] text-muted short-laptop:text-[13px] short-laptop:leading-[1.55]">Sign in to your secure Franchise workspace and continue managing the franchise network.</p>
           </div>
 
           {error && (
@@ -178,7 +178,7 @@ export default function Log() {
               disabled={submitting}
               className="group relative mt-[5px] flex min-h-[46px] items-center justify-center gap-[11px] overflow-hidden rounded-xl border-0 bg-[linear-gradient(135deg,var(--accent),var(--accent-2))] px-[18px] text-[13px] font-extrabold tracking-[.01em] text-white shadow-[0_14px_30px_color-mix(in_srgb,var(--accent)_25%,transparent)] transition-[translate,box-shadow,filter] duration-200 before:absolute before:inset-0 before:-translate-x-[120%] before:bg-[linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent)] before:transition-transform before:duration-[600ms] before:content-[''] not-disabled:hover:-translate-y-0.5 not-disabled:hover:shadow-[0_18px_38px_color-mix(in_srgb,var(--accent)_32%,transparent)] not-disabled:hover:saturate-[1.08] not-disabled:hover:before:translate-x-[120%] not-disabled:active:translate-y-0 disabled:cursor-wait disabled:opacity-65 disabled:shadow-none short-laptop:min-h-[42px]"
             >
-              <span>{submitting ? 'Authenticating…' : 'Sign in to Herald'}</span>
+              <span>{submitting ? 'Authenticating…' : 'LOG IN'}</span>
               {submitting ? <ButtonSpinner /> : <FaArrowRight />}
             </button>
           </form>
