@@ -26,7 +26,9 @@ export type FakeAuth = AuthProvider & {
   addUser(email: string, password: string | null): Promise<string>;
   /** Invitations "emailed" so far (newest last). */
   invites: Invite[];
-  /** The invited person opens the email link and sets a password. */
+  /** The invited person opens the email link: Supabase verifies it and returns a session (its access token). */
+  openInviteLink(email: string): Promise<string>;
+  /** On /reset-password the person sets a password (supabase.auth.updateUser in the browser). */
   acceptInvite(email: string, password: string): Promise<void>;
   /** The next invitation fails, as when the email cannot be sent. */
   failNextInvite(message: string): void;
@@ -68,6 +70,11 @@ export function fakeAuth(db: Db): FakeAuth {
       const authUserId = await provider.addUser(email, null);
       invites.push({ email, redirectTo, fullName, authUserId });
       return authUserId;
+    },
+    async openInviteLink(email: string) {
+      const found = byEmail(email);
+      if (!found) throw new Error(`No invited account for ${email}`);
+      return (await newSession(found[0], email)).access_token;
     },
     async acceptInvite(email: string, password: string) {
       const found = byEmail(email);

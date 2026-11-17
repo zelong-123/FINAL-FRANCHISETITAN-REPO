@@ -2,26 +2,31 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
 import { fail, intParam, ok, paginate, perPage, pick, routeId, updateRow, manilaToday } from '../lib/http.ts';
-import type { Row } from '../lib/db.ts';
+import type { Db, Row } from '../lib/db.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound } from '../lib/middleware.ts';
-import { audit, createAccount, liftExpiredSuspensions, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
+import { audit, liftExpiredSuspensions, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
 import { forUsers } from '../services/presence.ts';
-import { accountAuditValues, cleanOptionalPhone, cleanPersonName, type CredentialDelivery } from '../services/credentials.ts';
+import { accountAuditValues, cleanOptionalPhone, cleanPersonName } from '../services/credentials.ts';
+import { archiveUser, cancelInvite, inviteAccount, inviteDelivery, inviteState, isLastActiveAdmin, resendInvite, restoreUser } from '../services/accounts.ts';
 
 export const userRoutes = new Hono<AppEnv>();
 const USER = 'App\\Models\\User';
 const STAFF = ['admin', 'sales', 'marketing', 'logistics'];
-/** Roles User Management may create directly. Admin never; Franchisee only from its applicant. */
-const STAFF_CREATABLE = ['marketing', 'sales', 'logistics'];
+/** Roles User Management may invite directly. Admin needs an explicit confirmation; Franchisee only from its applicant. */
+const STAFF_CREATABLE = ['admin', 'marketing', 'sales', 'logistics'];
 const AUDIT_KEYS = ['full_name', 'email', 'phone', 'role_id', 'account_status', 'suspended_from', 'suspended_until'];
 
+const loadTarget = async (db: Db, id: number) =>
+  requireFound((await db.query(`select u.*, to_jsonb(r) as role from users u left join roles r on r.id = u.role_id where u.id = $1`, [id]))[0]);
+
+/** Main lists hide archived accounts; ?archived=1 lists only them. Each row carries its invite state. */
 userRoutes.get('/users', async (c) => {
-  const { db } = c.get('deps');
+  const { db, inviteTtlHours } = c.get('deps');
   await liftExpiredSuspensions(db);
 
   const q = c.req.query();
-  const where: string[] = [];
+  const where: string[] = [q.archived === '1' || q.archived === 'true' ? 'u.archived_at is not null' : 'u.archived_at is null'];
   const params: unknown[] = [];
   if (q.role === 'staff') { params.push(`{${STAFF.join(',')}}`); where.push(`r.name = any($${params.length}::text[])`); }
   else if (q.role) { params.push(q.role); where.push(`r.name = $${params.length}`); }
@@ -34,7 +39,8 @@ userRoutes.get('/users', async (c) => {
   const page = await paginate(c, db, {
     columns: `u.*, to_jsonb(r) as role`,
     from: 'users u left join roles r on r.id = u.role_id',
-    where, params, orderBy: 'u.full_name', perPage: perPage(c, 20), map: publicUser,
+    where, params, orderBy: 'u.full_name', perPage: perPage(c, 20),
+    map: (row: Row) => ({ ...publicUser(row), invite_state: inviteState(row, inviteTtlHours) }),
   });
   const body = await page.json();
   const presence = await forUsers(db, body.data);
@@ -43,44 +49,77 @@ userRoutes.get('/users', async (c) => {
 });
 
 /**
- * Staff accounts (Marketing, Sales, Logistics). Admin is never created here, and a Franchisee
- * account is created from its applicant (POST /applicants/:id/portal-user) so every activation gate
- * applies. The new person gets an invitation email and sets their own password from the link
- * (`redirect_to`: the app's /reset-password page). No password is created, shown or stored here.
+ * Staff and Admin accounts. Every account is invited by email: the person sets their own password
+ * on the app's /reset-password page (APP_STAFF_URL), so no password is ever created, shown or stored
+ * here. A Franchisee account is invited from its applicant (POST /applicants/:id/portal-user) so every
+ * activation gate applies. Creating another Admin needs confirm_admin = true (the UI asks first).
  */
 userRoutes.post('/users', async (c) => {
   const { db } = c.get('deps');
   const input = await readInput(c);
-  if (input.role === 'admin') fail('role', 'An Admin account cannot be created from User Management.');
   if (input.role === 'franchisee') fail('role', 'A Franchisee account is created from an approved or active applicant. Choose the applicant as the Full name.');
   const v = await validate(db, input, {
     full_name: ['required', 'string', 'max:255'],
     email: ['required', 'email', 'max:255', 'unique:users,email'],
     phone: ['nullable'],
     role: ['required', `in:${STAFF_CREATABLE.join(',')}`],
-    account_status: ['nullable', 'in:active,inactive'],
     redirect_to: ['nullable', 'string', 'max:500'],
+    confirm_admin: ['nullable', 'boolean'],
   });
+  if (v.role === 'admin' && v.confirm_admin !== true) {
+    fail('confirm_admin', 'You are creating another Admin with full access. Confirm to send the invitation.');
+  }
   const fullName = cleanPersonName(v.full_name);
   const phone = cleanOptionalPhone(v.phone);
   const email = String(v.email).toLowerCase();
-  // Where the email link opens. Supabase only follows URLs allowed under Authentication → URL
-  // Configuration; without one it uses the project's Site URL.
-  const redirectTo = v.redirect_to ? String(v.redirect_to).trim() : null;
-  if (redirectTo && !/^https?:\/\/\S+$/i.test(redirectTo)) fail('redirect_to', 'The invitation link must open an http(s) address.');
   const [roleRow] = await db.query(`select id from roles where name = $1`, [v.role]);
-  const user = await createAccount(c, {
-    role_id: requireFound(roleRow).id,
-    full_name: fullName,
-    email,
-    phone,
-    account_status: v.account_status ?? 'active',
-    // The password is chosen by the person from the invitation link, so no forced change.
-    must_change_password: false,
-  }, { invite: { redirectTo, fullName } });
-  const delivery: CredentialDelivery = { method: 'email_link', sent_to: email, note: `Invite emailed to ${email}. They set their own password when they open the link.` };
-  await audit(c, db, 'user.created', { type: USER, id: user.id }, null, accountAuditValues(user, v.role, delivery));
-  return ok(c, { ...(await loadUser(db, user.id)), credentials: delivery }, 'User account created.', 201);
+  const user = await inviteAccount(c, { role_id: requireFound(roleRow).id, full_name: fullName, email, phone }, v.role, v.redirect_to);
+  const delivery = inviteDelivery(email);
+  await audit(c, db, 'user.created', { type: USER, id: user.id }, null,
+    accountAuditValues(user, v.role, delivery, v.role === 'admin' ? { admin_confirmed: true } : {}));
+  return ok(c, { ...(await loadUser(db, user.id)), credentials: delivery }, `Invite email sent to ${email}.`, 201);
+});
+
+/** A fresh invitation for an account nobody accepted (Invited, Expired or Declined). */
+userRoutes.post('/users/:user/resend-invite', async (c) => {
+  const { db } = c.get('deps');
+  const target = await loadTarget(db, routeId(c, 'user'));
+  await resendInvite(c, target);
+  return ok(c, await loadUser(db, target.id), `Invite email sent to ${target.email}.`);
+});
+
+/** Cancel an invitation nobody accepted: the account and its pending sign-in are removed completely. */
+userRoutes.delete('/users/:user/invite', async (c) => {
+  const { db } = c.get('deps');
+  const target = await loadTarget(db, routeId(c, 'user'));
+  await cancelInvite(c, target);
+  return ok(c, null, `The invitation for ${target.email} was cancelled.`);
+});
+
+/**
+ * Archive (suspend): from a start time (default now; may be later) until an optional end time, with
+ * an optional reason. The account cannot sign in while suspended and its sessions are revoked; it
+ * leaves the main lists and shows under Admin settings -> Archive -> Users. It is restored by itself
+ * once the end passes. Not yourself, not the last active Admin.
+ */
+userRoutes.post('/users/:user/archive', async (c) => {
+  const { db } = c.get('deps');
+  const target = await loadTarget(db, routeId(c, 'user'));
+  const v = await validate(db, await readInput(c), {
+    suspended_from: ['nullable', 'date'],
+    suspended_until: ['nullable', 'date'],
+    reason: ['nullable', 'string', 'max:2000'],
+  });
+  await archiveUser(c, target, { from: v.suspended_from, until: v.suspended_until, reason: v.reason });
+  return ok(c, await loadUser(db, target.id), `${target.full_name} was archived.`);
+});
+
+/** Restore (unarchive) at once: the account is active again. */
+userRoutes.post('/users/:user/restore', async (c) => {
+  const { db } = c.get('deps');
+  const target = await loadTarget(db, routeId(c, 'user'));
+  await restoreUser(c, target);
+  return ok(c, await loadUser(db, target.id), `${target.full_name} was restored.`);
 });
 
 /** Applicants who may get a Franchisee account: Approved or Active Franchisee, with no account yet. */
@@ -115,44 +154,38 @@ userRoutes.on(['PUT', 'PATCH'], '/users/:user', async (c) => {
     fail('user', 'Branch account identity changes must be made through the applicant workflow.');
   }
 
+  // Passwords are only ever set by the person themselves, from their invitation or reset email.
+  if ('password' in input || 'confirm_password' in input) {
+    fail('password', 'Passwords are set by the person from their email link. Use "Resend invite" for an account that was not set up yet.');
+  }
+  // Suspension is "Archive (suspend)" (POST /users/:id/archive), with its own window and audit.
+  if (input.account_status === 'suspended' || 'suspended_from' in input || 'suspended_until' in input) {
+    fail('account_status', 'Use "Archive (suspend)" to suspend an account.');
+  }
+  // An invitation becomes active only when the person accepts it and sets a password.
+  if (['invited', 'declined'].includes(target.account_status) && 'account_status' in input) {
+    fail('account_status', 'This invitation was not accepted yet. Resend or cancel the invite instead.');
+  }
+
   const v = await validate(db, input, {
     full_name: ['sometimes', 'required', 'string', 'max:255'],
     email: ['sometimes', 'required', 'email', 'max:255', `unique:users,email,${id}`],
     phone: ['sometimes', 'required', /^[0-9]{11}$/],
-    password: ['nullable', 'string', 'min:8', 'max:15', 'confirmed'],
-    confirm_password: ['required_with:password', 'same:password'],
     role: ['sometimes', 'in:marketing,sales,logistics,franchisee'],
-    account_status: ['sometimes', 'in:active,inactive,suspended'],
-    suspended_from: ['nullable', 'date'],
-    suspended_until: ['nullable', 'date'],
+    account_status: ['sometimes', 'in:active,inactive'],
   });
 
   if (target.role?.name === 'admin' && v.role && v.role !== 'admin') fail('role', 'The Admin role cannot be changed through User Management.');
+  if (target.role?.name === 'admin' && v.account_status === 'inactive' && await isLastActiveAdmin(db, target)) {
+    fail('account_status', 'This is the last active Admin. Make another Admin active first.');
+  }
 
-  const { password, confirm_password: _confirm, role: newRole, ...changes } = v;
+  const { role: newRole, ...changes } = v;
   if (newRole) changes.role_id = requireFound((await db.query(`select id from roles where name = $1`, [newRole]))[0]).id;
   if (changes.email) changes.email = String(changes.email).toLowerCase();
 
-  // Suspended carries a window and ends by itself; Inactive has none and only an admin restores it.
-  const status = changes.account_status ?? target.account_status;
-  if (status === 'suspended') {
-    const start = String(changes.suspended_from ?? manilaToday()).slice(0, 10);
-    const end = changes.suspended_until ?? target.suspended_until;
-    if (!end) fail('suspended_until', 'Choose the date this suspension ends.');
-    const endDay = String(end).slice(0, 10);
-    if (endDay < start) fail('suspended_until', 'The suspension must end on or after the date it starts.');
-    changes.suspended_from = start;
-    changes.suspended_until = endDay;
-  } else {
-    changes.suspended_from = null;
-    changes.suspended_until = null;
-  }
-
-  if (target.auth_user_id && (password || (changes.email && changes.email !== target.email))) {
-    await auth.updateUser(target.auth_user_id, {
-      ...(changes.email && changes.email !== target.email ? { email: changes.email } : {}),
-      ...(password ? { password } : {}),
-    });
+  if (target.auth_user_id && changes.email && changes.email !== target.email) {
+    await auth.updateUser(target.auth_user_id, { email: changes.email });
   }
   const saved = await updateRow(db, 'users', id, changes);
 
@@ -165,9 +198,9 @@ userRoutes.on(['PUT', 'PATCH'], '/users/:user', async (c) => {
 userRoutes.delete('/users/:user', async (c) => {
   const { db, auth } = c.get('deps');
   const id = routeId(c, 'user');
-  const [target] = await db.query(`select * from users where id = $1`, [id]);
-  requireFound(target);
+  const target = await loadTarget(db, id);
   if (c.get('user').id === id) return c.json({ message: 'You cannot deactivate your own account.' }, 422);
+  if (await isLastActiveAdmin(db, target)) fail('user', 'This is the last active Admin. Make another Admin active first.');
 
   const cleared = { account_status: 'inactive', suspended_from: null, suspended_until: null };
   await updateRow(db, 'users', id, cleared);

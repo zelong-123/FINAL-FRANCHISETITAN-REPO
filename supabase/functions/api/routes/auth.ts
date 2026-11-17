@@ -5,10 +5,12 @@ import type { Db, Row } from '../lib/db.ts';
 import { fail, ok, pick, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { authenticate, roleName } from '../lib/middleware.ts';
-import { audit, clientIp, liftExpiredSuspension, loadUser, loadUserRelations, publicUser } from '../services/users.ts';
+import { audit, clientIp, liftExpiredSuspension, loadUser, loadUserRelations, manilaTimeLabel, publicUser } from '../services/users.ts';
 import * as presence from '../services/presence.ts';
 import { resolveWorkspace } from '../services/branchAccess.ts';
 import { PASSWORD_MAX, PASSWORD_MIN } from '../services/credentials.ts';
+import { inviteHolder, inviteState } from '../services/accounts.ts';
+import { activateAcceptedFranchisee } from './applicants.ts';
 
 const USER_MODEL = 'App\\Models\\User';
 const MAX_ATTEMPTS = 5;
@@ -90,13 +92,13 @@ authRoutes.post('/login', async (c) => {
 
   await liftExpiredSuspension(db, user);
   if (user.account_status === 'suspended') {
-    const until = user.suspended_until
-      ? new Date(`${String(user.suspended_until).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric', timeZone: 'UTC' })
-      : null;
+    const until = user.suspended_until ? manilaTimeLabel(user.suspended_until, false) : null;
     return refuse(until
       ? `This account is suspended until ${until}. Contact an administrator to restore access sooner.`
       : 'This account is suspended. Contact an administrator.');
   }
+  if (user.account_status === 'invited') return refuse('Finish setting up your account from the invitation email first.');
+  if (user.account_status === 'declined') return refuse('This invitation was declined. Ask your Admin to send a new one.');
   if (user.account_status !== 'active') return refuse('This account is inactive. Ask an administrator to reactivate it.');
 
   if (portal === 'branch' && role === 'franchisee' && !(await resolveWorkspace(db, user))) {
@@ -114,6 +116,53 @@ authRoutes.post('/login', async (c) => {
     expires_in_minutes: Math.round(session!.expires_in / 60),
     user: publicUser(user),
   }, 'Login successful.');
+});
+
+// ---- Invitation links (/reset-password) ----
+// These run BEFORE authenticate: the invitation's own Supabase session (from the email link) is the
+// credential, and the account is not active yet. The password itself is set in the browser with
+// Supabase (updateUser), so it never reaches this API.
+
+/** Who the link belongs to: the setup page shows the role and the email (the username). */
+authRoutes.get('/invite', async (c) => {
+  const { inviteTtlHours } = c.get('deps');
+  const user = await inviteHolder(c);
+  const state = inviteState(user, inviteTtlHours);
+  const kind = ['invited', 'declined'].includes(user.account_status) ? 'invite' : 'recovery';
+  if (kind === 'recovery' && user.account_status !== 'active') {
+    fail('link', 'This account cannot sign in right now. Contact your Admin.');
+  }
+  return ok(c, { kind, email: user.email, full_name: user.full_name, role: { name: user.role?.name, label: user.role?.label ?? null }, status: user.account_status, invite_state: state });
+});
+
+/** The password was set from the link: the account becomes active (a franchisee's applicant is activated too). */
+authRoutes.post('/invite/accept', async (c) => {
+  const { db } = c.get('deps');
+  const user = await inviteHolder(c);
+  if (user.account_status === 'active') return ok(c, { status: 'active' }, 'Password set.');
+  if (user.account_status !== 'invited') {
+    fail('link', user.account_status === 'declined'
+      ? 'This invitation was declined. Ask your Admin to send a new one.'
+      : 'This account cannot be activated from this link. Contact your Admin.');
+  }
+  await db.tx(async (tx) => {
+    if (user.role?.name === 'franchisee') await activateAcceptedFranchisee(c, tx, user);
+    await tx.query(`update users set account_status = 'active', invite_accepted_at = now(), email_verified_at = coalesce(email_verified_at, now()) where id = $1`, [user.id]);
+  });
+  await audit(c, db, 'user.invite_accepted', { type: USER_MODEL, id: user.id }, { account_status: 'invited' }, { account_status: 'active' }, user.id);
+  return ok(c, { status: 'active', role: user.role?.name }, 'Your account is ready.');
+});
+
+/** The invited person declines: the account cannot sign in; Admin sees "Declined" (and may resend or cancel). */
+authRoutes.post('/invite/decline', async (c) => {
+  const { db, auth } = c.get('deps');
+  const user = await inviteHolder(c);
+  if (user.account_status === 'declined') return ok(c, { status: 'declined' }, 'The invitation was already declined.');
+  if (user.account_status !== 'invited') fail('link', 'Only a pending invitation can be declined.');
+  await db.query(`update users set account_status = 'declined', invite_declined_at = now() where id = $1`, [user.id]);
+  if (user.auth_user_id) await auth.revokeAll(user.auth_user_id);
+  await audit(c, db, 'user.invite_declined', { type: USER_MODEL, id: user.id }, { account_status: 'invited' }, { account_status: 'declined' }, user.id);
+  return ok(c, { status: 'declined' }, 'You declined the invitation. Nothing was set up.');
 });
 
 authRoutes.use('*', authenticate);

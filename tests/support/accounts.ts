@@ -24,21 +24,25 @@ export async function firstSignIn(call: Call, email: string, temporary: string, 
 }
 
 /**
- * An invited staff member opens the email link, sets NEW_PASSWORD (done here through the fake auth,
- * as the real Supabase page would) and signs in. Returns a working token.
+ * The invited person's whole /reset-password flow: opens the email link (a Supabase session), sets
+ * NEW_PASSWORD (updateUser, through the fake auth as the real page does), accepts (the account
+ * becomes active) and signs in. Returns a working token.
  */
 export async function signInInvited(call: Call, email: string, portal: 'staff' | 'branch' = 'staff') {
   assert.ok(fakeAuth, 'setup() registers the fake auth before invited users can sign in');
+  const linkToken = await fakeAuth.openInviteLink(email.toLowerCase());
   await fakeAuth.acceptInvite(email.toLowerCase(), NEW_PASSWORD);
+  const accepted = await call('POST', '/auth/invite/accept', { token: linkToken });
+  assert.equal(accepted.status, 200, `accept invitation: ${JSON.stringify(accepted.json)}`);
   const session = await call('POST', '/auth/login', { body: { email, password: NEW_PASSWORD, portal } });
   assert.equal(session.status, 200, `invited sign-in: ${JSON.stringify(session.json)}`);
   assert.equal(session.json.data.user.must_change_password, false, 'an invited account chose its own password');
   return session.json.data.token as string;
 }
 
-/** Admin creates a staff account (an invitation is emailed); the new user accepts it. Returns its token. */
+/** Admin invites a staff account; the new user accepts it. Returns its token. */
 export async function createStaff(call: Call, adminToken: string, body: { full_name: string; email: string; role: string; phone?: string }) {
-  const created = await call('POST', '/users', { token: adminToken, body });
+  const created = await call('POST', '/users', { token: adminToken, body: { ...body, ...(body.role === 'admin' ? { confirm_admin: true } : {}) } });
   assert.equal(created.status, 201, `create staff: ${JSON.stringify(created.json)}`);
   assert.equal(created.json.data.credentials.method, 'email_link');
   return signInInvited(call, body.email);

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { requirementForm } from '../support/requirements.ts';
 import { requirementsOf } from '../../supabase/functions/api/services/requirements.ts';
-import { createStaff, firstSignIn } from '../support/accounts.ts';
+import { createStaff, signInInvited } from '../support/accounts.ts';
 import { orientationForm, viewAll } from '../support/orientation.ts';
 
 const { pg, call, login } = await setup();
@@ -180,7 +180,9 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   okay('submit the agreement', await call('POST', `${path}/requirements/franchise_agreement`, { token: sales, form: agreement }), 201);
   okay('accept the agreement', await call('POST', `${path}/requirements/franchise_agreement/accept`, { token: admin, body: {} }));
   const branchAccount = okay('branch account', await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'demo.branch@example.test', phone: '09170000102' } }), 201);
-  await firstSignIn(call, 'demo.branch@example.test', branchAccount.data.credentials.temporary_password, 'branch');
+  assert.equal(branchAccount.data.credentials.method, 'email_link', 'the franchisee gets an invitation email');
+  assert.equal((await q(`select status from applicants where id = $1`, [id]))[0].status, 'approved', 'waiting for the franchisee to accept');
+  await signInInvited(call, 'demo.branch@example.test', 'branch');
   assert.equal((await q(`select status from applicants where id = $1`, [id]))[0].status, 'active_franchisee');
   const [location] = await q(`select l.id, l.name from franchise_locations l join franchisees f on f.id = l.franchisee_id where f.applicant_id = $1`, [id]);
   assert.ok(location, 'the branch is created');

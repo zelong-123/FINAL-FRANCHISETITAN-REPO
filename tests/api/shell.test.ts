@@ -101,7 +101,8 @@ test('admin creates a user who can sign in with a USR code, then blocks them', a
   assert.equal(invalid.status, 422);
   assert.equal(invalid.json.message, 'The submitted data is invalid.');
   assert.ok(invalid.json.errors.email);
-  assert.ok((await call('POST', '/users', { token: admin, body: { full_name: 'Ana Cruz', email: 'ana@example.com', role: 'admin' } })).json.errors.role);
+  assert.match((await call('POST', '/users', { token: admin, body: { full_name: 'Ana Cruz', email: 'ana@example.com', role: 'admin' } })).json.errors.confirm_admin[0],
+    /creating another Admin with full access/, 'another Admin needs an explicit confirmation');
 
   const email = 'New.Person@Example.com';
   const created = await call('POST', '/users', { token: admin, body: { full_name: 'New Person', email, phone: '09171234567', role: 'sales' } });

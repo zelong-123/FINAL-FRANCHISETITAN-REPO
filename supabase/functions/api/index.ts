@@ -23,6 +23,10 @@ const origins = (Deno.env.get('ALLOWED_ORIGINS') ?? '*').split(',').map((o) => o
 
 const files = supabaseFiles(env('SUPABASE_URL'), secretKey);
 
-const app = createApp({ db, auth, files, costingEnabled: Deno.env.get('FEATURE_COSTING') === 'true' }, origins);
+// Invitation and password-reset links open <APP_STAFF_URL or APP_BRANCH_URL>/reset-password.
+const appUrls = { staff: Deno.env.get('APP_STAFF_URL') || null, branch: Deno.env.get('APP_BRANCH_URL') || null };
+const inviteTtlHours = Number(Deno.env.get('INVITE_TTL_HOURS') || 24);
+
+const app = createApp({ db, auth, files, costingEnabled: Deno.env.get('FEATURE_COSTING') === 'true', appUrls, inviteTtlHours }, origins);
 
 Deno.serve(app.fetch);

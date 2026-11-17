@@ -286,6 +286,17 @@ export default function AdminSettings() {
                 <td className="text-muted">
                   {item.detail || '—'}
                   {item.badge ? ` · ${item.badge}` : ''}
+                  {tab === 'users' && (
+                    <div className="mt-1 text-[12px] leading-[1.5]">
+                      <span className={item.status === 'suspended' ? 'text-danger-text font-[650]' : 'text-warning-text font-[650]'}>
+                        {item.status === 'suspended' ? 'Suspended' : 'Suspension scheduled'}
+                      </span>
+                      {' · '}
+                      {item.suspended_from ? formatDate(item.suspended_from, true) : 'Now'} – {item.suspended_until ? formatDate(item.suspended_until, true) : 'until restored'}
+                      {item.suspended_until && <div className="text-[11px]">Restored automatically after the end time.</div>}
+                      {item.reason && <div className="text-[11px]">Reason: {item.reason}</div>}
+                    </div>
+                  )}
                 </td>
                 <td className="text-muted whitespace-nowrap">
                   {item.archived_at ? formatDate(item.archived_at, true) : '—'}
@@ -336,7 +347,9 @@ export default function AdminSettings() {
           <p className="m-0 text-muted text-[13px] leading-[1.6]">
             {restoreTarget.many
               ? `${selectedItems.length} archived ${tab} will return to the active workspace.`
-              : `${restoreTarget.item.label} will return to the active workspace.`}
+              : tab === 'users'
+                ? `${restoreTarget.item.label}'s account is reactivated now and they can sign in again.`
+                : `${restoreTarget.item.label} will return to the active workspace.`}
           </p>
           <label className="flex items-start gap-[10px] mt-[16px] text-[13px] text-text cursor-pointer">
             <input type="checkbox" className="mt-[3px]" checked={restoreAck} onChange={(event) => setRestoreAck(event.target.checked)} />
