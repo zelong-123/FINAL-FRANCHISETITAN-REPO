@@ -1163,7 +1163,7 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
     >
       <p className="m-0 text-[#9aa6c4] text-[14px]">{subtitle}. Choose which payments this applicant must complete. No amounts are set or computed here.</p>
       <label className="grid gap-[6px] mt-[16px] text-[#c9d0e0] text-[13.5px] font-[600]">Payment plan
-        <select className={PAY_INPUT} value={preset} onChange={(e) => applyPreset(e.target.value)}>
+        <select className={`${PAY_INPUT} cursor-pointer transition-[border-color,box-shadow,background] duration-200 ease-out hover:border-[#4a5a80] hover:[background:#111a2b] focus:outline-none focus:border-[#5b7bd9] focus:shadow-[0_0_0_3px_rgba(91,_123,_217,_.18)]`} value={preset} onChange={(e) => applyPreset(e.target.value)}>
           <option value="">Choose a plan…</option>
           {(record.preset_options || []).map((o) => <option key={o.value} value={o.value}>{o.label}{o.items.length ? ` (${o.items.join(', ')})` : ''}</option>)}
         </select>
@@ -1176,12 +1176,12 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
             <span className="flex items-center gap-[6px] max-[561px]:col-start-2">
               {row.locked && <PayBadge tone={row.status === 'verified' ? 'verified' : 'for_verification'}>{row.lockLabel}</PayBadge>}
               {!row.locked && !row.id && <PayBadge tone="new">New</PayBadge>}
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:-translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
             </span>
             <button
               type="button"
-              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171]'}`}
+              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] transition-[background,border-color,color,transform,box-shadow] duration-150 ease-out ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171] enabled:hover:[background:rgba(248,_113,_113,_.14)] enabled:hover:border-[#f87171] enabled:hover:shadow-[0_0_0_3px_rgba(248,_113,_113,_.14)] enabled:hover:-translate-y-px enabled:active:translate-y-0 enabled:active:scale-95'}`}
               disabled={row.locked}
               title={row.locked ? 'This payment already has an entry, so it cannot be removed.' : 'Remove'}
               aria-label={`Remove ${row.name || 'row'}`}
