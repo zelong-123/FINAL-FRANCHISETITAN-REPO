@@ -35,6 +35,7 @@ import { RecordFolderGrid, RecordFolderTable } from '../components/applicants/Re
 import RecordCode from '../components/RecordCode';
 import { RECORD_FOLDERS } from '../lib/recordFolders';
 import { loiHalves, qualificationFill } from '../lib/stepperProgress';
+import { brandColor } from '../lib/brandColors';
 
 const statuses = [
   'converted', 'qualified', 'scheduled', 'loi_submitted',
@@ -177,7 +178,7 @@ function unlockBodyScroll() {
 }
 
 function Dialog({
-  title, onClose, footer, children, size = 'large', zIndex = 2147482000, closeOnEscape = true, modalClass = '',
+  title, onClose, footer, children, size = 'large', zIndex = 2147482000, closeOnEscape = true, modalClass = '', animated = false,
 }) {
   const titleId = useRef(`ap-dialog-title-${++dialogCounter}`).current;
   const closeRef = useRef(onClose);
@@ -199,9 +200,9 @@ function Dialog({
 
   return createPortal(
     <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] modal-portal-root" style={{ display: 'contents' }}>
-      <div className="fixed inset-0 flex items-center justify-center [box-sizing:border-box] p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] [overscroll-behavior:contain] max-[721px]:later:p-[10px] print:[body.ap-print-report_&]:static print:[body.ap-print-report_&]:p-0 print:[body.ap-print-report_&]:[background:#fff]" style={{ zIndex }}>
+      <div className={`fixed inset-0 flex items-center justify-center [box-sizing:border-box] p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] [overscroll-behavior:contain] max-[721px]:later:p-[10px] print:[body.ap-print-report_&]:static print:[body.ap-print-report_&]:p-0 print:[body.ap-print-report_&]:[background:#fff]${animated ? ' animate-overlay-in' : ''}`} style={{ zIndex }}>
         <div
-          className={`ap-dialog flex flex-col [box-sizing:border-box] w-[min(900px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[10px] [background:#0f1626] text-[#e7ebf5] [box-shadow:0_28px_80px_rgba(2,_6,_18,_.65),_0_0_0_1px_rgba(129,_117,_255,_.05)] [&.is-medium]:w-[min(680px,_100%)] later:[&.is-small]:w-[min(460px,_100%)] max-[721px]:later:w-full max-[721px]:later:max-h-[calc(100dvh_-_20px)] print:[body.ap-print-report_&]:w-full print:[body.ap-print-report_&]:max-w-[none] print:[body.ap-print-report_&]:max-h-[none] print:[body.ap-print-report_&]:h-auto print:[body.ap-print-report_&]:border-0 print:[body.ap-print-report_&]:rounded-[0] print:[body.ap-print-report_&]:[box-shadow:none] later-3:[&.is-payment]:w-[min(1120px,_100%)] [&.is-qualification]:w-[min(1180px,_100%)] [&.is-qualification]:h-[min(820px,_calc(100dvh_-_40px))] is-${size}${modalClass ? ` ${modalClass}` : ''}`}
+          className={`ap-dialog${animated ? ' animate-modal-pop' : ''} flex flex-col [box-sizing:border-box] w-[min(900px,_100%)] max-h-[calc(100dvh_-_40px)] overflow-hidden border border-[#2a3550] rounded-[10px] [background:#0f1626] text-[#e7ebf5] [box-shadow:0_28px_80px_rgba(2,_6,_18,_.65),_0_0_0_1px_rgba(129,_117,_255,_.05)] [&.is-medium]:w-[min(680px,_100%)] later:[&.is-small]:w-[min(460px,_100%)] max-[721px]:later:w-full max-[721px]:later:max-h-[calc(100dvh_-_20px)] print:[body.ap-print-report_&]:w-full print:[body.ap-print-report_&]:max-w-[none] print:[body.ap-print-report_&]:max-h-[none] print:[body.ap-print-report_&]:h-auto print:[body.ap-print-report_&]:border-0 print:[body.ap-print-report_&]:rounded-[0] print:[body.ap-print-report_&]:[box-shadow:none] later-3:[&.is-payment]:w-[min(1120px,_100%)] [&.is-qualification]:w-[min(1180px,_100%)] [&.is-qualification]:h-[min(820px,_calc(100dvh_-_40px))] is-${size}${modalClass ? ` ${modalClass}` : ''}`}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
@@ -236,19 +237,19 @@ function ApplicantDetailSkeleton({ stage, isAdmin }) {
   const rows = isQualification ? 4 : isPayment ? 6 : 3;
   return (
     <div className="flex flex-col gap-[14px]" role="status" aria-live="polite" aria-label="Loading applicant">
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[12px]">
         <span className={`${bar} h-[12px] w-[30%]`} />
         <div className="flex gap-[10px]">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className={`${bar} h-[10px] flex-1`} />)}
         </div>
       </div>
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[12px]">
         <span className={`${bar} h-[12px] w-[40%]`} />
         {Array.from({ length: rows }, (_, i) => (
           <span key={i} className={`${bar} h-[38px] w-full !rounded-[9px]`} />
         ))}
       </div>
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[10px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[10px]">
         <span className={`${bar} h-[12px] w-[25%]`} />
         <span className={`${bar} h-[10px] w-[70%]`} />
         <span className={`${bar} h-[10px] w-[55%]`} />
@@ -664,7 +665,7 @@ function QualificationAssessment({ draft, onToggle, readOnly = false, log = [], 
       </div>
       <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
         {isSalesRole && !readOnly
-          ? 'Tick the accomplished items, then click SAVE APPLICANT. Nothing is recorded until you save — closing the form keeps the last saved record.'
+          ? 'Tick the accomplished items, then click SAVE CHANGES. Nothing is recorded until you save — closing the form keeps the last saved record.'
           : 'Only Sales can change these five items. Admin confirms the applicant as Qualified once all five are saved.'}
       </p>
     </section>
@@ -691,7 +692,7 @@ const PAY_PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] mi
 const PAY_SECONDARY = 'min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-[#3a4256] rounded-[10px] [background:#121826] text-[#d6dcea] font-[650] disabled:opacity-50 disabled:cursor-not-allowed';
 const PAY_DANGER = 'min-h-[38px] inline-flex items-center justify-center p-[0_16px] border border-[rgba(248,_113,_113,_.6)] rounded-[10px] [background:transparent] text-[#f87171] font-[700] disabled:opacity-50 disabled:cursor-not-allowed';
 const PAY_BADGE_TONE = {
-  unpaid: 'text-[#c3cbe0] [background:#232b3d]',
+  unpaid: 'text-[#f87171] [background:rgba(248,_113,_113,_.14)]',
   not_yet_paid: 'text-[#c3cbe0] [background:#232b3d]',
   for_verification: 'text-[#fbbf24] [background:rgba(251,_191,_36,_.14)]',
   rejected: 'text-[#f87171] [background:rgba(248,_113,_113,_.14)]',
@@ -934,17 +935,13 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   };
 
   return (
-    <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#141a28] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
+    <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#0C111D] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 id="ap-payment-record-title" className="m-0 text-[0.8rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
+        <h3 id="ap-payment-record-title" className="m-0 text-[1rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
         <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
       </div>
       {fresh.error && <p className="m-[10px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="alert">Could not refresh the Payment Record: {fresh.error}</p>}
-      <p className="m-[10px_0_0] text-[#9aa6c4]">
-        {salesView
-          ? 'Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.'
-          : record.note}
-      </p>
+      {salesView && <p className="m-[10px_0_0] text-[#9aa6c4]">Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.</p>}
 
       <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
         <div className="flex flex-wrap items-center gap-2">
@@ -954,7 +951,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
             : <span className="text-[#fbbf24]">{record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet'}</span>}
         </div>
         {!readOnly && record.can_edit_required && (
-          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]!`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
+          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]! hover:border-[#5b6a8f] hover:[background:#1c2435]`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
         )}
       </div>
 
@@ -991,7 +988,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
           }
           const highlighted = formHere || (isAdminRole && entry?.reviewable && !readOnly);
           return (
-            <article key={item.id} className={`p-[16px_20px] border rounded-[12px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
+            <article key={item.id} className={`p-[16px_20px] border rounded-[6px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <strong className="text-[#edf0fa] text-[17px]">{item.name}</strong>
                 <span className="flex items-center gap-2">
@@ -1083,7 +1080,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
           {readOnly ? '' : 'The applicant moves to For Approval once all required payments are Verified.'}
         </p>
         {!readOnly && isAdminRole && editing.status === 'payment_submitted' && (
-          <button type="button" className={PAY_PRIMARY} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
+          <button type="button" className={`${PAY_PRIMARY} disabled:[background:#070A13]!`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
             Move to For Approval
           </button>
         )}
@@ -1145,7 +1142,11 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
     items: rows.map((r) => (r.id ? { id: r.id, name: r.name.trim() } : { name: r.name.trim() })),
     basis_note: note.trim() || null,
   });
-  const subtitle = [applicant.full_name, applicant.applicant_code, applicant.preferred_brand?.name].filter(Boolean).join(' · ');
+  const subtitle = [
+    applicant.full_name && <strong key="name" className="font-[700] text-[#D4AF37]">{applicant.full_name}</strong>,
+    applicant.applicant_code,
+    applicant.preferred_brand?.name && <strong key="brand" className="font-[700]" style={{ color: brandColor(applicant.preferred_brand.name) }}>{applicant.preferred_brand.name}</strong>,
+  ].filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part]));
 
   return (
     <Dialog
@@ -1153,6 +1154,7 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
       onClose={onCancel}
       size="medium"
       zIndex={2147482500}
+      animated
       footer={(
         <>
           <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={onCancel}>Cancel</button>
@@ -1162,7 +1164,7 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
     >
       <p className="m-0 text-[#9aa6c4] text-[14px]">{subtitle}. Choose which payments this applicant must complete. No amounts are set or computed here.</p>
       <label className="grid gap-[6px] mt-[16px] text-[#c9d0e0] text-[13.5px] font-[600]">Payment plan
-        <select className={PAY_INPUT} value={preset} onChange={(e) => applyPreset(e.target.value)}>
+        <select className={`${PAY_INPUT} cursor-pointer transition-[border-color,box-shadow,background] duration-200 ease-out hover:border-[#4a5a80] hover:[background:#111a2b] focus:outline-none focus:border-[#5b7bd9] focus:shadow-[0_0_0_3px_rgba(91,_123,_217,_.18)]`} value={preset} onChange={(e) => applyPreset(e.target.value)}>
           <option value="">Choose a plan…</option>
           {(record.preset_options || []).map((o) => <option key={o.value} value={o.value}>{o.label}{o.items.length ? ` (${o.items.join(', ')})` : ''}</option>)}
         </select>
@@ -1175,12 +1177,12 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
             <span className="flex items-center gap-[6px] max-[561px]:col-start-2">
               {row.locked && <PayBadge tone={row.status === 'verified' ? 'verified' : 'for_verification'}>{row.lockLabel}</PayBadge>}
               {!row.locked && !row.id && <PayBadge tone="new">New</PayBadge>}
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] disabled:opacity-40" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:-translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
+              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
             </span>
             <button
               type="button"
-              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171]'}`}
+              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] transition-[background,border-color,color,transform,box-shadow] duration-150 ease-out ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171] enabled:hover:[background:rgba(248,_113,_113,_.14)] enabled:hover:border-[#f87171] enabled:hover:shadow-[0_0_0_3px_rgba(248,_113,_113,_.14)] enabled:hover:-translate-y-px enabled:active:translate-y-0 enabled:active:scale-95'}`}
               disabled={row.locked}
               title={row.locked ? 'This payment already has an entry, so it cannot be removed.' : 'Remove'}
               aria-label={`Remove ${row.name || 'row'}`}
@@ -1874,7 +1876,7 @@ function ScheduleSection({
                   title={saved
                     ? 'Attended is saved and locked.'
                     : canMark
-                      ? 'Mark Attended, then Save Applicant to record it.'
+                      ? 'Mark Attended, then Save Changes to record it.'
                       : 'Sales must mark this activity Complete first.'}
                   onClick={() => onPickChecked(tracked, info)}
                 >
@@ -1893,7 +1895,7 @@ function ScheduleSection({
         <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
           {doneCount === TRACKED_ACTIVITIES.length
             ? 'Both activities are Done — Scheduled is checked.'
-            : 'Attended is recorded only when you click Save Applicant.'}
+            : 'Attended is recorded only when you click Save Changes.'}
         </p>
       )}
     </section>
@@ -3306,6 +3308,8 @@ export default function Applicants() {
       portalInvitePending: ['invited', 'declined'].includes(editing?.user?.account_status),
     })
     : null;
+  // Confirm Qualified moves to the footer (replacing SAVE CHANGES) once it is enabled.
+  const footerPrimary = Boolean(primary?.enabled && primary.run === 'qualified');
   const showSchedule = Boolean(draft) && (scheduleRevealed || SCHEDULE_VISIBLE_FROM.includes(stage));
 
   // Applicant-level "Set Again" (Section 4): the NEXT activity step only, shown
@@ -3947,6 +3951,7 @@ export default function Applicants() {
           title="Opening applicant…"
           onClose={() => setOpeningId(null)}
           modalClass={openingModalClass(openingId.status, role)}
+          animated
         >
           <ApplicantDetailSkeleton stage={openingId.status} isAdmin={isAdminRole} />
         </Dialog>
@@ -3954,10 +3959,11 @@ export default function Applicants() {
 
       {editing && draft && (
         <Dialog
-          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle]">Update {editing.full_name}{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && <small className="ap-status-label inline-flex items-center p-[4px_7px] border border-[#353e57] rounded-[6px] [background:#1a2133] text-[#c5c9ff]! text-[10px]! [&.ap-endorsed-label]:p-0 [&.ap-endorsed-label]:border-0 [&.ap-endorsed-label]:[background:none] [&.ap-endorsed-label]:text-[color:var(--info)]! [&.ap-endorsed-label]:text-[14px]! [&.ap-endorsed-label]:font-[600] ap-endorsed-label" title="Lead source: this inquiry was endorsed before it was converted. The application stage is shown in the tracker.">Endorsed lead</small>}{editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && <span className="ml-2 text-[14px] font-[700] uppercase">({editing.preferred_brand?.name})</span>}</span>}
+          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle] font-[400]"><span className="text-[0.85rem]">Applicant:</span> <strong className="text-[1.05rem] font-[800] uppercase mr-2">{editing.full_name}</strong>{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && <span className="ml-2 text-[14px] font-[700] uppercase">{editing.preferred_brand?.name}</span>}</span>}
           onClose={closeEditor}
           modalClass={paymentsVisible && stage === 'payment_submitted' ? 'is-payment' : (isAdminRole && stage === 'converted' ? 'is-qualification' : '')}
           closeOnEscape={updateEscapeEnabled}
+          animated
           footer={(
             <>
               {/* Section 8: no Cancel beside Save Applicant — Reject sits there. */}
@@ -3983,14 +3989,24 @@ export default function Applicants() {
                   {acting ? 'APPROVING…' : 'APPROVE APPLICANT'}
                 </button>
               )}
-              {stage !== 'for_approval'
+              {footerPrimary && (
+                <button
+                  type="button"
+                  className="primary-button min-h-[42px] inline-flex items-center justify-center p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760] tracking-[.01em] ap-modal-save"
+                  disabled={acting || saving}
+                  onClick={() => setQualifiedConfirm(true)}
+                >
+                  {primary.label}
+                </button>
+              )}
+              {stage !== 'for_approval' && !footerPrimary
                 && (canEditDetails || (isSalesRole && ['converted', 'qualified'].includes(stage))) && (
                   <button
                     className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] ap-modal-save"
                     form="update-applicant-form"
                     disabled={saving || acting || !hasChanges}
                   >
-                    {saving ? 'SAVING…' : 'SAVE APPLICANT'}
+                    {saving ? 'SAVING…' : 'SAVE CHANGES'}
                   </button>
                 )}
             </>
@@ -4033,7 +4049,7 @@ export default function Applicants() {
               <Stepper items={stageItems} qualificationProgress={qualificationProgress} attendedProgress={scheduleAttendedProgress} loiProgress={loiProgress} scheduleHalves={scheduleHalves} />
 
               <div className="ap-actions flex flex-wrap items-center gap-[10px] mt-[14px]">
-                {primary && (
+                {primary?.enabled && (
                   <button
                     type="button"
                     className={`primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] [.ap-actions_&]:m-0 [.ap-actions_&:disabled]:text-[#7d879e] [.ap-actions_&:disabled]:border [.ap-actions_&:disabled]:border-[#2b344c] [.ap-actions_&:disabled]:[background:#131a29] later:[.ap-actions_&:disabled]:[box-shadow:none] [.ap-actions_&:disabled]:opacity-[1] [.ap-actions_&:disabled]:cursor-not-allowed later-2:[.ap-actions_&:disabled]:[transform:none] ${stage === 'converted' ? ' [#update-applicant-form_&]:min-h-[34px] [#update-applicant-form_&]:p-[0_16px] [#update-applicant-form_&]:border [#update-applicant-form_&]:border-[#6861d9] [#update-applicant-form_&]:rounded-[7px] [#update-applicant-form_&]:[background:linear-gradient(135deg,_#4d65d9,_#7757d9)] [#update-applicant-form_&]:[box-shadow:none] [#update-applicant-form_&]:text-[11px] [#update-applicant-form_&]:tracking-[.04em] [#update-applicant-form_&:disabled]:border-[#32394b] [#update-applicant-form_&:disabled]:[background:#202636] [#update-applicant-form_&:disabled]:text-[#737d93] [#update-applicant-form_&:disabled]:[box-shadow:none] [#update-applicant-form_&:disabled]:opacity-[1]' : ''}`}
@@ -4213,7 +4229,7 @@ export default function Applicants() {
 
             {stage !== 'payment_submitted' && doneSections}
 
-            {!['active_franchisee', 'rejected'].includes(editing.status) && (
+            {stage !== 'payment_submitted' && !['active_franchisee', 'rejected'].includes(editing.status) && (
               <FollowUpLog
                 items={editing.follow_ups || []}
                 events={editing.follow_up_events || []}
@@ -4263,7 +4279,7 @@ export default function Applicants() {
                 (they broke that modal's responsiveness) AND from For Approval
                 (the record above is the summary). Every other stage keeps it. */}
             {!['payment_submitted', 'for_approval'].includes(stage) && (
-              <details className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#141a28] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#101521] [#update-applicant-form_&]:[box-shadow:none] [&_summary]:tracking-[0.09em] [&_summary]:uppercase [&_summary]:text-[#e4e8f4] later:[&_summary]:text-[13px] [&_summary]:font-[700] [&_summary]:cursor-pointer [&[open]_summary]:mb-4 [#update-applicant-form_&_summary]:text-[12px] [.ap-dialog.is-payment_&]:mt-auto [.ap-dialog.is-payment_&[open]_.form-grid]:max-h-[38vh] [.ap-dialog.is-payment_&[open]_.form-grid]:overflow-y-auto [.ap-dialog.is-payment_&[open]_.form-grid]:[overscroll-behavior:contain] [.ap-dialog.is-payment_&[open]_.form-grid]:pr-1 [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar]:w-[6px] [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar-thumb]:[background:#39435b] [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar-thumb]:rounded-[99px]">
+              <details className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#0C111D] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#0C111D] [#update-applicant-form_&]:[box-shadow:none] [&_summary]:tracking-[0.09em] [&_summary]:uppercase [&_summary]:text-[#e4e8f4] later:[&_summary]:text-[13px] [&_summary]:font-[700] [&_summary]:cursor-pointer [&[open]_summary]:mb-4 [#update-applicant-form_&_summary]:text-[12px] [.ap-dialog.is-payment_&]:mt-auto [.ap-dialog.is-payment_&[open]_.form-grid]:max-h-[38vh] [.ap-dialog.is-payment_&[open]_.form-grid]:overflow-y-auto [.ap-dialog.is-payment_&[open]_.form-grid]:[overscroll-behavior:contain] [.ap-dialog.is-payment_&[open]_.form-grid]:pr-1 [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar]:w-[6px] [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar-thumb]:[background:#39435b] [.ap-dialog.is-payment_&[open]_.form-grid::-webkit-scrollbar-thumb]:rounded-[99px]">
                 <summary>Applicant details</summary>
                 <div className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3">
                   <Field label="Full name" required>
@@ -4277,9 +4293,6 @@ export default function Applicants() {
                     busy={acting}
                     onSave={savePreferredLocation}
                   />
-                  <Field label="Notes" full>
-                    <textarea value={draft.notes} disabled={!canEditDetails} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
-                  </Field>
                 </div>
               </details>
             )}
@@ -4298,6 +4311,34 @@ export default function Applicants() {
                 onReject={rejectPaymentEntry}
                 onMove={moveToForApproval}
                 onError={setActionError}
+              />
+            )}
+            {stage === 'payment_submitted' && !['active_franchisee', 'rejected'].includes(editing.status) && (
+              <FollowUpLog
+                items={editing.follow_ups || []}
+                events={editing.follow_up_events || []}
+                title="Follow-up"
+                id={FOLLOW_UP_SECTION_ID}
+                highlight={followUpFlash}
+                addLabel={isAssignedSales && ['overdue', 'stalled'].includes(editing.follow_up?.state) ? 'Log contact attempt' : 'Log follow-up'}
+                summary={(
+                  <FollowUpSummary
+                    applicant={editing}
+                    role={role}
+                    isAdmin={isAdminRole}
+                    isAssignedSales={isAssignedSales}
+                    busy={acting}
+                    onAction={(kind) => {
+                      if (kind === 'reassign') void openAssign();
+                      else if (kind === 'release') void runRequest(() => api.post(`/applicants/${editing.id}/hold/release`), 'Hold released.');
+                      else setFollowUpAction({ kind, applicant: editing });
+                    }}
+                  />
+                )}
+                canAdd={isAssignedSales && !editing.archived_at}
+                busy={acting}
+                onAdd={logApplicantFollowUp}
+                surfaceClass="[background:#0C111D]"
               />
             )}
             {editRequiredOpen && editing?.payment_record && (
@@ -4745,12 +4786,13 @@ export default function Applicants() {
           onClose={() => setAssignForm(null)}
           size="small"
           zIndex={2147482500}
+          animated
           footer={(
             <>
-              <button type="button" onClick={() => setAssignForm(null)}>Cancel</button>
+              <button type="button" className="min-h-[42px] min-w-[104px] inline-flex items-center justify-center p-[0_16px] border border-[#353e57] rounded-[12px] text-[#e7ebf5] [background:#1a2133] hover:[background:#222b42] transition-colors" onClick={() => setAssignForm(null)}>Cancel</button>
               <button
                 type="button"
-                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]"
+                className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] min-w-[104px] inline-flex items-center justify-center p-[0_16px] border border-transparent rounded-[12px] text-[#fff] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-[.55] disabled:cursor-not-allowed"
                 disabled={acting || !assignForm.assigned_sales_user_id || (Boolean(editing.assigned_sales_user_id) && assignForm.reason.trim().length < 5)}
                 onClick={() => void saveAssignment()}
               >
