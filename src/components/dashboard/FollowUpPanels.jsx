@@ -35,11 +35,11 @@ export function NeedsAttentionList() {
             <li key={row.id} className="grid grid-cols-[minmax(0,_1fr)_auto] items-center gap-[12px] p-[12px_18px] border-b border-b-line last:border-b-0 max-[561px]:grid-cols-1">
               <div className="grid gap-[3px] min-w-0">
                 <span className="flex flex-wrap items-center gap-[8px]">
-                  <button type="button" className="p-0 border-0 [background:transparent] text-text text-[14px] font-[700] cursor-pointer hover:underline focus-visible:[outline:2px_solid_var(--accent)] text-left" onClick={() => navigate('/applicants', { state: { focusApplicantId: row.id } })}>
+                  <button type="button" className="p-0 border-0 [background:transparent] text-text text-[14px] font-[700] cursor-pointer hover:underline focus-visible:[outline:2px_solid_var(--accent)] text-left" onClick={() => navigate('/applicants', { state: { focusApplicantId: row.id, focusFollowUp: true } })}>
                     {row.full_name}
                   </button>
                   {row.applicant_code && <small className="text-muted text-[12px] font-[600]">{row.applicant_code}</small>}
-                  <FollowUpChip followUp={row.follow_up} />
+                  <FollowUpChip followUp={row.follow_up} role="sales" onOpen={() => navigate('/applicants', { state: { focusApplicantId: row.id, focusFollowUp: true } })} />
                 </span>
                 <small className="text-text-secondary text-[12.5px]">
                   {row.status_label} · {row.follow_up.days} day{row.follow_up.days === 1 ? '' : 's'} without an update
@@ -77,7 +77,7 @@ export function FollowUpBySalesTable() {
     <div className="table-wrap overflow-x-auto">
       <table>
         <thead>
-          <tr><th>Sales user</th><th className="text-right">Overdue</th><th className="text-right">Stalled</th><th className="text-right">Waiting on Admin</th><th className="text-right">On hold</th></tr>
+          <tr><th>Sales user</th><th className="text-right">Overdue</th><th className="text-right">Stalled</th><th className="text-right">On hold</th></tr>
         </thead>
         <tbody>
           {rows.map((row) => (
@@ -85,7 +85,6 @@ export function FollowUpBySalesTable() {
               <td>{row.full_name}</td>
               {cell(row.overdue, 'text-[#fb923c] light:text-[#c2410c]')}
               {cell(row.stalled, 'text-[#f87171] light:text-[#b91c1c]')}
-              {cell(row.waiting_admin, 'text-[#60a5fa] light:text-[#1d4ed8]')}
               {cell(row.on_hold, 'text-text-secondary')}
             </tr>
           ))}

@@ -1,29 +1,34 @@
-// Applicant follow-up: Overdue / Stalled / Waiting on Admin / On hold, computed in one SQL join so the
-// list, its filter and sort, the applicant detail and the dashboards all agree.
+// Applicant follow-up: Overdue / Stalled / On hold, computed in one SQL join so the list, its filter and
+// sort, the applicant detail and the dashboards all agree.
 //
 // The timer starts at the latest of: entering the current stage, the last Sales action on the applicant
 // (any action record by a Sales user, or an activity a Sales user scheduled/requested), and it is paused
 // for the latest hold. Then, in order:
 //   closed (archived, Approved, Active Franchisee, Rejected) -> no state
 //   on hold (until a future date)                            -> 'on_hold'
-//   anything waiting for Admin                               -> 'waiting_admin' (counts against Admin)
+//   anything waiting for Admin review                        -> not counted (no state; it is on Admin)
 //   an upcoming scheduled activity                           -> on track
 //   the latest follow-up's next action date not reached      -> on track
 //   >= stalled_days without an update                        -> 'stalled'
-//   >= overdue_days, or that next action date passed         -> 'overdue'
+//   >= overdue_days, that next action date passed, or a past
+//   activity never marked complete with no Sales update since -> 'overdue'
+// Requirement rows whose key is no longer in the requirement config (e.g. business_background) are ignored.
+// "reminded": Admin sent a reminder in the current episode (cleared by a Sales update or a stage change).
 // There is no scheduler: the automatic alerts run (throttled) when the bell or the applicant list loads.
 import type { Db, Row } from '../lib/db.ts';
 import { notifyRoles, notifyUser } from './notifications.ts';
 import { OVERDUE_FOLLOW_UP_REASONS, STAGE_ENTERED_SQL } from './monitoring.ts';
 import { activityLabel, stageLabel } from './pipeline.ts';
-import { requirementDef } from './requirements.ts';
+import { REQUIREMENTS } from './requirements.ts';
 
 export const DEFAULT_THRESHOLDS = { overdue_days: 7, stalled_days: 14 };
 export const REMINDER_COOLDOWN_HOURS = 24;
 export const ALERT_INTERVAL_MINUTES = 5;
 /** Stages that are never followed up (Approved waits for the franchisee to accept the invite). */
 export const NO_FOLLOW_UP_STAGES = ['approved', 'active_franchisee', 'rejected'];
-export const FOLLOW_UP_STATES = ['overdue', 'stalled', 'waiting_admin', 'on_hold'] as const;
+export const FOLLOW_UP_STATES = ['overdue', 'stalled', 'on_hold'] as const;
+/** Only the current requirement config counts; retired keys never mean "waiting for Admin". */
+const CURRENT_REQUIREMENT_KEYS = REQUIREMENTS.map((r) => `'${r.key.replace(/'/g, "''")}'`).join(', ');
 export const FOLLOW_UP_REASONS = OVERDUE_FOLLOW_UP_REASONS;
 
 const SETTINGS = `(select s from follow_up_settings s order by s.id desc limit 1)`;
@@ -32,15 +37,18 @@ const NAME_OF = (expr: string) => `(select full_name from users where id = ${exp
 /** `left join lateral (...) fu on true` for an applicants alias: fu.state, fu.idle_days, fu.clock_at, ... */
 export function followUpJoin(a: string): string {
   return `left join lateral (
+  select v.*, (v.state in ('overdue', 'stalled') and v.last_reminder is not null and (v.last_reminder ->> 'at')::timestamptz >= v.clock_at) as reminded
+  from (
   select z.*,
     case
       when z.closed then null
       when z.hold_active then 'on_hold'
-      when z.waiting is not null then 'waiting_admin'
+      when z.waiting is not null then null
       when z.upcoming_at is not null then null
       when z.next_action_at is not null and z.next_action_at > now() then null
       when z.idle_days >= z.stalled_days then 'stalled'
       when z.idle_days >= z.overdue_days or z.next_action_at is not null then 'overdue'
+      when z.missed is not null and (z.sales_at is null or z.sales_at < (z.missed ->> 'at')::timestamptz) then 'overdue'
     end as state
   from (
     select y.*, greatest(0, floor(extract(epoch from (now() - y.clock_at)) / 86400))::int as idle_days,
@@ -66,7 +74,8 @@ export function followUpJoin(a: string): string {
             ) as sales_at,
             coalesce(
               (select jsonb_build_object('kind', 'requirement', 'key', r.requirement_key, 'at', r.submitted_at) from applicant_requirements r
-                where r.applicant_id = ${a}.id and r.status = 'submitted' order by r.submitted_at nulls last, r.id limit 1),
+                where r.applicant_id = ${a}.id and r.status = 'submitted' and r.requirement_key in (${CURRENT_REQUIREMENT_KEYS})
+                order by r.submitted_at nulls last, r.id limit 1),
               (select jsonb_build_object('kind', 'activity_approval', 'key', s.activity_type, 'at', s.updated_at) from activity_schedules s
                 where s.applicant_id = ${a}.id and s.approval_status = 'pending_admin' and s.status in ('pending', 'confirmed') order by s.updated_at, s.id limit 1),
               (select jsonb_build_object('kind', 'activity_review', 'key', s.activity_type, 'at', coalesce(s.completion_submitted_at, s.updated_at)) from activity_schedules s
@@ -79,6 +88,10 @@ export function followUpJoin(a: string): string {
             ) as waiting,
             (select min(s.starts_at) from activity_schedules s where s.applicant_id = ${a}.id and s.starts_at > now()
               and s.status in ('pending', 'confirmed') and s.approval_status <> 'rejected') as upcoming_at,
+            (select jsonb_build_object('type', s.activity_type, 'at', s.ends_at) from activity_schedules s
+              where s.applicant_id = ${a}.id and s.status in ('pending', 'confirmed') and s.approval_status <> 'rejected'
+                and s.ends_at < now() and s.completed_at is null and s.cancelled_at is null and (s.review_status is null or s.review_status = 'returned')
+              order by s.ends_at desc, s.id desc limit 1) as missed,
             (select f.created_at from follow_ups f where f.followable_type = 'applicant' and f.followable_id = ${a}.id order by f.created_at desc, f.id desc limit 1) as latest_follow_up_at,
             (select f.next_follow_up_at from follow_ups f where f.followable_type = 'applicant' and f.followable_id = ${a}.id order by f.created_at desc, f.id desc limit 1) as latest_next_at,
             (select to_jsonb(e) from (
@@ -100,31 +113,19 @@ export function followUpJoin(a: string): string {
       ) x
     ) y
   ) z
+  ) v
 ) fu on true`;
 }
 
 /** The columns a list adds next to applicants.* (prefixed fu_ so nothing collides). */
 export const FOLLOW_UP_COLUMNS = `fu.state as fu_state, fu.idle_days as fu_idle_days, fu.clock_at as fu_clock_at, fu.entered_at as fu_entered_at,
-  fu.waiting as fu_waiting, fu.upcoming_at as fu_upcoming_at, fu.next_action_at as fu_next_action_at, fu.last_update as fu_last_update,
+  fu.reminded as fu_reminded, fu.missed as fu_missed, fu.upcoming_at as fu_upcoming_at, fu.next_action_at as fu_next_action_at, fu.last_update as fu_last_update,
   fu.last_reminder as fu_last_reminder, fu.last_follow_up as fu_last_follow_up, fu.overdue_days as fu_overdue_days, fu.stalled_days as fu_stalled_days`;
 
 const day = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' });
 const dayTime = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-function waitingText(w: Row): string {
-  const at = w.at ? ` ${day.format(new Date(w.at))}` : '';
-  switch (w.kind) {
-    case 'requirement': return `${requirementDef(w.key)?.label ?? String(w.key).replace(/_/g, ' ')} submitted${at}, waiting for Admin review`;
-    case 'activity_approval': return `${activityLabel(String(w.key))} schedule requested${at}, waiting for Admin approval`;
-    case 'activity_review': return `${activityLabel(String(w.key))} marked complete${at}, waiting for Admin to confirm attendance`;
-    case 'payment': return `Payment entry submitted${at}, waiting for Admin verification`;
-    case 'brand_confirmation': return `Brand Confirmation submitted${at}, waiting for Admin`;
-    case 'for_approval': return 'For approval: waiting for Admin to approve';
-    default: return 'Waiting for Admin';
-  }
-}
 
 /** The API shape of an applicant's follow-up state, from a row carrying the fu_* columns. */
 export function followUpView(row: Row): Row {
@@ -141,10 +142,9 @@ export function followUpView(row: Row): Row {
     days = idle;
     const passed = row.fu_next_action_at && new Date(row.fu_next_action_at).getTime() <= Date.now()
       ? ` · next action date ${day.format(new Date(row.fu_next_action_at))} passed` : '';
-    tooltip = `${plural(idle, 'day')} in ${stage}, ${lastText}${passed}`;
-  } else if (state === 'waiting_admin') {
-    days = row.fu_waiting?.at ? Math.max(0, Math.floor((Date.now() - new Date(row.fu_waiting.at).getTime()) / 86400e3)) : null;
-    tooltip = `Waiting on Admin: ${waitingText(row.fu_waiting ?? {})}`;
+    const missed = row.fu_missed?.at && (!last?.at || new Date(last.at).getTime() < new Date(row.fu_missed.at).getTime())
+      ? `${activityLabel(String(row.fu_missed.type))} on ${day.format(new Date(row.fu_missed.at))} was not marked complete · ` : '';
+    tooltip = `${missed}${plural(idle, 'day')} in ${stage}, ${lastText}${passed}`;
   } else if (state === 'on_hold') {
     tooltip = `On hold until ${dayTime.format(new Date(row.on_hold_until))}${row.on_hold_reason ? `: ${row.on_hold_reason}` : ''}`;
   }
@@ -157,7 +157,8 @@ export function followUpView(row: Row): Row {
     overdue_days: Number(row.fu_overdue_days ?? DEFAULT_THRESHOLDS.overdue_days),
     stalled_days: Number(row.fu_stalled_days ?? DEFAULT_THRESHOLDS.stalled_days),
     last_update: last?.at ? { at: iso(last.at), by: last.by_name ?? null, what: last.what ?? null } : null,
-    waiting: row.fu_waiting ? { kind: row.fu_waiting.kind, text: waitingText(row.fu_waiting), at: iso(row.fu_waiting.at) } : null,
+    /** Admin sent a reminder in this episode (until Sales updates or the stage changes). */
+    reminded: Boolean(row.fu_reminded) && (state === 'overdue' || state === 'stalled'),
     upcoming_activity_at: iso(row.fu_upcoming_at),
     next_action_at: iso(row.fu_next_action_at),
     last_reminder: lastReminder ? { at: iso(lastReminder.at), by: lastReminder.by ?? null, to: lastReminder.to ?? null, message: lastReminder.message ?? null } : null,

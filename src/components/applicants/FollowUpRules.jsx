@@ -46,7 +46,7 @@ export default function FollowUpRules() {
         <p className="m-0 text-[14px] text-text-secondary leading-[1.6]">
           An applicant is <strong className="text-text">Overdue</strong> after this many days in the same stage with no Sales update (stage move, follow-up,
           requirement, activity or payment submission), and <strong className="text-text">Stalled</strong> after the second number. Not counted: an upcoming
-          scheduled activity, anything waiting for Admin ("Waiting on Admin"), and time on hold.
+          scheduled activity, anything waiting for Admin review, and time on hold.
         </p>
       </div>
       <div className="flex flex-wrap gap-[18px]">

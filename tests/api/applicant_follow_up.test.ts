@@ -60,7 +60,7 @@ test('Overdue at 7+ days and Stalled at 14+ days without a Sales update; a Sales
   assert.equal((await state(requested)).state, null);
 });
 
-test('not Overdue with an upcoming activity; Waiting on Admin when something waits for Admin; Approved and closed are excluded', async () => {
+test('not Overdue with an upcoming activity or while waiting for Admin review (silently, no state); Approved and closed are excluded', async () => {
   const upcoming = await applicant(20);
   await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, approval_status, scheduled_by_user_id)
     values ($1, 'training', 'Training', now() + interval '2 days', now() + interval '2 days 2 hours', 'confirmed', 'immediate', $2)`, [upcoming, adminUser.id]);
@@ -69,22 +69,46 @@ test('not Overdue with an upcoming activity; Waiting on Admin when something wai
   const requirement = await applicant(20, 'loi_submitted');
   await q(`insert into applicant_requirements (applicant_id, requirement_key, stage, status, data, submitted_at) values ($1, 'proposed_site', 'loi', 'submitted', '{}', now() - interval '3 days')`, [requirement]);
   const waiting = await state(requirement);
-  assert.equal(waiting.state, 'waiting_admin');
-  assert.match(waiting.tooltip, /Proposed site submitted .*waiting for Admin review/);
+  assert.deepEqual([waiting.state, waiting.tooltip, 'waiting' in waiting], [null, null, false], 'no Waiting on Admin state or text');
 
   const payment = await applicant(20, 'payment_submitted');
   await q(`insert into payments (applicant_id, payment_type, payment_date, payment_method, or_number, status, recorded_by_user_id) values ($1, 'payment_record', '2026-11-01', 'cash', 'OR-FU-1', 'pending', $2)`, [payment, salesUser.id]);
-  assert.equal((await state(payment)).state, 'waiting_admin');
+  assert.equal((await state(payment)).state, null);
 
   const approval = await applicant(20, 'scheduled');
   await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, approval_status, scheduled_by_user_id)
     values ($1, 'training', 'Training', now() - interval '1 day', now() - interval '1 day', 'pending', 'pending_admin', $2)`, [approval, adminUser.id]);
-  assert.equal((await state(approval)).state, 'waiting_admin');
+  assert.equal((await state(approval)).state, null);
 
-  assert.equal((await state(await applicant(20, 'for_approval'))).state, 'waiting_admin');
+  assert.equal((await state(await applicant(20, 'for_approval'))).state, null);
+  assert.ok(firstError(await call('GET', '/applicants?follow_up=waiting_admin', { token: admin })), 'no Waiting on Admin filter');
   assert.equal((await state(await applicant(20, 'approved'))).state, null, 'Approved (waiting for the franchisee) is not followed up');
   const archived = await applicant(20, 'scheduled', { archived_at: new Date().toISOString() });
   assert.equal((await state(archived)).state, null);
+});
+
+test('retired requirement rows (not in the requirement config) never count as waiting for Admin', async () => {
+  const id = await applicant(9, 'scheduled');
+  await q(`insert into applicant_requirements (applicant_id, requirement_key, stage, status, data, submitted_at) values ($1, 'business_background', 'qualification', 'submitted', '{}', now() - interval '5 days')`, [id]);
+  assert.equal((await state(id)).state, 'overdue', 'the legacy row is ignored');
+});
+
+test('a past activity never marked complete makes it Overdue (as for Susan Enriquez), until Sales updates it', async () => {
+  // Scheduling for 4 days (under 7), Orientation/Tasting confirmed for 2 days ago and never completed.
+  const id = await applicant(4, 'scheduled');
+  await q(`insert into applicant_requirements (applicant_id, requirement_key, stage, status, data, submitted_at) values ($1, 'business_background', 'qualification', 'submitted', '{}', now() - interval '5 days')`, [id]);
+  await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, approval_status, scheduled_by_user_id)
+    values ($1, 'orientation', 'Orientation/Tasting', now() - interval '2 days 2 hours', now() - interval '2 days', 'confirmed', 'immediate', $2)`, [id, adminUser.id]);
+  const view = await state(id);
+  assert.deepEqual([view.state, view.days], ['overdue', 4]);
+  assert.match(view.tooltip, /^Orientation\/Tasting on .* was not marked complete · 4 days in Scheduled/);
+  await salesAction(id, 1);
+  assert.equal((await state(id)).state, null, 'a Sales update after the missed activity clears it');
+  // Completed (or submitted for Admin review) activities are not missed.
+  const done = await applicant(4, 'scheduled');
+  await q(`insert into activity_schedules (applicant_id, activity_type, title, starts_at, ends_at, status, approval_status, scheduled_by_user_id, review_status)
+    values ($1, 'orientation', 'Orientation/Tasting', now() - interval '2 days 2 hours', now() - interval '2 days', 'confirmed', 'immediate', $2, 'submitted')`, [done, adminUser.id]);
+  assert.equal((await state(done)).state, null);
 });
 
 test('thresholds come from Admin settings (Admin only, validated, audited)', async () => {
@@ -177,6 +201,8 @@ test('Send reminder: Admin only, Overdue/Stalled only, 1 per applicant per 24h, 
   assert.equal(sent.json.message, `Reminder sent to ${salesUser.full_name}.`);
   assert.equal(sent.json.data.follow_up.last_reminder.by, 'System Administrator');
   assert.ok(sent.json.data.follow_up.next_reminder_at, 'the next reminder time is known');
+  assert.equal(sent.json.data.follow_up.reminded, true, 'the chip reads Reminder sent / Reminder from Admin');
+  assert.equal(sent.json.data.follow_up.state, 'overdue', 'still Overdue underneath');
   const [bell] = await notes(sales, 'applicant_reminder', id);
   assert.match(bell.title, /^Reminder from Admin: Fu Person \d+$/);
   assert.equal(bell.message, 'Please call them today.');
@@ -188,6 +214,15 @@ test('Send reminder: Admin only, Overdue/Stalled only, 1 per applicant per 24h, 
   assert.equal((await q(`select count(*)::int c from applicant_stage_histories where event = 'follow_up_reminder_sent' and applicant_id = $1`, [id]))[0].c, 1);
   const events = (await call('GET', `/applicants/${id}`, { token: admin })).json.data.follow_up_events;
   assert.equal(events[0].kind, 'reminder');
+  // "Reminder sent" lasts until Sales updates or the stage changes (both start a new timer).
+  const bySales = await applicant(9);
+  await call('POST', `/applicants/${bySales}/reminders`, { token: admin, body: { message: 'Please call them today.' } });
+  assert.equal((await state(bySales)).reminded, true);
+  await q(`insert into applicant_stage_histories (applicant_id, from_stage, to_stage, changed_by_user_id, changed_at, actor_role, event)
+    select id, status, status, $2, now() + interval '1 second', 'sales', 'assessment_saved' from applicants where id = $1`, [bySales, salesUser.id]);
+  assert.deepEqual([(await state(bySales)).state, (await state(bySales)).reminded], [null, false], 'a Sales update ends it');
+  await q(`insert into applicant_stage_histories (applicant_id, from_stage, to_stage, changed_by_user_id, changed_at, actor_role) values ($1, 'converted', 'scheduled', $2, now() + interval '1 second', 'admin')`, [id, adminUser.id]);
+  assert.equal((await state(id)).reminded, false, 'a stage change ends it');
 
   // After 24 hours another reminder may be sent.
   const old = await applicant(9);
@@ -265,6 +300,7 @@ test('lists: follow-up filter, Sales pinned group, Needs attention, per-Sales co
   const bySales = (await call('GET', '/applicants/follow-up-by-sales', { token: admin })).json.data;
   const other = bySales.rows.find((r: any) => r.sales_user_id === otherSalesUser.id);
   assert.ok(other.stalled >= 1);
+  assert.ok(!('waiting_admin' in other), 'no Waiting on Admin count');
   assert.ok(bySales.totals.stalled >= 2);
 });
 

@@ -831,7 +831,7 @@ function DashboardBody({ role, panels }) {
       case 'needsAttention':
         return <PanelShell key="needsAttention" title="Needs attention" subtitle="Your Overdue and Stalled applicants, most days first"><NeedsAttentionList /></PanelShell>;
       case 'followUpBySales':
-        return <PanelShell key="followUpBySales" title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user (Waiting on Admin counts against Admin)"><FollowUpBySalesTable /></PanelShell>;
+        return <PanelShell key="followUpBySales" title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user"><FollowUpBySalesTable /></PanelShell>;
       case 'kpi':
         return <KpiGrid key="kpi" role={role} kpi={overview.data?.kpis} loading={overview.loading} error={overview.error} />;
       case 'inquiryAcquisition':

@@ -118,11 +118,11 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
     if (name !== 'franchisee') f.add(`applicants.status not in ('active_franchisee', 'rejected')`);
   }
   if (q.status) f.add('applicants.status = ?', q.status);
-  // Follow-up filter: overdue | stalled | waiting_admin | on_hold, or attention (overdue + stalled).
+  // Follow-up filter: overdue | stalled | on_hold, or attention (overdue + stalled).
   const followUp = name === 'franchisee' ? '' : String(q.follow_up ?? '');
   if (followUp === 'attention') f.add("fu.state in ('overdue', 'stalled')");
   else if (followUp) {
-    if (!(FOLLOW_UP_STATES as readonly string[]).includes(followUp)) fail('follow_up', 'Choose Overdue, Stalled, Waiting on Admin or On hold.');
+    if (!(FOLLOW_UP_STATES as readonly string[]).includes(followUp)) fail('follow_up', 'Choose Overdue, Stalled or On hold.');
     f.add('fu.state = ?', followUp);
   }
   if (boolParam(q.eligible_for_scheduling)) f.add(`applicants.status = 'scheduled'`);
