@@ -4787,6 +4787,7 @@ export default function Applicants() {
           onClose={() => setAssignForm(null)}
           size="small"
           zIndex={2147482500}
+          animated
           footer={(
             <>
               <button type="button" onClick={() => setAssignForm(null)}>Cancel</button>
