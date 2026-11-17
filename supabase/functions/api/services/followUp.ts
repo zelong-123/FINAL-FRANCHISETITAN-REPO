@@ -30,6 +30,8 @@ export const FOLLOW_UP_STATES = ['overdue', 'stalled', 'on_hold'] as const;
 /** Only the current requirement config counts; retired keys never mean "waiting for Admin". */
 const CURRENT_REQUIREMENT_KEYS = REQUIREMENTS.map((r) => `'${r.key.replace(/'/g, "''")}'`).join(', ');
 export const FOLLOW_UP_REASONS = OVERDUE_FOLLOW_UP_REASONS;
+/** Notification types about applicant follow-up: the bell shows them in its Follow-ups tab only. */
+export const FOLLOW_UP_NOTIFICATION_TYPES = ['applicant_overdue', 'applicant_stalled', 'applicant_reminder', 'applicant_follow_up_logged', 'applicant_on_hold'];
 
 const SETTINGS = `(select s from follow_up_settings s order by s.id desc limit 1)`;
 const NAME_OF = (expr: string) => `(select full_name from users where id = ${expr})`;

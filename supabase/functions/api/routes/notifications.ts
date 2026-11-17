@@ -5,9 +5,17 @@ import { abort, boolParam, ok, paginate, perPage, routeId } from '../lib/http.ts
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound } from '../lib/middleware.ts';
 import { deliverDueReminders } from '../services/monitoring.ts';
-import { runFollowUpAlertsQuietly } from '../services/followUp.ts';
+import { FOLLOW_UP_NOTIFICATION_TYPES, runFollowUpAlertsQuietly } from '../services/followUp.ts';
 
 export const notificationRoutes = new Hono<AppEnv>();
+
+/** Optional scope: general (everything but follow-up) or follow_up; without it every notification (as before). */
+function scopeClause(scope: unknown): string | null {
+  const types = FOLLOW_UP_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
+  if (scope === 'general') return `type not in (${types})`;
+  if (scope === 'follow_up') return `type in (${types})`;
+  return null;
+}
 
 const RECORD_KEYS: Record<string, string> = {
   applicant: 'applicant_id',
@@ -23,6 +31,8 @@ notificationRoutes.get('/', async (c) => {
   await runFollowUpAlertsQuietly(db);
   const where = ['user_id = $1'];
   if (boolParam(c.req.query('unread_only'))) where.push('read_at is null');
+  const scoped = scopeClause(c.req.query('scope'));
+  if (scoped) where.push(scoped);
   return paginate(c, db, {
     columns: '*', from: 'system_notifications', where, params: [c.get('user').id],
     orderBy: 'created_at desc, id desc', perPage: perPage(c, 30),
@@ -45,7 +55,8 @@ notificationRoutes.post('/mark-seen', async (c) => {
 });
 
 notificationRoutes.patch('/read-all', async (c) => {
-  await c.get('deps').db.query(`update system_notifications set read_at = now() where user_id = $1 and read_at is null`, [c.get('user').id]);
+  const scoped = scopeClause(c.req.query('scope'));
+  await c.get('deps').db.query(`update system_notifications set read_at = now() where user_id = $1 and read_at is null${scoped ? ` and ${scoped}` : ''}`, [c.get('user').id]);
   return ok(c, null, 'All notifications marked as read.');
 });
 

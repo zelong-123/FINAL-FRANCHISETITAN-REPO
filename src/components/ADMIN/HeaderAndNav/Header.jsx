@@ -16,6 +16,12 @@ import { NAVIGATION } from '../../../lib/roleAccess';
 import { roleTheme } from '../../../lib/roleTheme';
 import ProfileModal from './ProfileModal';
 import { notificationTarget } from '../../../lib/notificationRoutes';
+import {
+  bellBadge, defaultTab, followUpCount, hasNewFollowUp, SHAKE_DURATION_MS, SHAKE_EVERY_MS, shouldShake,
+} from '../../../lib/bellState';
+import { Notice } from '../../ApiUi';
+import { FollowUpDialogs } from '../../applicants/FollowUp';
+import FollowUpsTab from './FollowUpsTab';
 import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
 import { useTheme } from '../../../context/ThemeContext';
@@ -37,6 +43,18 @@ export default function Header({ onMenu, mobileOpen }) {
   const [error, setError] = useState('');
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  // Follow-ups tab (Admin and Sales): the live Overdue / Stalled (/ On hold for Sales) applicants.
+  const hasFollowUps = role === 'admin' || role === 'sales';
+  const scope = hasFollowUps ? { scope: 'general' } : {};
+  const [tab, setTab] = useState('notifications');
+  const [followUps, setFollowUps] = useState(null);
+  const [followUpNotes, setFollowUpNotes] = useState([]);
+  const [followUpError, setFollowUpError] = useState('');
+  const [followUpAction, setFollowUpAction] = useState(null);
+  const [followUpDone, setFollowUpDone] = useState('');
+  const followUpIds = useRef(null);
+  const bellIconRef = useRef(null);
+  const followUpTotal = hasFollowUps ? followUpCount(followUps || [], role) : 0;
   const [profileOpen, setProfileOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState('checking');
   const pageCrumbs = getBreadcrumbs(location.pathname, location.search);
@@ -52,7 +70,7 @@ export default function Header({ onMenu, mobileOpen }) {
   const loadNotifications = async () => {
     setNotificationLoading(true);
     try {
-      const response = await api.get('/notifications', { per_page: 10 });
+      const response = await api.get('/notifications', { per_page: 10, ...scope });
       setNotifications(response.data || []);
       setError('');
     } catch (requestError) {
@@ -65,29 +83,80 @@ export default function Header({ onMenu, mobileOpen }) {
   // The badge counts EVERY unread notification (not just the ten in the popover).
   const refreshUnreadCount = async () => {
     try {
-      const response = await api.get('/notifications', { per_page: 1, unread_only: 1 });
+      const response = await api.get('/notifications', { per_page: 1, unread_only: 1, ...scope });
       setUnreadCount(Number(response.meta?.total ?? 0));
     } catch {
       // Keep the last known count when the poll fails.
     }
   };
 
+  /** One shake of the bell icon (transform only: the header layout never moves). */
+  const shakeBell = () => {
+    const icon = bellIconRef.current;
+    if (!icon?.animate) return;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    if (!shouldShake({ followUps: 1, reducedMotion })) return;
+    icon.animate(
+      [0, -16, 14, -12, 10, -6, 4, 0].map((deg) => ({ transform: `rotate(${deg}deg)` })),
+      { duration: SHAKE_DURATION_MS, easing: 'ease-in-out' },
+    );
+  };
+
+  const refreshFollowUps = async () => {
+    if (!hasFollowUps) return;
+    try {
+      const response = await api.get('/applicants/needs-attention');
+      const rows = response.data || [];
+      const ids = rows.filter((row) => followUpCount([row], role)).map((row) => row.id);
+      if (hasNewFollowUp(followUpIds.current, ids)) shakeBell();
+      followUpIds.current = ids;
+      setFollowUps(rows);
+      setFollowUpError('');
+    } catch (requestError) {
+      setFollowUpError(firstValidationMessage(requestError));
+    }
+  };
+
+  // Admin: the recent "Follow-up logged" notifications from Sales, under the Follow-ups list.
+  const loadFollowUpNotes = async () => {
+    if (role !== 'admin') return;
+    try {
+      const response = await api.get('/notifications', { per_page: 30, scope: 'follow_up' });
+      setFollowUpNotes((response.data || []).filter((item) => item.type === 'applicant_follow_up_logged').slice(0, 10));
+    } catch {
+      // The list above still works.
+    }
+  };
+
+  // While there are follow-up items the bell shakes about every 12 seconds (never with reduced motion).
+  useEffect(() => {
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    if (!shouldShake({ followUps: followUpTotal, reducedMotion })) return undefined;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') shakeBell();
+    }, SHAKE_EVERY_MS);
+    return () => window.clearInterval(interval);
+  }, [followUpTotal]);
+
   // The popover list loads when it is opened (toggleNotifications). On mount only the
   // badge count is fetched, so a page load costs one notification request, not two.
   // Live badge: new activity anywhere in the system shows the red count within 30s.
   useEffect(() => {
-    const refresh = () => void refreshUnreadCount();
+    const refresh = () => { void refreshUnreadCount(); void refreshFollowUps(); };
     void refreshUnreadCount();
+    void refreshFollowUps();
     // Opening a record marks it seen; refresh the badge in the same beat as the
     // sidebar dots instead of waiting for the 30s poll.
     window.addEventListener('herald:notifications-updated', refresh);
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshUnreadCount();
+      if (document.visibilityState === 'visible') { void refreshUnreadCount(); void refreshFollowUps(); }
     }, 30000);
     return () => {
       window.removeEventListener('herald:notifications-updated', refresh);
       window.clearInterval(interval);
     };
+    // Mount-only polling (as before); the loaders read the current role and state when they run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -127,6 +196,9 @@ export default function Header({ onMenu, mobileOpen }) {
     const next = !open;
     setOpen(next);
     if (next) {
+      if (hasFollowUps) setTab(defaultTab({ followUps: followUpTotal, generalUnread: unreadCount }));
+      void refreshFollowUps();
+      void loadFollowUpNotes();
       await loadNotifications();
       // Re-sync the badge and the sidebar dots to the real unread total.
       await refreshUnreadCount();
@@ -136,7 +208,7 @@ export default function Header({ onMenu, mobileOpen }) {
 
   const markAllRead = async () => {
     try {
-      await api.patch('/notifications/read-all', {});
+      await api.patch(hasFollowUps ? '/notifications/read-all?scope=general' : '/notifications/read-all', {});
       setNotifications((items) => items.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() })));
       setUnreadCount(0);
       // Clear the on-tab red dots in the same beat as the bell badge.
@@ -163,6 +235,13 @@ export default function Header({ onMenu, mobileOpen }) {
   };
 
   // Where a notification leads (see lib/notificationRoutes.js). Unknown types just mark as read.
+
+  /** A follow-up row (or note): open the applicant at its Follow-up section. */
+  const openFollowUp = (applicantId) => {
+    setOpen(false);
+    if (applicantId) navigate('/applicants', { state: { focusApplicantId: applicantId, focusFollowUp: true } });
+  };
+  const badge = bellBadge({ followUps: followUpTotal, generalUnread: unreadCount });
 
   return (
     <header className="herald-header sticky top-0 z-40 min-h-[var(--header-height)] flex items-center justify-between gap-5 p-[0_clamp(18px,_3vw,_34px)] border-b border-b-line [background:color-mix(in_srgb,_var(--bg)_82%,_transparent)] [backdrop-filter:blur(22px)_saturate(140%)] max-[681px]:later:p-[0_13px]">
@@ -227,28 +306,62 @@ export default function Header({ onMenu, mobileOpen }) {
             type="button"
             className="w-[40px] h-[40px] inline-grid place-items-center flex-[0_0_auto] p-0 border border-transparent rounded-[12px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_border-color_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:border-line hover:[transform:translateY(-1px)]"
             onClick={toggleNotifications}
-            aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
+            aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}${followUpTotal ? `, ${followUpTotal} follow-up${followUpTotal === 1 ? '' : 's'}` : ''}`}
             aria-expanded={open}
           >
-            <FaBell />
-            {unreadCount > 0 && <span className="absolute right-[2px] top-[1px] min-w-[17px] h-[17px] grid place-items-center p-[0_4px] border-[2px] border-bg rounded-[999px] text-[#fff] [background:var(--danger)] [box-shadow:0_4px_10px_color-mix(in_srgb,_var(--danger)_30%,_transparent)] text-[8px] font-[850]">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+            <span ref={bellIconRef} className="inline-grid place-items-center [transform-origin:50%_15%]"><FaBell /></span>
+            {badge > 0 && <span className="absolute right-[2px] top-[1px] min-w-[17px] h-[17px] grid place-items-center p-[0_4px] border-[2px] border-bg rounded-[999px] text-[#fff] [background:var(--danger)] [box-shadow:0_4px_10px_color-mix(in_srgb,_var(--danger)_30%,_transparent)] text-[8px] font-[850]">{badge > 99 ? '99+' : badge}</span>}
           </button>
 
           {open && (
-            <section className="absolute right-0 top-[49px] w-[min(400px,_calc(100vw_-_28px))] max-h-[min(560px,_calc(100vh_-_98px))] overflow-auto border border-line-strong rounded-[18px] [background:color-mix(in_srgb,_var(--panel)_97%,_transparent)] [box-shadow:var(--shadow-lg)] [backdrop-filter:blur(24px)] [animation:popoverIn_.2s_cubic-bezier(.2,_.8,_.2,_1)_both] max-[451px]:later:fixed max-[451px]:later:top-[62px] max-[451px]:later:right-[10px] max-[451px]:later:left-[10px] max-[451px]:later:w-auto" aria-label="Notifications">
+            <section className="absolute right-0 top-[49px] w-[min(520px,_calc(100vw_-_28px))] max-h-[min(720px,_calc(100vh_-_90px))] overflow-auto [overscroll-behavior:contain] border border-line-strong rounded-[18px] [background:color-mix(in_srgb,_var(--panel)_97%,_transparent)] [box-shadow:var(--shadow-lg)] [backdrop-filter:blur(24px)] [animation:popoverIn_.2s_cubic-bezier(.2,_.8,_.2,_1)_both] max-[451px]:later:fixed max-[451px]:later:top-[62px] max-[451px]:later:right-[10px] max-[451px]:later:left-[10px] max-[451px]:later:w-auto" aria-label="Notifications">
               <div className="sticky top-0 z-2 flex items-center justify-between gap-[14px] p-[15px_16px] border-b border-b-line [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [backdrop-filter:blur(18px)] [&>div]:flex [&>div]:flex-col [&>div]:gap-[3px] later:[&_strong]:text-[12px] [&_span]:text-muted later:[&_span]:text-[8px] [&_button]:inline-flex [&_button]:items-center [&_button]:gap-[5px] [&_button]:p-[6px_8px] [&_button]:border-0 [&_button]:rounded-[8px] [&_button]:text-accent-text [&_button]:[background:transparent] [&_button]:text-[8px] [&_button]:font-[760] [&_button:hover:not(:disabled)]:[background:var(--hover)]">
-                <div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread` : 'You are all caught up'}</span></div>
-                <button type="button" onClick={markAllRead} disabled={!unreadCount}><FaCheck /> Mark all read</button>
+                {hasFollowUps ? (
+                  <div role="tablist" aria-label="Notification sections" className="flex! flex-row! items-center gap-[6px]!">
+                    {[['notifications', 'Notifications', unreadCount], ['follow_ups', 'Follow-ups', followUpTotal]].map(([key, label, count]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === key}
+                        className={`gap-[7px]! p-[7px_12px]! rounded-[10px]! text-[15px]! font-[750]! ${tab === key ? 'text-text! [background:var(--hover)]!' : 'text-muted!'}`}
+                        onClick={() => setTab(key)}
+                      >
+                        {label}
+                        {count > 0 && <span className="min-w-[20px] h-[20px] inline-grid place-items-center p-[0_6px] rounded-[999px] text-[#fff]! [background:var(--danger)] text-[12px]! font-[800]">{count > 99 ? '99+' : count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div><strong className="text-[15px]!">Notifications</strong><span className="text-[12px]!">{unreadCount ? `${unreadCount} unread` : 'You are all caught up'}</span></div>
+                )}
+                {(!hasFollowUps || tab === 'notifications') && <button type="button" className="text-[13px]!" onClick={markAllRead} disabled={!unreadCount}><FaCheck /> Mark all read</button>}
               </div>
+              {hasFollowUps && tab === 'follow_ups' ? (
+                <FollowUpsTab
+                  role={role}
+                  items={followUps}
+                  notes={followUpNotes}
+                  loading={followUps === null}
+                  error={followUpError}
+                  onOpen={(row) => openFollowUp(row.id)}
+                  onOpenNote={(note) => {
+                    // Not counted in the Notifications badge, so mark it read without touching that count.
+                    if (!note.read_at) void api.patch(`/notifications/${note.id}/read`, {}).catch(() => {});
+                    openFollowUp(note.data?.applicant_id);
+                  }}
+                  onAction={(kind, row) => setFollowUpAction({ kind, applicant: row })}
+                />
+              ) : (<>
               {error && <p className="m-0 p-[24px_16px] text-[10px] text-center later:text-danger-text [background:color-mix(in_srgb,_var(--danger)_6%,_transparent)]">{error}</p>}
               {notificationLoading && notifications.length === 0 ? (
                 <div className="m-0 p-[24px_16px] text-muted text-[10px] text-center [&_.spinner]:w-[16px] [&_.spinner]:h-[16px] [&_.spinner]:mr-2 [&_.spinner]:[vertical-align:middle]"><span className="spinner w-[20px] h-[20px] inline-block flex-[0_0_auto] border-[2px] border-[color:color-mix(in_srgb,_var(--muted)_25%,_transparent)] border-t-accent rounded-[50%] [animation:spin_.8s_linear_infinite]" /> Loading updates…</div>
               ) : notifications.length === 0 ? (
-                <p className="m-0 p-[24px_16px] text-muted text-[10px] text-center [&_.spinner]:w-[16px] [&_.spinner]:h-[16px] [&_.spinner]:mr-2 [&_.spinner]:[vertical-align:middle]">No notifications yet.</p>
+                <p className="m-0 p-[26px_18px] text-muted text-[14px] text-center">No notifications yet.</p>
               ) : notifications.map((item) => (
                 <button
                   type="button"
-                  className={`notification-item relative w-full grid grid-cols-[8px_minmax(0,_1fr)] gap-[10px] p-[14px_16px] border-0 border-b border-b-line text-text [background:transparent] text-left [transition:background_.18s_ease] hover:[background:var(--hover)] later:[&.unread]:[background:color-mix(in_srgb,_var(--accent)_6%,_transparent)] [&.unread:hover]:[background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] [&>span:last-child]:min-w-0 [&_strong]:block [&_strong]:overflow-hidden later-2:[&_strong]:text-[10px] later:[&_strong]:font-[750] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_p]:[display:-webkit-box] [&_p]:overflow-hidden [&_p]:m-[5px_0_7px] [&_p]:text-text-secondary [&_p]:text-[9px] [&_p]:leading-[1.5] [&_p]:[-webkit-box-orient:vertical] [&_p]:[-webkit-line-clamp:2] [&_small]:text-muted [&_small]:text-[8px] ${item.read_at ? '' : ' unread'}`}
+                  className={`notification-item relative w-full grid grid-cols-[8px_minmax(0,_1fr)] gap-[12px] p-[15px_18px] border-0 border-b border-b-line text-text [background:transparent] text-left [transition:background_.18s_ease] hover:[background:var(--hover)] later:[&.unread]:[background:color-mix(in_srgb,_var(--accent)_6%,_transparent)] [&.unread:hover]:[background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] [&>span:last-child]:min-w-0 [&_strong]:block [&_strong]:overflow-hidden later-2:[&_strong]:text-[15px] later:[&_strong]:font-[750] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_p]:[display:-webkit-box] [&_p]:overflow-hidden [&_p]:m-[5px_0_7px] [&_p]:text-text-secondary [&_p]:text-[14px] [&_p]:leading-[1.5] [&_p]:[-webkit-box-orient:vertical] [&_p]:[-webkit-line-clamp:2] [&_small]:text-muted [&_small]:text-[12px] ${item.read_at ? '' : ' unread'}`}
                   key={item.id}
                   onClick={() => {
                     // Mark as read first (badge + sidebar dots clear immediately),
@@ -269,8 +382,20 @@ export default function Header({ onMenu, mobileOpen }) {
                   </span>
                 </button>
               ))}
+              </>)}
             </section>
           )}
+          {/* Outside the panel: a click inside the dialog closes the panel, never the dialog. */}
+          <FollowUpDialogs
+            action={followUpAction}
+            onClose={() => setFollowUpAction(null)}
+            onDone={async (message) => {
+              setFollowUpAction(null);
+              await refreshFollowUps();
+              setFollowUpDone(message);
+            }}
+          />
+          <Notice type="success">{followUpDone}</Notice>
         </div>
 
         {/* Profile button: round avatar + white initials, applies to every role */}
