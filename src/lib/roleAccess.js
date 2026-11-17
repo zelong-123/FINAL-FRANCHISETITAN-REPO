@@ -94,10 +94,12 @@ export const DASHBOARD_PANELS = {
     'salesTrend',
     'topBranches',
     'insights',
+    'followUpBySales',
     'recentApplications',
     'transactions',
   ],
   sales: [
+    'needsAttention',
     'kpi',
     'dateFilter',
     'salesTrend',

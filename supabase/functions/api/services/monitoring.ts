@@ -30,6 +30,10 @@ export const INQUIRY_DAYS_SQL = (alias: string) => days(`coalesce(${alias}.statu
 export function applicantMonitor(row: Row): Row {
   const limit = OVERDUE_DAYS.applicant[row.status] ?? OVERDUE_DAYS.default;
   const inStage = Number(row.days_in_stage ?? 0);
+  // With the follow-up columns (services/followUp.ts), Overdue follows the follow-up rules.
+  if ('fu_state' in row) {
+    return { days_in_stage: inStage, overdue_after_days: Number(row.fu_overdue_days ?? limit), overdue: ['overdue', 'stalled'].includes(row.fu_state) };
+  }
   return { days_in_stage: inStage, overdue_after_days: limit, overdue: !CLOSED_APPLICANT.includes(row.status) && !row.archived_at && inStage > limit };
 }
 export function inquiryMonitor(row: Row): Row {
@@ -57,6 +61,7 @@ export function applyDateRange(f: Filter, q: Row, columns: Record<string, string
 
 /** One follow-up entry, checked. Returns the saved row. */
 export async function createFollowUp(db: Db, type: 'inquiry' | 'applicant', id: number, actor: Row, input: Row): Promise<Row> {
+  if (type === 'applicant' && input.kind === 'overdue') return createOverdueFollowUp(db, id, actor, input);
   const contacted = input.contacted_at ? new Date(String(input.contacted_at)) : new Date();
   if (Number.isNaN(contacted.getTime())) fail('contacted_at', 'Enter a valid date and time.');
   if (contacted.getTime() > Date.now() + 60_000) fail('contacted_at', 'The follow-up date and time cannot be in the future.');
@@ -77,6 +82,35 @@ export async function createFollowUp(db: Db, type: 'inquiry' | 'applicant', id: 
     `insert into follow_ups (followable_type, followable_id, user_id, actor_role, contacted_at, channel, outcome, notes, next_follow_up_at)
      values ($1, $2, $3, (select r.name from users u join roles r on r.id = u.role_id where u.id = $3), $4, $5, $6, $7, $8) returning *`,
     [type, id, actor.id, contacted, channel, outcome, notes.slice(0, 5000), next],
+  );
+  return row;
+}
+
+export const OVERDUE_FOLLOW_UP_REASONS: Record<string, string> = {
+  waiting_documents: 'Waiting for applicant documents', not_responding: 'Applicant not responding', rescheduled: 'Rescheduled',
+  still_deciding: 'Applicant still deciding', other: 'Other',
+};
+
+/**
+ * "Log follow-up" on an overdue applicant: a reason, an optional note (required for Other) and the next
+ * action date (today or later, Manila). The applicant is not Overdue again until that day has passed.
+ */
+async function createOverdueFollowUp(db: Db, id: number, actor: Row, input: Row): Promise<Row> {
+  const reason = String(input.reason ?? '');
+  if (!OVERDUE_FOLLOW_UP_REASONS[reason]) fail('reason', 'Choose a reason.');
+  const notes = String(input.notes ?? '').trim();
+  if (reason === 'other' && notes.length < 5) fail('notes', 'Describe the reason (at least 5 characters) when you choose Other.');
+  const date = String(input.next_action_date ?? '').trim();
+  if (!date) fail('next_action_date', 'Choose the next action date.');
+  if (!DAY.test(date) || Number.isNaN(Date.parse(date))) fail('next_action_date', 'Use a valid date (YYYY-MM-DD).');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+  if (date < today) fail('next_action_date', 'The next action date cannot be in the past.');
+  // The end of that day in Manila: the applicant shows Overdue again from the next day.
+  const next = new Date(`${date}T23:59:59+08:00`);
+  const [row] = await db.query(
+    `insert into follow_ups (followable_type, followable_id, user_id, actor_role, contacted_at, channel, outcome, notes, next_follow_up_at, kind, reason)
+     values ('applicant', $1, $2, (select r.name from users u join roles r on r.id = u.role_id where u.id = $2), now(), null, null, $3, $4, 'overdue', $5) returning *`,
+    [id, actor.id, notes.slice(0, 5000), next, reason],
   );
   return row;
 }

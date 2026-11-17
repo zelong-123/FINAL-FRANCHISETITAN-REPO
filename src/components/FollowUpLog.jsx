@@ -10,7 +10,34 @@ const FOLLOW_UP_OUTCOMES = { reached: 'Reached', no_answer: 'No answer', resched
  * The follow-up log of an inquiry (Marketing) or an applicant (assigned Sales): every contact
  * attempt with its channel, outcome, notes and the next follow-up date. Entries are never edited.
  */
-export default function FollowUpLog({ items = [], canAdd = false, busy = false, onAdd, title = 'Follow-up log', surfaceClass = '[background:#141a28]' }) {
+// Applicant follow-up entries (services/followUp.ts): an overdue follow-up and the Admin events.
+const OVERDUE_REASONS = { waiting_documents: 'Waiting for applicant documents', not_responding: 'Applicant not responding', rescheduled: 'Rescheduled', still_deciding: 'Applicant still deciding', other: 'Other' };
+const dateOnly = (value) => manilaDateTimeLabel(value).replace(/,? \d+:\d+.*$/, '');
+
+/** Reminders, holds and closures (applicant_follow_up_events) shown between the follow-ups. */
+function EventEntry({ event }) {
+  const by = event.by_user?.full_name || 'Admin';
+  let head = '';
+  let body = null;
+  if (event.kind === 'reminder') { head = `Reminder sent to ${event.to_user?.full_name || 'Sales'}`; body = event.message; }
+  else if (event.kind === 'hold') { head = `Put on hold until ${dateOnly(event.until_at)}`; body = event.reason; }
+  else if (event.kind === 'hold_released') head = 'Hold released';
+  else if (event.kind === 'closed') { head = 'Closed and archived'; body = event.reason; }
+  return (
+    <li className="p-[10px_12px] border border-dashed border-[#2b344c] rounded-[10px] [background:#0c111d] light:border-line light:[background:var(--panel-2)] grid gap-[3px]">
+      <span><strong className="text-[#edf0fa] light:text-text">{head}</strong> · {manilaDateTimeLabel(event.created_at)}</span>
+      {body && <span>{body}</span>}
+      <small className="text-[#8f9bbd] light:text-muted">By {by}</small>
+    </li>
+  );
+}
+
+export default function FollowUpLog({ items = [], events = [], canAdd = false, busy = false, onAdd, title = 'Follow-up log', surfaceClass = '[background:#141a28]' }) {
+  // Without events the list is exactly the follow-ups, in their own order (as before).
+  const entries = events.length
+    ? [...items.map((item) => ({ type: 'follow_up', at: item.created_at || item.contacted_at, item })), ...events.map((event) => ({ type: 'event', at: event.created_at, item: event }))]
+      .sort((a, b) => new Date(b.at) - new Date(a.at))
+    : items.map((item) => ({ type: 'follow_up', item }));
   const [form, setForm] = useState(null);
   const [open, setOpen] = useState(false);
   const start = () => {
@@ -32,18 +59,24 @@ export default function FollowUpLog({ items = [], canAdd = false, busy = false, 
     <section className={`ap-section m-[0_0_17px] p-[17px] border border-[#2a3041] rounded-[13px] ${surfaceClass} light:[background:var(--panel)] light:border-line text-[14px] leading-[1.5] text-[#c9d0e0] light:text-text-secondary`}>
       <div className="flex items-center justify-between gap-3">
         <h3 className="m-0 text-[0.78rem] tracking-[0.09em] uppercase text-[#edf0fa] light:text-text">{title}</h3>
-        <small className="text-[#9ba5bd] light:text-muted">{items.length} logged</small>
+        <small className="text-[#9ba5bd] light:text-muted">{entries.length} logged</small>
       </div>
-      {!items.length && <p className="m-[8px_0_0] text-muted">No follow-up logged yet.</p>}
-      {items.length > 0 && (
+      {!entries.length && <p className="m-[8px_0_0] text-muted">No follow-up logged yet.</p>}
+      {entries.length > 0 && (
         <ul className="m-[10px_0_0] p-0 [list-style:none] grid gap-2">
-          {items.map((item) => (
+          {entries.map(({ type, item }) => (type === 'event' ? <EventEntry key={`event-${item.id}`} event={item} /> : item.kind === 'overdue' ? (
+            <li key={item.id} className="p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] light:border-line light:[background:var(--panel-2)] grid gap-[3px]">
+              <span><strong className="text-[#edf0fa] light:text-text">Follow-up: {OVERDUE_REASONS[item.reason] || item.reason}</strong> · {manilaDateTimeLabel(item.contacted_at)}</span>
+              {item.notes && <span>{item.notes}</span>}
+              <small className="text-[#8f9bbd] light:text-muted">By {item.by_name || '—'}{item.next_follow_up_at ? ` · Next action: ${dateOnly(item.next_follow_up_at)}` : ''}</small>
+            </li>
+          ) : (
             <li key={item.id} className="p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] light:border-line light:[background:var(--panel-2)] grid gap-[3px]">
               <span><strong className="text-[#edf0fa] light:text-text">{FOLLOW_UP_OUTCOMES[item.outcome] || item.outcome}</strong> · {FOLLOW_UP_CHANNELS[item.channel] || item.channel} · {manilaDateTimeLabel(item.contacted_at)}</span>
               <span>{item.notes}</span>
               <small className="text-[#8f9bbd] light:text-muted">By {item.by_name || '—'}{item.next_follow_up_at ? ` · Next follow-up: ${manilaDateTimeLabel(item.next_follow_up_at)}` : ''}</small>
             </li>
-          ))}
+          )))}
         </ul>
       )}
       {canAdd && !open && <button type="button" className="mt-3 min-h-[32px] p-[0_16px] border border-[#2b344c] rounded-[8px] bg-[#070A12] text-[#e6eaf5] light:bg-white light:text-text-secondary light:border-line-strong text-[12px] font-[600] cursor-pointer hover:border-[#7b88ff] light:hover:bg-[#f1f4fb] disabled:opacity-50" disabled={busy} onClick={start}>Log follow-up</button>}

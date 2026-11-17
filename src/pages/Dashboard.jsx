@@ -31,6 +31,7 @@ import {
   SupplyStageTracker,
   TopBranchesBars,
 } from '../components/dashboard/Charts';
+import { FollowUpBySalesTable, NeedsAttentionList } from '../components/dashboard/FollowUpPanels';
 
 /* ------------------------------------------------------------------ */
 /* Shared building blocks                                              */
@@ -728,7 +729,7 @@ function renderPanelList(panels, renderPanel) {
  * Rendered one after another for now; the groups are the future tab contents.
  */
 const ADMIN_PANEL_GROUPS = {
-  inquiries: ['inquiryAcquisition', 'inquirySource', 'applicantFunnel', 'recentApplications'],
+  inquiries: ['inquiryAcquisition', 'inquirySource', 'applicantFunnel', 'followUpBySales', 'recentApplications'],
   operation: ['salesTrend', 'topBranches', 'insights'],
   supply: ['inventoryHealth', 'transactions'],
 };
@@ -827,6 +828,10 @@ function DashboardBody({ role, panels }) {
             )}
           </div>
         );
+      case 'needsAttention':
+        return <PanelShell key="needsAttention" title="Needs attention" subtitle="Your Overdue and Stalled applicants, most days first"><NeedsAttentionList /></PanelShell>;
+      case 'followUpBySales':
+        return <PanelShell key="followUpBySales" title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user (Waiting on Admin counts against Admin)"><FollowUpBySalesTable /></PanelShell>;
       case 'kpi':
         return <KpiGrid key="kpi" role={role} kpi={overview.data?.kpis} loading={overview.loading} error={overview.error} />;
       case 'inquiryAcquisition':

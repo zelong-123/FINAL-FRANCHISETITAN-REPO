@@ -32,6 +32,7 @@ import { moveToForApproval, OFF_MESSAGE, recordPayload } from '../services/payme
 import { entryStatus, legacySatisfied, paymentProgress } from '../services/requiredPayments.ts';
 import { applicantMonitor, applyDateRange, createFollowUp, deliverDueReminders, followUpsOf, STAGE_DAYS_SQL } from '../services/monitoring.ts';
 import { applicantHistory, REPORT_PAGES } from '../services/applicationDetail.ts';
+import { FOLLOW_UP_COLUMNS, FOLLOW_UP_REASONS, FOLLOW_UP_STATES, followUpJoin, followUpView, loadFollowUp, runFollowUpAlertsQuietly } from '../services/followUp.ts';
 import { locationText, readLocation } from '../services/psgc.ts';
 import { canSeeRequirementFiles, requirementsPayload } from './requirements.ts';
 import { accountAuditValues, cleanOptionalPhone } from '../services/credentials.ts';
@@ -52,6 +53,12 @@ const DATE_BASIS = (alias: string) => ({ applied: `${alias}.application_date`, a
 const NAME = (expr: string) => `(select jsonb_build_object('id', u.id, 'full_name', u.full_name) from users u where u.id = ${expr})`;
 const HISTORY = (id: string) => `coalesce((select jsonb_agg(to_jsonb(h) || jsonb_build_object('changed_by', ${NAME('h.changed_by_user_id')}) order by h.id)
   from applicant_status_histories h where h.applicant_id = ${id}), '[]'::jsonb)`;
+
+/** Reminders, holds and closures, newest first (the Follow-up log shows them with the follow-ups). */
+export const followUpEventsOf = (db: Db, applicantId: number) => db.query(
+  `select e.id, e.kind, e.message, e.reason, e.until_at, e.created_at, e.snapshot, ${NAME('e.user_id')} as by_user, ${NAME('e.to_user_id')} as to_user
+   from applicant_follow_up_events e where e.applicant_id = $1 order by e.created_at desc, e.id desc`, [applicantId],
+);
 
 function authorize(c: Context<AppEnv>, a: Row, staffOnly = false) {
   const name = roleName(c);
@@ -100,6 +107,7 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
   const name = roleName(c);
   const f = new Filter();
   await deliverDueReminders(db, user);
+  if (name !== 'franchisee') await runFollowUpAlertsQuietly(db);
   if (name === 'franchisee') f.add('applicants.user_id = ?', user.id);
   applyDateRange(f, q, DATE_BASIS('applicants'), 'applied');
   if (boolParam(q.archived)) {
@@ -110,6 +118,13 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
     if (name !== 'franchisee') f.add(`applicants.status not in ('active_franchisee', 'rejected')`);
   }
   if (q.status) f.add('applicants.status = ?', q.status);
+  // Follow-up filter: overdue | stalled | waiting_admin | on_hold, or attention (overdue + stalled).
+  const followUp = name === 'franchisee' ? '' : String(q.follow_up ?? '');
+  if (followUp === 'attention') f.add("fu.state in ('overdue', 'stalled')");
+  else if (followUp) {
+    if (!(FOLLOW_UP_STATES as readonly string[]).includes(followUp)) fail('follow_up', 'Choose Overdue, Stalled, Waiting on Admin or On hold.');
+    f.add('fu.state = ?', followUp);
+  }
   if (boolParam(q.eligible_for_scheduling)) f.add(`applicants.status = 'scheduled'`);
   if (q.brand_id) f.add('applicants.preferred_brand_id = ?', intParam(q.brand_id));
   if (q.assigned_sales_user_id === 'unassigned') f.add('applicants.assigned_sales_user_id is null');
@@ -119,14 +134,19 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
   const page = await paginate(c, db, {
     columns: `applicants.*, (select to_jsonb(b) from brands b where b.id = applicants.preferred_brand_id) as preferred_brand,
       ${NAME('applicants.assigned_sales_user_id')} as assigned_sales,
-      ${STAGE_DAYS_SQL('applicants')} as days_in_stage,
+      ${STAGE_DAYS_SQL('applicants')} as days_in_stage, ${FOLLOW_UP_COLUMNS},
       (select jsonb_build_object('id', u.id, 'full_name', u.full_name, 'email', u.email, 'role_id', u.role_id, 'role', (select to_jsonb(r) from roles r where r.id = u.role_id)) from users u where u.id = applicants.user_id) as "user",
       (select jsonb_build_object('id', fi.id, 'source', fi.source, 'converted_from_status', fi.converted_from_status, 'lead_code', fi.lead_code) from franchise_inquiries fi where fi.id = applicants.inquiry_id) as inquiry,
       (select count(*)::int from applicants seq where seq.archived_at is null ${name === 'franchisee' ? 'and seq.user_id = ?' : ''} and seq.id <= applicants.id) as display_no`,
     columnParams: name === 'franchisee' ? [user.id] : [],
-    from: 'applicants', where: f.clauses, params: f.params,
-    orderBy: [ranked?.orderBy, 'applicants.application_date desc nulls last'].filter(Boolean).join(', '),
-    orderParams: ranked?.orderParams ?? [],
+    from: `applicants ${followUpJoin('applicants')}`, where: f.clauses, params: f.params,
+    // Sales: their Overdue / Stalled applicants pinned on top, the most days first.
+    orderBy: [
+      name === 'sales' ? `(fu.state in ('overdue', 'stalled') and applicants.assigned_sales_user_id = ?) desc nulls last,
+        case when fu.state in ('overdue', 'stalled') and applicants.assigned_sales_user_id = ? then fu.idle_days end desc nulls last` : null,
+      ranked?.orderBy, 'applicants.application_date desc nulls last',
+    ].filter(Boolean).join(', '),
+    orderParams: [...(name === 'sales' ? [user.id, user.id] : []), ...(ranked?.orderParams ?? [])],
     perPage: perPage(c, 20),
   });
   const body = await page.json();
@@ -144,6 +164,8 @@ applicantRoutes.get('/applicants', viewers, async (c) => {
   const data = [];
   for (const row of body.data) {
     const out: Row = { ...applicantJson(row), status_label: await statusLabel(db, row), lead: leadReference(row), ...applicantMonitor(row) };
+    if (name !== 'franchisee') out.follow_up = followUpView(row);
+    for (const key of Object.keys(out)) if (key.startsWith('fu_')) delete out[key];
     if (canSeePayments) {
       const own = paymentRows.filter((p) => p.applicant_id === row.id);
       out.has_pending_schedule_update = pendingSchedules.has(row.id);
@@ -182,12 +204,30 @@ applicantRoutes.post('/applicants/:applicant/follow-ups', viewers, async (c) => 
   const user = c.get('user');
   const row = await db.tx(async (tx) => {
     const saved = await createFollowUp(tx, 'applicant', a.id, user, await readInput(c));
-    await logEvent(tx, a, 'follow_up_logged', user.id, { follow_up_id: saved.id }, saved.notes, {
-      step: 'follow_up', new_values: { channel: saved.channel, outcome: saved.outcome, contacted_at: iso(saved.contacted_at), next_follow_up_at: iso(saved.next_follow_up_at) },
+    const overdue = saved.kind === 'overdue';
+    await logEvent(tx, a, 'follow_up_logged', user.id, { follow_up_id: saved.id }, saved.notes || (overdue ? FOLLOW_UP_REASONS[saved.reason] : null), {
+      step: 'follow_up',
+      new_values: overdue
+        ? { kind: 'overdue', reason: saved.reason, next_action_at: iso(saved.next_follow_up_at) }
+        : { channel: saved.channel, outcome: saved.outcome, contacted_at: iso(saved.contacted_at), next_follow_up_at: iso(saved.next_follow_up_at) },
     });
+    if (overdue) {
+      await audit(c, tx, 'applicant.follow_up_logged', { type: APPLICANT_MODEL, id: a.id }, null,
+        { follow_up_id: saved.id, reason: saved.reason, notes: saved.notes || null, next_action_at: iso(saved.next_follow_up_at) });
+    }
     return saved;
   });
-  return ok(c, { follow_up: row, follow_ups: await followUpsOf(db, 'applicant', a.id) }, 'Follow-up logged.', 201);
+  if (row.kind === 'overdue') {
+    const nextDay = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(row.next_follow_up_at));
+    const code = a.applicant_code ? ` (${a.applicant_code})` : '';
+    const note = row.notes ? ` — ${String(row.notes).replace(/[.s]+$/, '')}` : '';
+    await notifyRoles(db, ['admin'], 'applicant_follow_up_logged', `Follow-up logged: ${a.full_name}`,
+      `${user.full_name} followed up on ${a.full_name}${code}: ${FOLLOW_UP_REASONS[row.reason]}${note}. Next action: ${nextDay}.`,
+      { applicant_id: a.id }, user);
+  }
+  return ok(c, {
+    follow_up: row, follow_ups: await followUpsOf(db, 'applicant', a.id), follow_up_state: followUpView(await loadFollowUp(db, a.id)),
+  }, 'Follow-up logged.', 201);
 });
 
 applicantRoutes.get('/applicants/active-franchisees', viewers, async (c) => {
@@ -254,14 +294,14 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
   const f = filterFor(folder);
   const order: Row = { active: 'a.updated_at desc nulls last', approved: 'a.approved_at desc nulls last', rejected: 'a.rejected_at desc nulls last' };
   const page = await paginate(c, db, {
-    columns: `a.*, (select b.name from brands b where b.id = a.preferred_brand_id) as brand_name, ${STAGE_DAYS_SQL('a')} as days_in_stage,
+    columns: `a.*, (select b.name from brands b where b.id = a.preferred_brand_id) as brand_name, ${STAGE_DAYS_SQL('a')} as days_in_stage, ${FOLLOW_UP_COLUMNS},
       (select fi.lead_code from franchise_inquiries fi where fi.id = a.inquiry_id) as lead_code,
       ${NAME('a.assigned_sales_user_id')} as assigned_sales,
       (select x.business_name from franchisees x where x.applicant_id = a.id limit 1) as business_name,
       (select l.name from franchisees x join franchise_locations l on l.franchisee_id = x.id where x.applicant_id = a.id order by l.id limit 1) as location_name,
       (select jsonb_build_object('remarks', h.remarks, 'created_at', h.created_at, 'by', (select u.full_name from users u where u.id = h.changed_by_user_id))
        from applicant_status_histories h where h.applicant_id = a.id and h.to_status = 'rejected' order by h.id desc limit 1) as rejection`,
-    from: 'applicants a', where: f.clauses, params: f.params, orderBy: `${order[folder]}, a.id desc`, perPage: perPage(c, 15),
+    from: `applicants a ${followUpJoin('a')}`, where: f.clauses, params: f.params, orderBy: `${order[folder]}, a.id desc`, perPage: perPage(c, 15),
   });
   const body = await page.json();
   const steps = STAGE_ORDER.filter((s) => s !== 'active_franchisee');
@@ -275,6 +315,7 @@ applicantRoutes.get('/applicants/application-detail', viewers, async (c) => {
       full_name: a.full_name, email: a.email, phone: a.phone, status: a.status, status_label: stageLabel(a.status),
       assigned_sales: a.assigned_sales ?? null,
       ...applicantMonitor(a),
+      follow_up: followUpView(a),
       rejected_on: a.rejected_at ? iso(a.rejected_at) : null,
       business_name: business, location: a.location_name, brand: a.brand_name, application_date: a.application_date,
       approved_at: iso(a.approved_at), updated_at: iso(a.updated_at), step: stepIndex < 0 ? null : stepIndex + 1, step_total: steps.length,
@@ -399,7 +440,11 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
     brand_confirmation: brandValue,
     requirements: requirementsValue,
     follow_ups: followUpsValue,
-    ...(name === 'franchisee' ? {} : applicantMonitor({ ...a, days_in_stage: (await db.query(`select ${STAGE_DAYS_SQL('x')} as d from applicants x where x.id = $1`, [id]))[0].d })),
+    ...(name === 'franchisee' ? {} : await (async () => {
+      const fu = await loadFollowUp(db, id);
+      const days = (await db.query(`select ${STAGE_DAYS_SQL('x')} as d from applicants x where x.id = $1`, [id]))[0].d;
+      return { ...applicantMonitor({ ...fu, days_in_stage: days }), follow_up: followUpView(fu), follow_up_events: await followUpEventsOf(db, id) };
+    })()),
   };
   if (name !== 'franchisee') payload.schedule_sessions = await sessionsFor(db, id);
   payload.assessment_log = (await db.query(
@@ -483,7 +528,10 @@ applicantRoutes.get('/applicants/:applicant/report', viewers, async (c) => {
       // Who prepared (the assigned Sales user) and who approved (Admin) must be different people.
       prepared_and_approved_by_different_people: a.approved_by_user_id ? Number(a.approved_by_user_id) !== Number(a.assigned_sales_user_id ?? 0) : null,
     },
-    monitor: applicantMonitor({ ...a, days_in_stage: people.days_in_stage }),
+    monitor: await (async () => {
+      const fu = await loadFollowUp(db, a.id);
+      return { ...applicantMonitor({ ...fu, days_in_stage: people.days_in_stage }), follow_up: followUpView(fu) };
+    })(),
     requirements: await requirementsPayload(db, a, user),
     brand_confirmation: await brandPayload(db, a),
     activity_rows: schedules.map((s) => ({ ...scheduleJson(s), proof_documents: showFiles ? s.proof_documents : null })),
