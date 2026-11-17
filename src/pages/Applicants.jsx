@@ -3951,6 +3951,7 @@ export default function Applicants() {
           title="Opening applicant…"
           onClose={() => setOpeningId(null)}
           modalClass={openingModalClass(openingId.status, role)}
+          animated
         >
           <ApplicantDetailSkeleton stage={openingId.status} isAdmin={isAdminRole} />
         </Dialog>
@@ -3962,6 +3963,7 @@ export default function Applicants() {
           onClose={closeEditor}
           modalClass={paymentsVisible && stage === 'payment_submitted' ? 'is-payment' : (isAdminRole && stage === 'converted' ? 'is-qualification' : '')}
           closeOnEscape={updateEscapeEnabled}
+          animated
           footer={(
             <>
               {/* Section 8: no Cancel beside Save Applicant — Reject sits there. */}
