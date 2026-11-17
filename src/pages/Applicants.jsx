@@ -237,19 +237,19 @@ function ApplicantDetailSkeleton({ stage, isAdmin }) {
   const rows = isQualification ? 4 : isPayment ? 6 : 3;
   return (
     <div className="flex flex-col gap-[14px]" role="status" aria-live="polite" aria-label="Loading applicant">
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[12px]">
         <span className={`${bar} h-[12px] w-[30%]`} />
         <div className="flex gap-[10px]">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className={`${bar} h-[10px] flex-1`} />)}
         </div>
       </div>
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[12px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[12px]">
         <span className={`${bar} h-[12px] w-[40%]`} />
         {Array.from({ length: rows }, (_, i) => (
           <span key={i} className={`${bar} h-[38px] w-full !rounded-[9px]`} />
         ))}
       </div>
-      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#141a28] flex flex-col gap-[10px]">
+      <div className="p-[16px] border border-[#2a3041] rounded-[12px] [background:#0C111D] flex flex-col gap-[10px]">
         <span className={`${bar} h-[12px] w-[25%]`} />
         <span className={`${bar} h-[10px] w-[70%]`} />
         <span className={`${bar} h-[10px] w-[55%]`} />
