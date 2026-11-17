@@ -691,7 +691,7 @@ const PAY_PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] mi
 const PAY_SECONDARY = 'min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-[#3a4256] rounded-[10px] [background:#121826] text-[#d6dcea] font-[650] disabled:opacity-50 disabled:cursor-not-allowed';
 const PAY_DANGER = 'min-h-[38px] inline-flex items-center justify-center p-[0_16px] border border-[rgba(248,_113,_113,_.6)] rounded-[10px] [background:transparent] text-[#f87171] font-[700] disabled:opacity-50 disabled:cursor-not-allowed';
 const PAY_BADGE_TONE = {
-  unpaid: 'text-[#c3cbe0] [background:#232b3d]',
+  unpaid: 'text-[#f87171] [background:rgba(248,_113,_113,_.14)]',
   not_yet_paid: 'text-[#c3cbe0] [background:#232b3d]',
   for_verification: 'text-[#fbbf24] [background:rgba(251,_191,_36,_.14)]',
   rejected: 'text-[#f87171] [background:rgba(248,_113,_113,_.14)]',
@@ -936,16 +936,10 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   return (
     <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#0C111D] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 id="ap-payment-record-title" className="m-0 text-[0.8rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
+        <h3 id="ap-payment-record-title" className="m-0 text-[1rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
         <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
       </div>
       {fresh.error && <p className="m-[10px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="alert">Could not refresh the Payment Record: {fresh.error}</p>}
-      <p className="m-[10px_0_0] text-[#9aa6c4]">
-        {salesView
-          ? 'Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.'
-          : record.note}
-      </p>
-
       <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[#9aa6c4]">{salesView ? 'Required payments (set by Admin):' : 'Required payments:'}</span>
@@ -954,7 +948,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
             : <span className="text-[#fbbf24]">{record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet'}</span>}
         </div>
         {!readOnly && record.can_edit_required && (
-          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]!`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
+          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]! hover:border-[#5b6a8f] hover:[background:#1c2435]`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
         )}
       </div>
 
@@ -991,7 +985,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
           }
           const highlighted = formHere || (isAdminRole && entry?.reviewable && !readOnly);
           return (
-            <article key={item.id} className={`p-[16px_20px] border rounded-[12px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
+            <article key={item.id} className={`p-[16px_20px] border rounded-[6px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <strong className="text-[#edf0fa] text-[17px]">{item.name}</strong>
                 <span className="flex items-center gap-2">
@@ -1083,7 +1077,7 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
           {readOnly ? '' : 'The applicant moves to For Approval once all required payments are Verified.'}
         </p>
         {!readOnly && isAdminRole && editing.status === 'payment_submitted' && (
-          <button type="button" className={PAY_PRIMARY} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
+          <button type="button" className={`${PAY_PRIMARY} disabled:[background:#070A13]! disabled:opacity-100`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
             Move to For Approval
           </button>
         )}
