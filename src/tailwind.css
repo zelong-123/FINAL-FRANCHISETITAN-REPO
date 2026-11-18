@@ -641,6 +641,13 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   .activities-page .table-wrap table {
     min-width: 620px;
   }
+
+  /* Lead names wrap by word, not letter by letter, so a name stays readable on phones. */
+  .inquiries-page .table-wrap td:first-child strong {
+    min-width: 130px;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
 }
 
 /* Dashboard tabs (Inquiries / Operation / Supply): on phones the tabs wrap onto a second line instead of being cut off. */
