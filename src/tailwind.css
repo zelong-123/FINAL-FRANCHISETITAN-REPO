@@ -707,11 +707,11 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child p { color: var(--muted) !important; }
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child .drawer-avatar { color: #3e5fd3 !important; background: rgba(72, 105, 235, 0.12) !important; }
 
-/* Phones: KPI metric cards sit two per row instead of one long column. */
-@media (max-width: 451px) {
+/* Phones: KPI metric cards sit three per row instead of one long column. */
+@media (max-width: 681px) {
   .dashboard-page .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px;
   }
 }
 
