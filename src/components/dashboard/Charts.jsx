@@ -161,7 +161,7 @@ function EmptyNote() {
  */
 function ChartFrame({ height, empty = false, children }) {
   return (
-    <div className="[.branch-portal-page_&]:relative [.branch-portal-page_&]:w-full [.branch-portal-page_&]:min-w-0 [.dashboard-page_.chart-row-2_&]:h-[260px]! [.dashboard-page_&]:relative [.dashboard-page_&]:w-full [.dashboard-page_&]:min-w-0" style={{ height }}>
+    <div className="chart-frame [.branch-portal-page_&]:relative [.branch-portal-page_&]:w-full [.branch-portal-page_&]:min-w-0 [.dashboard-page_.chart-row-2_&]:h-[260px]! [.dashboard-page_&]:relative [.dashboard-page_&]:w-full [.dashboard-page_&]:min-w-0" style={{ height }}>
       {children}
       {empty && <EmptyNote />}
     </div>
