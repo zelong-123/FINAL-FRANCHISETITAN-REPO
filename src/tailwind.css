@@ -823,6 +823,38 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Phones: keep the profile avatar visible on small screens (iPhone X / 16). The breadcrumb shrinks instead. */
+@media (max-width: 681px) {
+  .herald-header {
+    gap: 8px;
+  }
+
+  .herald-header .header-right {
+    flex-shrink: 0;
+    overflow: visible;
+    gap: 4px;
+  }
+
+  .herald-header .header-right > button,
+  .herald-header .header-right > div > button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .herald-header .header-right button[aria-haspopup='dialog'] {
+    width: auto;
+    height: auto;
+    margin-left: 0;
+    padding: 0;
+  }
+
+  .herald-header .header-right button[aria-haspopup='dialog'] > span:first-child {
+    width: 34px;
+    height: 34px;
+    font-size: 13px;
+  }
+}
+
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {
   .inquiries-page,
