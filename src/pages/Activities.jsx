@@ -1327,7 +1327,7 @@ export default function Activities() {
 
       {/* Master Schedule tab: the full session calendar (views, filters, session
           panel, form, live rule check, drag-and-merge, role actions). */}
-      {view === 'master' && <MasterSchedule embedded />}
+      {view === 'master' && <MasterSchedule embedded onScheduleActivity={canManage ? () => { setScheduleGlow(false); openCreate(); } : undefined} />}
 
 
       {(showCreate || editing) && createPortal(

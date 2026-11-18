@@ -4,7 +4,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { FaPlus, FaRotateLeft } from 'react-icons/fa6';
+import { FaCalendarPlus, FaPlus, FaRotateLeft } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
 import { Notice } from '../components/ApiUi';
 import useRemote from '../lib/useRemote';
@@ -31,7 +31,7 @@ import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatS
  * (/activities?view=master-schedule). Same features; only the outer page
  * frame is dropped and the heading becomes a section heading.
  */
-export default function MasterSchedule({ embedded = false }) {
+export default function MasterSchedule({ embedded = false, onScheduleActivity }) {
   const { role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useMemo(() => ({
@@ -320,6 +320,11 @@ export default function MasterSchedule({ embedded = false }) {
           {permissions.schedule && (
             <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] flex-[0_0_auto] max-[641px]:w-full" onClick={() => openForm({ mode: 'create' })}>
               <FaPlus aria-hidden="true" /> Schedule session
+            </button>
+          )}
+          {onScheduleActivity && (
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760] tracking-[.01em] flex-[0_0_auto] max-[641px]:w-full" onClick={onScheduleActivity}>
+              <FaCalendarPlus aria-hidden="true" /> Schedule activity
             </button>
           )}
           {isAdmin && (
