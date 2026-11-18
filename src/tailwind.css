@@ -775,7 +775,8 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 /* Phones: charts are shorter so they do not look stretched. Desktop keeps its own heights. */
 @media (max-width: 681px) {
   .dashboard-page .chart-frame,
-  .dashboard-page .chart-row-2 .chart-frame {
+  .dashboard-page .chart-row-2 .chart-frame,
+  .branch-portal-page .chart-frame {
     height: 200px !important;
   }
 }
