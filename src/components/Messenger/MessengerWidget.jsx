@@ -73,9 +73,8 @@ export function getInitials(name = 'User') {
   );
 }
 
-const BUBBLE_SIZE = 56;
+const BUBBLE_SIZE = 68;
 const BUBBLE_RIGHT = 28;
-const BUBBLE_EDGE_TOP = 120;
 const BUBBLE_EDGE_BOTTOM_GAP = 24;
 
 function bubbleBottomTop() {
@@ -117,16 +116,13 @@ function MinimizedBubble({ unread, onRestore, onClose }) {
       onRestore();
       return;
     }
-    // Snap to the right edge, top or bottom, whichever is nearer.
-    const topTarget = BUBBLE_EDGE_TOP;
-    const bottomTarget = bubbleBottomTop();
-    const snapTop = Math.abs(pos.top - topTarget) < Math.abs(pos.top - bottomTarget) ? topTarget : bottomTarget;
-    setPos({ left: window.innerWidth - BUBBLE_SIZE - BUBBLE_RIGHT, top: snapTop });
+    // Always snap back to the lower-right resting position.
+    setPos({ left: window.innerWidth - BUBBLE_SIZE - BUBBLE_RIGHT, top: bubbleBottomTop() });
   };
 
   return (
     <div
-      className="fixed z-9999 w-[56px] h-[56px] touch-none select-none cursor-grab active:cursor-grabbing"
+      className="fixed z-9999 w-[68px] h-[68px] touch-none select-none cursor-grab active:cursor-grabbing"
       style={{
         left: pos.left,
         top: pos.top,
@@ -139,14 +135,14 @@ function MinimizedBubble({ unread, onRestore, onClose }) {
     >
       <button
         type="button"
-        className="w-full h-full rounded-[50%] border-0 text-[#fff] text-[18px] grid place-items-center cursor-pointer [background:linear-gradient(135deg,_var(--accent)_0%,_#6366f1_100%)] [box-shadow:0_10px_24px_rgba(0,_0,_0,_0.35)]"
+        className="w-full h-full rounded-[50%] border border-[rgba(255,_255,_255,_0.35)] text-[#fff] text-[24px] grid place-items-center cursor-pointer [background:linear-gradient(145deg,_rgba(129,_140,_248,_0.92)_0%,_rgba(79,_70,_229,_0.82)_100%)] [backdrop-filter:blur(14px)_saturate(160%)] [box-shadow:inset_0_1px_0_rgba(255,_255,_255,_0.45),_inset_0_-8px_18px_rgba(30,_27,_75,_0.35),_0_14px_32px_rgba(79,_70,_229,_0.45)] [transition:transform_0.2s_ease,_box-shadow_0.2s_ease] hover:[transform:scale(1.06)]"
         aria-label={`Open messenger${unread ? `, ${unread} unread` : ''}`}
         tabIndex={-1}
       >
         <FaComments />
       </button>
       {unread > 0 && (
-        <span className="absolute right-[-2px] top-[-2px] min-w-[18px] h-[18px] grid place-items-center p-[0_4px] rounded-[999px] text-[#fff] text-[9px] font-[800] [background:var(--danger)] border-2 border-bg pointer-events-none">{unread > 99 ? '99+' : unread}</span>
+        <span className="absolute right-[-2px] top-[-2px] min-w-[20px] h-[20px] grid place-items-center p-[0_5px] rounded-[999px] text-[#fff] text-[10px] font-[800] [background:var(--danger)] border-2 border-bg pointer-events-none">{unread > 99 ? '99+' : unread}</span>
       )}
       <button
         type="button"
