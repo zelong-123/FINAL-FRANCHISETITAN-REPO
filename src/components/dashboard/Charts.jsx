@@ -79,12 +79,13 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 /* Counts from the last shown value up to `value` (ease-out) so chart numbers visibly move when data arrives. */
-export function CountUp({ value, decimals = 0 }) {
+export function CountUp({ value, decimals = 0, start = true }) {
   const target = Number(value) || 0;
   const [display, setDisplay] = useState(0);
   const shownRef = useRef(0);
 
   useEffect(() => {
+    if (!start) return undefined;
     const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion) {
       shownRef.current = target;
@@ -105,9 +106,35 @@ export function CountUp({ value, decimals = 0 }) {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [target]);
+  }, [target, start]);
 
   return <>{formatNumber(display, decimals)}</>;
+}
+
+/* Flips to true once the element scrolls into view, then stops observing (plays once). */
+function useInView(threshold = 0.3) {
+  const ref = useRef(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    if (inView) return undefined;
+    const node = ref.current;
+    if (!node) return undefined;
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setInView(true);
+        observer.disconnect();
+      }
+    }, { threshold });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [inView, threshold]);
+
+  return [ref, inView];
 }
 
 /** Numeric label drawn at the end of a horizontal bar. */
@@ -393,6 +420,7 @@ const FUNNEL_STAGES = [
 ];
 
 export function ApplicantFunnel({ funnel }) {
+  const [funnelRef, inView] = useInView();
   const counts = funnel || {};
   const reached = (from) => FUNNEL_FLOW.slice(from).reduce((sum, status) => sum + Number(counts[status] || 0), 0);
   const stages = FUNNEL_STAGES.map((stage, index) => ({
@@ -408,7 +436,7 @@ export function ApplicantFunnel({ funnel }) {
   return (
     <div className="[.dashboard-page_&]:p-[16px_18px_8px]">
       <div className="[.dashboard-page_&]:relative [.dashboard-page_&]:min-h-[252px] [.dashboard-page_&_.chart-empty-note]:top-auto [.dashboard-page_&_.chart-empty-note]:bottom-[8px] [.dashboard-page_&_.chart-empty-note]:right-[50%] [.dashboard-page_&_.chart-empty-note]:[transform:translateX(50%)]">
-        <div className="[.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:gap-[3px]">
+        <div ref={funnelRef} className="[.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:gap-[3px]">
           {stages.map((stage, index) => {
             const previous = index > 0 ? stages[index - 1] : null;
             const lost = previous ? Math.max(0, previous.value - stage.value) : 0;
@@ -426,9 +454,9 @@ export function ApplicantFunnel({ funnel }) {
                     <small>{formatNumber(lost)} did not continue</small>
                   </div>
                 )}
-                <div className="[.dashboard-page_&]:min-w-[215px] [.dashboard-page_&]:min-h-[56px] [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-between [.dashboard-page_&]:gap-[18px] [.dashboard-page_&]:p-[0_clamp(18px,_4vw,_42px)] [.dashboard-page_&]:[clip-path:polygon(3%_0,_97%_0,_100%_100%,_0_100%)] [.dashboard-page_&]:[background:linear-gradient(_135deg,_color-mix(in_srgb,_var(--accent)_88%,_#05070d),_color-mix(in_srgb,_var(--accent-2)_88%,_#05070d)_)] [.dashboard-page_&]:[filter:hue-rotate(calc(var(--funnel-step,_0)_*_24deg))] [.dashboard-page_&]:[box-shadow:0_14px_30px_color-mix(in_srgb,_var(--accent)_18%,_transparent)] later:[.dashboard-page_&_strong]:text-[#fff] later-4:[.dashboard-page_&_strong]:text-[clamp(16px,_1.7vw,_21px)] later-2:[.dashboard-page_&_strong]:tracking-[-0.03em] max-[681px]:later:[.dashboard-page_&]:min-w-[160px] max-[681px]:later:[.dashboard-page_&]:p-[0_16px]" style={{ width: `${share}%`, '--funnel-step': index }}>
+                <div className="[.dashboard-page_&]:min-w-[215px] [.dashboard-page_&]:min-h-[56px] [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-between [.dashboard-page_&]:gap-[18px] [.dashboard-page_&]:p-[0_clamp(18px,_4vw,_42px)] [.dashboard-page_&]:[clip-path:polygon(3%_0,_97%_0,_100%_100%,_0_100%)] [.dashboard-page_&]:[background:linear-gradient(_135deg,_color-mix(in_srgb,_var(--accent)_88%,_#05070d),_color-mix(in_srgb,_var(--accent-2)_88%,_#05070d)_)] [.dashboard-page_&]:[filter:hue-rotate(calc(var(--funnel-step,_0)_*_24deg))] [.dashboard-page_&]:[box-shadow:0_14px_30px_color-mix(in_srgb,_var(--accent)_18%,_transparent)] later:[.dashboard-page_&_strong]:text-[#fff] later-4:[.dashboard-page_&_strong]:text-[clamp(16px,_1.7vw,_21px)] later-2:[.dashboard-page_&_strong]:tracking-[-0.03em] max-[681px]:later:[.dashboard-page_&]:min-w-[160px] max-[681px]:later:[.dashboard-page_&]:p-[0_16px]" style={{ width: `${inView ? share : 0}%`, transition: 'width 1100ms cubic-bezier(0.22, 1, 0.36, 1)', '--funnel-step': index }}>
                   <span className="[.dashboard-page_&]:text-[rgba(255,_255,_255,_0.9)] [.dashboard-page_&]:text-[10px] [.dashboard-page_&]:font-[780] [.dashboard-page_&]:tracking-[0.06em] [.dashboard-page_&]:uppercase [.dashboard-page_&]:whitespace-nowrap">{stage.label}</span>
-                  <strong>{formatNumber(stage.value)}</strong>
+                  <strong><CountUp value={stage.value} start={inView} /></strong>
                 </div>
               </React.Fragment>
             );
