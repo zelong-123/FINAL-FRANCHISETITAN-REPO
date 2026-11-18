@@ -715,6 +715,17 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Narrow phones: three cards are tight, so trim the padding and value size to keep numbers on one line. */
+@media (max-width: 451px) {
+  .dashboard-page .metric-grid .metric-card {
+    padding: 10px 9px !important;
+  }
+  .dashboard-page .metric-grid .metric-card strong {
+    font-size: 17px !important;
+    overflow-wrap: normal;
+  }
+}
+
 /* Large TV screens: the dashboard scales up too, like the other pages. */
 @media (min-width: 2200px) {
   .dashboard-page {
