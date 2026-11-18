@@ -11,6 +11,8 @@ import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
+import { MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
+import { addDays, isOutsideHours, manilaToday, monthOf, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
@@ -42,6 +44,11 @@ export default function MasterSchedule({ embedded = false }) {
   const isAdmin = permissions.merge;
 
   const [range, setRange] = useState(null);
+  // Day view is the default; the chart date and the mini-calendar month are separate.
+  const [viewDate, setViewDate] = useState(() => manilaToday());
+  const todayDate = useMemo(() => manilaToday(), []);
+  const [miniMonth, setMiniMonth] = useState(() => monthOf(manilaToday()));
+  const [summary, setSummary] = useState(null);
   const [filters, setFilters] = useState({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -79,6 +86,45 @@ export default function MasterSchedule({ embedded = false }) {
   }, [range, filters]);
   const sessions = useMemo(() => feed.data || [], [feed.data]);
   const loadSessions = feed.reload;
+
+  // Status counts for the displayed month. Uses the summary endpoint; if the live API
+  // does not have it yet, the counts come from the list already loaded for the view.
+  useEffect(() => {
+    if (!range) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await api.get('/schedule-sessions/summary', {
+          from: range.from,
+          to: range.to,
+          activity_type: filters.activity_type,
+          brand_id: filters.brand_id,
+          handler_id: filters.handler_id,
+        });
+        if (!cancelled) setSummary(response.data?.status_counts ?? null);
+      } catch {
+        if (!cancelled) setSummary(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [range, filters.activity_type, filters.brand_id, filters.handler_id]);
+
+  const statusCounts = useMemo(() => {
+    if (summary) return summary;
+    return sessions.reduce((counts, session) => ({ ...counts, [session.status]: (counts[session.status] ?? 0) + 1 }), {});
+  }, [summary, sessions]);
+
+  // Visible range = the displayed month, so the status panel counts the whole month.
+  useEffect(() => {
+    const from = `${miniMonth}-01T00:00:00+08:00`;
+    const next = new Date(`${from}`);
+    next.setMonth(next.getMonth() + 1);
+    setRange({ from, to: next.toISOString() });
+  }, [miniMonth]);
+
+  const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
+  const dayDate = viewDate;
+  const pickDay = (date) => setViewDate(date);
 
   const hasFilters = Boolean(filters.activity_type || filters.brand_id || filters.handler_id || filters.status || filters.merge_suggested);
   const resetFilters = () => setFilters({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
@@ -297,13 +343,28 @@ export default function MasterSchedule({ embedded = false }) {
             {feed.loading && <em> · loading…</em>}
           </span>
         </div>
+        <div className="grid grid-cols-[minmax(0,_1fr)_240px] gap-[14px] p-[12px] max-[901px]:grid-cols-1">
+        <div className="min-w-0">
+        <div className="flex items-center justify-between gap-[8px] mb-[8px]">
+          <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label="Previous business day" onClick={() => pickDay(shiftBusinessDay(dayDate, -1))}>&lsaquo;</button>
+          <strong className="text-text text-[13px] font-[700]">{new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}</strong>
+          <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label="Next business day" onClick={() => pickDay(shiftBusinessDay(dayDate, 1))}>&rsaquo;</button>
+        </div>
+        {outsideHours.length > 0 && (
+          <p className="mb-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
+            <strong>Outside business hours:</strong> {outsideHours.length} {outsideHours.length === 1 ? 'session' : 'sessions'} in this range (before 9 AM or after 5 PM). {outsideHours.slice(0, 3).map((s) => activityLabel(s.activity_type)).join(', ')}
+          </p>
+        )}
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
-          buttonText={{ today: 'Today', month: 'Month', week: 'Week', day: 'Day' }}
-          slotMinTime="08:00:00"
-          slotMaxTime="19:00:00"
+          initialView="timeGridDay"
+          initialDate={dayDate}
+          key={`day-${dayDate}`}
+          headerToolbar={false}
+          weekends={false}
+          slotMinTime="09:00:00"
+          slotMaxTime="17:00:00"
+          slotDuration="01:00:00"
           allDaySlot={false}
           slotEventOverlap={false}
           nowIndicator
@@ -327,9 +388,21 @@ export default function MasterSchedule({ embedded = false }) {
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          datesSet={(info) => setRange({ from: info.start.toISOString(), to: info.end.toISOString() })}
           eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} />}
         />
+        </div>
+        <aside className="grid gap-[12px] content-start min-w-0" aria-label="Schedule side panels">
+          <MiniCalendar
+            month={miniMonth}
+            selectedDate={dayDate}
+            todayDate={todayDate}
+            sessions={sessions}
+            onMonth={setMiniMonth}
+            onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
+          />
+          <StatusPanel counts={statusCounts} />
+        </aside>
+        </div>
       </section>
 
       {detailId && (

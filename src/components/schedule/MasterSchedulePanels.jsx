@@ -1,0 +1,73 @@
+import React from 'react';
+import { FaChevronLeft, FaChevronRight } from 'react-icons/fa6';
+import { SESSION_STATUSES, STATUS_COLORS } from '../../lib/scheduleSessions';
+import { dayDots, monthWeeks, shiftMonth } from '../../lib/masterScheduleDays';
+
+const MONTH_LABEL = new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const DAY_HEADINGS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
+/** Mon-Fri mini calendar. Clicking a day switches the chart; dots = scheduled applicants. */
+export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth, onPickDate }) {
+  const weeks = monthWeeks(month);
+  const title = MONTH_LABEL.format(new Date(`${month}-01T00:00:00Z`));
+  return (
+    <div className="rounded-[14px] border border-line p-[10px] [background:color-mix(in_srgb,_var(--panel)_94%,_transparent)]">
+      <div className="flex items-center justify-between mb-[8px]">
+        <button type="button" aria-label="Previous month" className="p-[4px_6px] text-muted hover:text-text" onClick={() => onMonth(shiftMonth(month, -1))}><FaChevronLeft aria-hidden="true" /></button>
+        <strong className="text-text text-[12px] font-[700]">{title}</strong>
+        <button type="button" aria-label="Next month" className="p-[4px_6px] text-muted hover:text-text" onClick={() => onMonth(shiftMonth(month, 1))}><FaChevronRight aria-hidden="true" /></button>
+      </div>
+      <table className="w-full border-collapse text-center text-[11px]">
+        <thead>
+          <tr>{DAY_HEADINGS.map((day) => <th key={day} className="text-muted font-[650] pb-[4px]">{day}</th>)}</tr>
+        </thead>
+        <tbody>
+          {weeks.map((week, index) => (
+            <tr key={index}>
+              {week.map((date, cell) => {
+                if (!date) return <td key={cell} />;
+                const { dots, more } = dayDots(sessions, date);
+                const selected = date === selectedDate;
+                const isToday = date === todayDate;
+                return (
+                  <td key={cell} className="p-[2px]">
+                    <button
+                      type="button"
+                      aria-label={date}
+                      aria-pressed={selected}
+                      onClick={() => onPickDate(date)}
+                      className={`w-[30px] h-[30px] mx-auto rounded-[50%] flex flex-col items-center justify-center text-text text-[11px] ${selected ? 'border-2 border-accent font-[750]' : 'border border-transparent'} ${isToday ? 'text-accent' : ''}`}
+                    >
+                      {Number(date.slice(8))}
+                      <span className="flex items-center gap-[2px] h-[4px]" aria-hidden="true">
+                        {Array.from({ length: dots }, (_, i) => <i key={i} className="w-[4px] h-[4px] rounded-[50%] bg-accent" />)}
+                        {more > 0 && <em className="not-italic text-[8px] text-muted">+{more}</em>}
+                      </span>
+                    </button>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Status legend with counts for the displayed month. Counts come from the summary endpoint, or the client fallback. */
+export function StatusPanel({ counts }) {
+  return (
+    <div className="rounded-[14px] border border-line p-[10px] [background:color-mix(in_srgb,_var(--panel)_94%,_transparent)]">
+      <h3 className="text-muted text-[10px] font-[750] tracking-[.07em] uppercase mb-[8px]">Status</h3>
+      <ul className="grid gap-[6px] list-none p-0 m-0">
+        {SESSION_STATUSES.map((item) => (
+          <li key={item.value} className="flex items-center justify-between text-[12px] text-text-secondary">
+            <span className="inline-flex items-center gap-[6px]"><i className="w-[8px] h-[8px] rounded-[50%]" style={{ background: STATUS_COLORS[item.value] }} aria-hidden="true" />{item.label}</span>
+            <strong className="text-text">{counts?.[item.value] ?? 0}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
