@@ -11,8 +11,8 @@ import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
-import { MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
-import { addDays, isOutsideHours, manilaToday, monthOf, shiftBusinessDay } from '../lib/masterScheduleDays';
+import { ActivitiesPanel, MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
+import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
@@ -87,8 +87,9 @@ export default function MasterSchedule({ embedded = false }) {
   const sessions = useMemo(() => feed.data || [], [feed.data]);
   const loadSessions = feed.reload;
 
-  // Status counts for the displayed month. Uses the summary endpoint; if the live API
-  // does not have it yet, the counts come from the list already loaded for the view.
+  // Counts for the status panel (month) and the Week ACTIVITIES panel (week). Uses the
+  // summary endpoint; if it is missing or fails, counts come from the loaded list.
+  const [summaryData, setSummaryData] = useState({ status: null, activity: null });
   useEffect(() => {
     if (!range) return;
     let cancelled = false;
@@ -101,30 +102,49 @@ export default function MasterSchedule({ embedded = false }) {
           brand_id: filters.brand_id,
           handler_id: filters.handler_id,
         });
-        if (!cancelled) setSummary(response.data?.status_counts ?? null);
+        if (!cancelled) setSummaryData({ status: response.data?.status_counts ?? null, activity: response.data?.activity_counts ?? null });
       } catch {
-        if (!cancelled) setSummary(null);
+        if (!cancelled) setSummaryData({ status: null, activity: null });
       }
     })();
     return () => { cancelled = true; };
   }, [range, filters.activity_type, filters.brand_id, filters.handler_id]);
 
   const statusCounts = useMemo(() => {
-    if (summary) return summary;
+    if (summaryData.status) return summaryData.status;
     return sessions.reduce((counts, session) => ({ ...counts, [session.status]: (counts[session.status] ?? 0) + 1 }), {});
-  }, [summary, sessions]);
+  }, [summaryData.status, sessions]);
 
-  // Visible range = the displayed month, so the status panel counts the whole month.
+  // Week ACTIVITIES counts. The week range is requested separately only in Week mode.
+  const activityCounts = useMemo(() => {
+    if (summaryData.activity && mode === 'week') return summaryData.activity;
+    return sessions.reduce((counts, session) => ({ ...counts, [session.activity_type]: (counts[session.activity_type] ?? 0) + 1 }), { orientation: 0, training: 0 });
+  }, [summaryData.activity, sessions, mode]);
+
+  // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
   useEffect(() => {
+    if (mode === 'week') {
+      setRange({ from: `${weekStart}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
+      return;
+    }
     const from = `${miniMonth}-01T00:00:00+08:00`;
-    const next = new Date(`${from}`);
+    const next = new Date(from);
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
-  }, [miniMonth]);
+  }, [mode, weekStart, miniMonth]);
 
   const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
   const dayDate = viewDate;
   const pickDay = (date) => setViewDate(date);
+
+  // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
+  const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
+  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
+  const weekStart = mondayOf(dayDate);
+  const shiftView = (step) => {
+    if (mode === 'week') pickDay(addDays(weekStart, step * 7));
+    else pickDay(shiftBusinessDay(dayDate, step));
+  };
 
   const hasFilters = Boolean(filters.activity_type || filters.brand_id || filters.handler_id || filters.status || filters.merge_suggested);
   const resetFilters = () => setFilters({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
@@ -345,10 +365,22 @@ export default function MasterSchedule({ embedded = false }) {
         </div>
         <div className="grid grid-cols-[minmax(0,_1fr)_240px] gap-[14px] p-[12px] max-[901px]:grid-cols-1">
         <div className="min-w-0">
-        <div className="flex items-center justify-between gap-[8px] mb-[8px]">
-          <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label="Previous business day" onClick={() => pickDay(shiftBusinessDay(dayDate, -1))}>&lsaquo;</button>
-          <strong className="text-text text-[13px] font-[700]">{new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}</strong>
-          <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label="Next business day" onClick={() => pickDay(shiftBusinessDay(dayDate, 1))}>&rsaquo;</button>
+        <div className="flex flex-wrap items-center justify-between gap-[8px] mb-[8px]">
+          <div className="flex items-center gap-[6px]">
+            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
+            <button type="button" className="text-muted hover:text-text p-[4px_10px] border border-line rounded-[8px] text-[11px] font-[650]" onClick={() => pickDay(manilaToday())}>Today</button>
+            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>
+          </div>
+          <strong className="text-text text-[13px] font-[700]">
+            {mode === 'week'
+              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${weekStart}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
+              : new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}
+          </strong>
+          <div className="inline-flex border border-line rounded-[9px] overflow-hidden" role="group" aria-label="Calendar view">
+            {[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([value, text]) => (
+              <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`p-[5px_12px] text-[11px] font-[650] ${mode === value ? 'text-text [background:var(--surface-strong)]' : 'text-muted hover:text-text'}`}>{text}</button>
+            ))}
+          </div>
         </div>
         {outsideHours.length > 0 && (
           <p className="mb-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
@@ -357,9 +389,9 @@ export default function MasterSchedule({ embedded = false }) {
         )}
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridDay"
-          initialDate={dayDate}
-          key={`day-${dayDate}`}
+          initialView={mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
+          initialDate={mode === 'week' ? weekStart : dayDate}
+          key={`${mode}-${mode === 'week' ? weekStart : dayDate}`}
           headerToolbar={false}
           weekends={false}
           slotMinTime="09:00:00"
@@ -401,6 +433,7 @@ export default function MasterSchedule({ embedded = false }) {
             onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
           />
           <StatusPanel counts={statusCounts} />
+          {mode === 'week' && <ActivitiesPanel counts={activityCounts} />}
         </aside>
         </div>
       </section>

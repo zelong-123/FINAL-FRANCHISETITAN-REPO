@@ -55,6 +55,19 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
   );
 }
 
+/** Week ACTIVITIES panel: Orientation/Tasting and Training counts for the displayed week. */
+export function ActivitiesPanel({ counts }) {
+  return (
+    <div className="rounded-[14px] border border-line p-[10px] [background:color-mix(in_srgb,_var(--panel)_94%,_transparent)]">
+      <h3 className="text-muted text-[10px] font-[750] tracking-[.07em] uppercase mb-[8px]">Activities</h3>
+      <ul className="grid gap-[6px] list-none p-0 m-0">
+        <li className="flex items-center justify-between text-[12px] text-text-secondary">Orientation/Tasting <strong className="text-text">{counts?.orientation ?? 0}</strong></li>
+        <li className="flex items-center justify-between text-[12px] text-text-secondary">Training <strong className="text-text">{counts?.training ?? 0}</strong></li>
+      </ul>
+    </div>
+  );
+}
+
 /** Status legend with counts for the displayed month. Counts come from the summary endpoint, or the client fallback. */
 export function StatusPanel({ counts }) {
   return (
