@@ -292,7 +292,7 @@ export default function Header({ onMenu, mobileOpen }) {
 
         <button
           type="button"
-          className="w-[40px] h-[40px] inline-grid place-items-center flex-[0_0_auto] p-0 border border-transparent rounded-[12px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_border-color_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:border-line hover:[transform:translateY(-1px)]"
+          className="relative w-[40px] h-[40px] inline-grid place-items-center flex-[0_0_auto] p-0 border border-transparent rounded-[12px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_border-color_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:border-line hover:[transform:translateY(-1px)]"
           onClick={toggleMessenger}
           aria-label={`Live Messenger${unreadTotal ? `, ${unreadTotal} unread` : ''}`}
           title="Live Department Messenger"
