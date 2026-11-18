@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -78,6 +78,38 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+/* Counts from the last shown value up to `value` (ease-out) so chart numbers visibly move when data arrives. */
+export function CountUp({ value, decimals = 0 }) {
+  const target = Number(value) || 0;
+  const [display, setDisplay] = useState(0);
+  const shownRef = useRef(0);
+
+  useEffect(() => {
+    const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      shownRef.current = target;
+      setDisplay(target);
+      return undefined;
+    }
+    const from = shownRef.current;
+    const start = performance.now();
+    const duration = 1400;
+    let frame;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = from + (target - from) * eased;
+      shownRef.current = next;
+      setDisplay(next);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  return <>{formatNumber(display, decimals)}</>;
+}
+
 /** Numeric label drawn at the end of a horizontal bar. */
 function countBarLabel({ x, y, width, height, value }) {
   const posX = Number(x) + Number(width) + 8;
@@ -85,7 +117,7 @@ function countBarLabel({ x, y, width, height, value }) {
   if (!Number.isFinite(posX) || !Number.isFinite(posY) || value === undefined || value === null) return null;
   return (
     <text x={posX} y={posY} dominantBaseline="middle" className="[.branch-portal-page_&]:[fill:var(--text-secondary)] [.branch-portal-page_&]:text-[9px] [.branch-portal-page_&]:font-[750] [.dashboard-page_&]:[fill:var(--text-secondary)] [.dashboard-page_&]:text-[9px] [.dashboard-page_&]:font-[750]">
-      {formatNumber(value, 1)}
+      <CountUp value={value} decimals={1} />
     </text>
   );
 }
@@ -262,7 +294,7 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
           </ResponsiveContainer>
         </ChartFrame>
         <div className="[.dashboard-page_&]:absolute [.dashboard-page_&]:inset-0 [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-center [.dashboard-page_&]:pointer-events-none [.dashboard-page_&_strong]:text-text later-3:[.dashboard-page_&_strong]:text-[clamp(22px,_2.4vw,_29px)] later:[.dashboard-page_&_strong]:tracking-[-0.045em] later:[.dashboard-page_&_strong]:leading-[1] [.dashboard-page_&_span]:mt-[5px] [.dashboard-page_&_span]:text-muted later-4:[.dashboard-page_&_span]:text-[8px] [.dashboard-page_&_span]:font-[800] [.dashboard-page_&_span]:tracking-[0.14em] [.dashboard-page_&_span]:uppercase">
-          <strong>{formatNumber(total)}</strong>
+          <strong><CountUp value={total} /></strong>
           <span>leads</span>
         </div>
       </div>
@@ -271,7 +303,7 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
           <li key={entry.name}>
             <span className="[.dashboard-page_&]:w-[9px] [.dashboard-page_&]:h-[9px] [.dashboard-page_&]:rounded-[50%]" style={{ background: entry.swatch }} />
             <span className="[.dashboard-page_.donut-legend_&]:whitespace-nowrap [.dashboard-page_.donut-legend_&]:overflow-hidden [.dashboard-page_.donut-legend_&]:text-ellipsis">{titleCase(entry.name)}</span>
-            <strong>{formatNumber(entry.value)}</strong>
+            <strong><CountUp value={entry.value} /></strong>
             <small>{percentOf(entry.value)}%</small>
           </li>
         ))}
