@@ -284,6 +284,17 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
 
   const openForm = (next) => setForm(next);
 
+  // Card three-dot menu: only the actions this role may take for this session's status.
+  const cardMenu = (session) => {
+    const live = ['pending', 'confirmed'].includes(session.status);
+    const items = [{ label: 'View details', run: () => openDetail(session.id) }];
+    if (live && permissions.confirm && session.status === 'pending') items.push({ label: 'Confirm', run: () => openDetail(session.id) });
+    if (live && permissions.cancel) items.push({ label: 'Cancel', run: () => openDetail(session.id) });
+    if (live && permissions.schedule) items.push({ label: 'Set Again', run: () => openDetail(session.id) });
+    if (live && isAdmin && session.activity_type !== 'training') items.push({ label: 'Merge…', run: () => openDetail(session.id) });
+    return items;
+  };
+
   const onSaved = (response) => {
     setForm(null);
     setNotice(response?.message || 'Saved.');
@@ -403,7 +414,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
           headerToolbar={false}
           weekends={false}
           slotMinTime="09:00:00"
-          slotMaxTime="17:00:00"
+          slotMaxTime="18:00:00"
           slotDuration="01:00:00"
           allDaySlot={false}
           dayHeaderContent={(arg) => {
@@ -434,7 +445,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} />}
+          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} />}
         />
         </div>
         <aside className="grid gap-[12px] content-start min-w-0" aria-label="Schedule side panels">
@@ -509,15 +520,17 @@ function eventTooltip(session) {
 }
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
-function EventBody({ session, isAdmin }) {
+function EventBody({ session, isAdmin, menu }) {
   const taken = session.participant_count ?? 0;
   const capacity = session.max_capacity ?? 5;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const items = menu ? menu(session) : [];
   return (
-    <div className="ms-event-body grid gap-[2px] overflow-hidden p-[5px_7px] rounded-[7px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#1f2533] border border-[#d9dee9] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[11.5px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+    <div className="ms-event-body relative grid gap-[2px] overflow-hidden p-[5px_7px] rounded-[7px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#1f2533] border border-[#d9dee9] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[11.5px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
       <span className="ms-event-time overflow-hidden text-[#c9d1e0] text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)} · {session.start_at ? manilaDate.format(new Date(session.start_at)) : ''}</span>
       <strong>{activityLabel(session.activity_type)}</strong>
       <span className="ms-event-meta overflow-hidden text-[#e6ebf5] text-[10.5px] text-ellipsis whitespace-nowrap">
-        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any brand' : 'No brand')} - {taken}/{capacity}
+        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any Brand' : 'No brand')} - {taken}/{capacity}
       </span>
       <span className="flex items-center gap-[3px] text-[10px] text-[#c9d1e0]" aria-label={`${taken} of ${capacity} applicants`}>
         {Array.from({ length: capacity }, (_, index) => (
@@ -525,6 +538,18 @@ function EventBody({ session, isAdmin }) {
         ))}
         <span className="ml-[4px] overflow-hidden text-ellipsis whitespace-nowrap">{session.handler?.full_name || 'No handler'}</span>
       </span>
+      {items.length > 0 && (
+        <button type="button" className="ms-card-menu-button absolute top-[2px] right-[3px] w-[20px] h-[20px] text-[#c9d1e0] text-[13px] leading-none rounded-[5px] hover:[background:rgba(255,255,255,0.12)]" aria-label="Session actions" aria-expanded={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }} onMouseDown={(event) => event.stopPropagation()}>⋮</button>
+      )}
+      {menuOpen && items.length > 0 && (
+        <ul className="ms-card-menu absolute top-[22px] right-[3px] z-[5] grid gap-[2px] min-w-[130px] p-[4px] rounded-[8px] border border-[#d9dee9] [background:#1f2533] shadow-[0_8px_20px_rgba(0,0,0,0.4)] [list-style:none] m-0" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+          {items.map((item) => (
+            <li key={item.label} role="none">
+              <button type="button" role="menuitem" className="w-full text-left p-[5px_8px] rounded-[6px] text-[#f5f7fb] text-[11px] font-[600] hover:[background:rgba(255,255,255,0.1)]" onClick={(event) => { event.stopPropagation(); setMenuOpen(false); item.run(); }}>{item.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
       {isAdmin && session.merge_suggested && <em className="ms-merge-badge [justify-self:start] p-[1px_6px] rounded-[999px] [background:color-mix(in_srgb,_var(--accent-2)_85%,_transparent)] text-[#fff] text-[9px] not-italic font-[650]">Merge</em>}
     </div>
   );
