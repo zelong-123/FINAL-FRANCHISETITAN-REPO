@@ -250,7 +250,8 @@ export default function MasterSchedule({ embedded = false }) {
             <span>Handler</span>
             <select value={filters.handler_id} onChange={(event) => setFilters({ ...filters, handler_id: event.target.value })} aria-label="Filter by handler">
               <option value="">All handlers</option>
-              {handlers.map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+              {/* Filter only: admins are not listed here (the session form still uses every handler). */}
+              {handlers.filter((user) => user.role !== 'admin').map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
             </select>
           </label>
         </div>

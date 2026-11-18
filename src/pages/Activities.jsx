@@ -76,10 +76,6 @@ const cancelScheduleRequest = (id) => api.delete(`/activities/${id}`);
 // Starts/Duration/Venue live in components/ScheduleActivityFields.jsx so the
 // Applicant modal (Phase 2) uses exactly the same whole-hour rules.
 
-const monthNames = Array.from({ length: 12 }, (_, index) => (
-  new Date(2000, index, 1).toLocaleDateString([], { month: 'long' })
-));
-
 const blankForm = () => ({
   mode: 'single', // 'single' | 'multiple'
   activity_type: '',
@@ -90,10 +86,6 @@ const blankForm = () => ({
   separate_session: false, // "Create separate": a second session at the same date/time
   ...blankScheduleFields(),
 });
-
-function startOfMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
 
 function formatDuration(minutes) {
   const value = Number(minutes || 0);
@@ -201,297 +193,6 @@ function typeProgress(activities) {
   });
 }
 
-/**
- * Shared month navigation used by both calendars: previous / next buttons,
- * a month picker, a year picker and a "Today" shortcut.
- * `cursor` is a Date set to the first day of the visible month.
- */
-function CalendarNav({ cursor, onChange, compact = false }) {
-  const today = new Date();
-  const year = cursor.getFullYear();
-  const month = cursor.getMonth();
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
-
-  const firstYear = Math.min(today.getFullYear() - 5, year);
-  const lastYear = Math.max(today.getFullYear() + 5, year);
-  const years = [];
-  for (let value = firstYear; value <= lastYear; value += 1) years.push(value);
-
-  const shift = (amount) => onChange(new Date(year, month + amount, 1));
-
-  return (
-    <div className={`cal-nav [.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:gap-[6px] [.activities-page_&]:flex-nowrap [.activities-page_&]:shrink-[0] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:p-[5px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-control)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&.is-compact]:flex [.activities-page_&.is-compact]:w-full [.activities-page_&.is-compact]:m-[0_0_18px] [.activities-page_&.is-compact_.cal-nav-select]:flex-1 [.activities-page_&.is-compact_.cal-nav-select]:min-w-0 [.activities-page_&.is-compact_.cal-nav-select]:text-[12.5px] [.activities-page_&.is-compact_.cal-nav-select:first-child]:flex-[1.5] max-[721px]:[.activities-page_&]:w-full max-[721px]:[.activities-page_&]:justify-between ${compact ? ' is-compact' : ''}`}>
-      <button type="button" className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:w-[32px] [.activities-page_&]:h-[32px] [.activities-page_&]:p-0 [.activities-page_&]:border [.activities-page_&]:border-transparent [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:transparent] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:text-[12px] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:background_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.activities-page_&:hover]:[background:rgba(123,_136,_255,_0.18)] [.activities-page_&:hover]:border-[rgba(123,_136,_255,_0.4)] [.activities-page_&:hover]:text-[color:var(--accent,_#aeb6ff)] [.activities-page_&:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&:focus-visible]:[outline-offset:2px]" onClick={() => shift(-1)} aria-label="Previous month" title="Previous month">
-        <FaChevronLeft aria-hidden="true" />
-      </button>
-
-      <div className="[.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:gap-[6px] [.activities-page_.cal-nav.is-compact_&]:flex-1 [.activities-page_.cal-nav.is-compact_&]:min-w-0">
-        <select
-          className="cal-nav-select [.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_28px_0_12px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background-color:rgba(255,_255,_255,_0.03)] [.activities-page_&]:[background-image:var(--image-2)] [.activities-page_&]:[background-repeat:no-repeat] [.activities-page_&]:[background-position:right_10px_center] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:[font-family:inherit] [.activities-page_&]:[font-style:inherit] [.activities-page_&]:[line-height:inherit] [.activities-page_&]:text-[13px] [.activities-page_&]:font-[650] [.activities-page_&]:[color-scheme:dark] [.activities-page_&]:cursor-pointer [.activities-page_&]:[appearance:none] [.activities-page_&]:[-webkit-appearance:none] [.activities-page_&]:[transition:border-color_0.15s_ease] [.activities-page_&:hover]:border-[color:var(--act-accent)] [.activities-page_&:hover]:[outline:none] [.activities-page_&:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&:focus-visible]:[outline:none]"
-          value={month}
-          aria-label="Select month"
-          onChange={(event) => onChange(new Date(year, Number(event.target.value), 1))}
-        >
-          {monthNames.map((name, index) => <option key={name} value={index} className="[background-color:#101421] [color:#e6e9ff]">{name}</option>)}
-        </select>
-        <select
-          className="cal-nav-select [.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_28px_0_12px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background-color:rgba(255,_255,_255,_0.03)] [.activities-page_&]:[background-image:var(--image-2)] [.activities-page_&]:[background-repeat:no-repeat] [.activities-page_&]:[background-position:right_10px_center] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:[font-family:inherit] [.activities-page_&]:[font-style:inherit] [.activities-page_&]:[line-height:inherit] [.activities-page_&]:text-[13px] [.activities-page_&]:font-[650] [.activities-page_&]:[color-scheme:dark] [.activities-page_&]:cursor-pointer [.activities-page_&]:[appearance:none] [.activities-page_&]:[-webkit-appearance:none] [.activities-page_&]:[transition:border-color_0.15s_ease] [.activities-page_&:hover]:border-[color:var(--act-accent)] [.activities-page_&:hover]:[outline:none] [.activities-page_&:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&:focus-visible]:[outline:none]"
-          value={year}
-          aria-label="Select year"
-          onChange={(event) => onChange(new Date(Number(event.target.value), month, 1))}
-        >
-          {years.map((value) => <option key={value} value={value} className="[background-color:#101421] [color:#e6e9ff]">{value}</option>)}
-        </select>
-      </div>
-
-      <button type="button" className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:w-[32px] [.activities-page_&]:h-[32px] [.activities-page_&]:p-0 [.activities-page_&]:border [.activities-page_&]:border-transparent [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:transparent] [.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:text-[12px] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:background_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.activities-page_&:hover]:[background:rgba(123,_136,_255,_0.18)] [.activities-page_&:hover]:border-[rgba(123,_136,_255,_0.4)] [.activities-page_&:hover]:text-[color:var(--accent,_#aeb6ff)] [.activities-page_&:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&:focus-visible]:[outline-offset:2px]" onClick={() => shift(1)} aria-label="Next month" title="Next month">
-        <FaChevronRight aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        className="[.activities-page_&]:h-[32px] [.activities-page_&]:p-[0_16px] [.activities-page_&]:[border:1px_solid_var(--act-accent)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:var(--act-accent)] [.activities-page_&]:text-[#fff] [.activities-page_&]:[font-family:inherit] [.activities-page_&]:[font-style:inherit] [.activities-page_&]:[line-height:inherit] [.activities-page_&]:text-[12.5px] [.activities-page_&]:font-[700] [.activities-page_&]:whitespace-nowrap [.activities-page_&]:opacity-[1] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:filter_0.15s_ease] [.activities-page_&:hover:not(:disabled)]:[filter:brightness(1.1)] [.activities-page_&:disabled]:[background:rgba(255,_255,_255,_0.05)] [.activities-page_&:disabled]:border-[color:var(--act-line)] [.activities-page_&:disabled]:text-[#a3adc4] [.activities-page_&:disabled]:opacity-[1] [.activities-page_&:disabled]:cursor-default [.activities-page_&:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&:focus-visible]:[outline-offset:2px]"
-        onClick={() => onChange(startOfMonth(new Date()))}
-        disabled={isCurrentMonth}
-        title="Back to this month"
-      >
-        Today
-      </button>
-    </div>
-  );
-}
-
-/**
- * Shared month calendar where schedules are set. Every activity the signed-in
- * user may see lands on its day as an event chip (franchisees only see their
- * own activities — the API scopes that already).
- * Managers click a day (or its + button) to schedule on that date; clicking an
- * event opens it — edit for managers, the schedule drawer for everyone else.
- */
-export function BigCalendar({ groups, canManage, canEdit, onAddEvent, onOpenEvent, onMoveEvent }) {
-  const [cursor, setCursorState] = useState(() => startOfMonth(new Date()));
-  // Slide direction for the grid: +1 when moving forward (slides in from the right), -1 when going back.
-  const [slideDir, setSlideDir] = useState(0);
-  const setCursor = (next) => {
-    setSlideDir(next.getFullYear() * 12 + next.getMonth() >= cursor.getFullYear() * 12 + cursor.getMonth() ? 1 : -1);
-    setCursorState(next);
-  };
-  const [openPin, setOpenPin] = useState(null); // "day:firstActivityId" of a multi-person pin whose names are listed
-  const touchRef = useRef(null); // start point of a single-person pin touch (Admin move)
-  const today = new Date();
-  const year = cursor.getFullYear();
-  const month = cursor.getMonth();
-
-  // Plain computation (no manual useMemo): the React Compiler memoizes this
-  // automatically and rejects manual memoization it cannot preserve.
-  const eventsByDay = new Map();
-  groups.forEach((group) => {
-    group.activities.forEach((activity) => {
-      if (!['pending', 'confirmed'].includes(activity.status) || activity.approval_status === 'rejected') return;
-      const date = new Date(activity.starts_at);
-      if (date.getFullYear() !== year || date.getMonth() !== month) return;
-      const key = date.getDate();
-      const list = eventsByDay.get(key) || [];
-      list.push({ ...activity, person: group.person });
-      eventsByDay.set(key, list);
-    });
-  });
-  eventsByDay.forEach((list) => list.sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at)));
-
-  const monthTotal = [...eventsByDay.values()].reduce((sum, list) => sum + list.length, 0);
-  const monthEvents = [...eventsByDay.values()].flat();
-  const monthName = cursor.toLocaleDateString([], { month: 'long' });
-  // Monday–Friday only: Saturday and Sunday are never schedulable, so they are not shown.
-  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = [];
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const mondayIndex = (new Date(year, month, day).getDay() + 6) % 7; // Monday = 0
-    if (mondayIndex > 4) continue;
-    while (cells.length % 5 !== mondayIndex) cells.push(null);
-    cells.push(day);
-  }
-  while (cells.length % 5 !== 0) cells.push(null);
-
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
-
-  const addOnDay = (day) => {
-    if (!canManage) return;
-    onAddEvent(new Date(year, month, day, 9, 0, 0));
-  };
-
-  return (
-    <div className="big-calendar-split [.activities-page_&]:grid [.activities-page_&]:grid-cols-[minmax(0,_7fr)_minmax(300px,_3fr)] [.activities-page_&]:gap-0 [.activities-page_&]:items-stretch [.activities-page_&]:border [.activities-page_&]:border-[#2a3350] [.activities-page_&]:rounded-[14px] [.activities-page_&]:overflow-hidden max-[1101px]:later:[.activities-page_&]:grid-cols-[1fr]">
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] [.activities-page_.big-calendar-split>&]:border-0 [.activities-page_.big-calendar-split>&]:[background:#05070d] [.activities-page_.big-calendar-split>&]:border-r [.activities-page_.big-calendar-split>&]:border-r-[#2a3350] [.activities-page_.big-calendar-split>&]:rounded-[0] max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-r-0 max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b max-[1101px]:later:[.activities-page_.big-calendar-split>&]:border-b-[#2a3350]">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px] [.activities-page_.data-panel_&]:[box-sizing:border-box] [.activities-page_.data-panel_&]:p-[18px_var(--act-pad)] [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-4 [.activities-page_&]:flex-wrap">
-        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
-          <h2 className="[.activities-page_&]:text-[22px] [.activities-page_&]:font-[800] [.activities-page_&]:tracking-[-.02em] [.activities-page_&]:text-[color:var(--text,_inherit)]">{cursor.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h2>
-          <span>
-            {monthTotal} {monthTotal === 1 ? 'event' : 'events'} this month · shared with everyone who can open this page
-          </span>
-        </div>
-        <CalendarNav cursor={cursor} onChange={setCursor} />
-      </div>
-      <div className="[.activities-page_.data-panel_&]:[box-sizing:border-box] [.activities-page_.data-panel_&]:p-[var(--act-pad)]">
-      <div className="[.activities-page_&]:overflow-x-auto">
-        <div key={`${year}-${month}`} className={`[.activities-page_&]:grid [.activities-page_&]:grid-cols-[repeat(5,_minmax(0,_1fr))] [.activities-page_&]:gap-2 [.activities-page_&]:min-w-[560px] ${slideDir < 0 ? '[.activities-page_&]:animate-cal-slide-from-left' : '[.activities-page_&]:animate-cal-slide-from-right'}`} aria-label="Month calendar of activities">
-          {weekdayLabels.map((label, index) => <span className="[.activities-page_&]:p-[0_0_4px] [.activities-page_&]:text-center [.activities-page_&]:text-[11px] [.activities-page_&]:font-[750] [.activities-page_&]:tracking-[0.06em] [.activities-page_&]:uppercase [.activities-page_&]:text-[color:var(--muted,_#8590a8)]" key={`${label}-${index}`}>{label}</span>)}
-          {cells.map((day, index) => {
-            if (day === null) return <span className="big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] is-empty" key={`empty-${index}`} />;
-            const dayEvents = eventsByDay.get(day) || [];
-            const isToday = isCurrentMonth && day === today.getDate();
-            // Non-working day per the one scheduling window (default Sat/Sun).
-            const isWeekendDay = !isWorkingDay(new Date(year, month, day));
-            return (
-              <div
-                className={`big-calendar-day [.activities-page_&.is-weekend]:[background:rgba(0,_0,_0,_0.35)] [.activities-page_&.is-weekend]:border-[rgba(255,_255,_255,_0.04)] [.activities-page_&.is-weekend]:opacity-[0.55] [.activities-page_&.is-weekend]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-[6px] [.activities-page_&]:[box-sizing:border-box] [.activities-page_&]:min-h-[96px] [.activities-page_&]:p-[8px_10px] [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[var(--act-radius-cell)] [.activities-page_&]:[background:rgba(255,_255,_255,_0.09)] [.activities-page_&]:[transition:border-color_0.15s_ease,_background_0.15s_ease] [.activities-page_&.is-empty]:[visibility:hidden] later:[.activities-page_&.is-clickable]:cursor-pointer [.activities-page_&.is-clickable:hover]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:hover]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:hover]:[outline:none] [.activities-page_&.is-clickable:focus-visible]:border-[color:var(--act-accent)] [.activities-page_&.is-clickable:focus-visible]:[background:rgba(123,_136,_255,_0.06)] [.activities-page_&.is-clickable:focus-visible]:[outline:none] later:[.activities-page_&.is-today]:border-[color:var(--act-accent)] [.activities-page_&.is-today]:[box-shadow:inset_0_0_0_1px_var(--act-accent)] max-[721px]:later:[.activities-page_&]:min-h-[76px] ${isToday ? ' is-today' : ''}${canManage && !isWeekendDay ? ' is-clickable' : ''}${isWeekendDay ? ' is-weekend' : ''}`}
-                key={day}
-                data-calendar-day={day}
-                onDragOver={(event) => { if (canEdit && !isWeekendDay) event.preventDefault(); }}
-                onDrop={(event) => { event.preventDefault(); if (!canEdit || isWeekendDay) return; const id = Number(event.dataTransfer.getData('text/plain')); const entry = monthEvents.find((item) => item.id === id); if (entry) onMoveEvent(entry, new Date(year, month, day)); }}
-                onClick={() => { if (!isWeekendDay) addOnDay(day); }}
-                role={canManage && !isWeekendDay ? 'button' : undefined}
-                tabIndex={canManage && !isWeekendDay ? 0 : undefined}
-                onKeyDown={canManage && !isWeekendDay ? (event) => { if (event.key === 'Enter') addOnDay(day); } : undefined}
-                title={canManage && !isWeekendDay ? `Schedule an activity on ${cursor.toLocaleDateString([], { month: 'long' })} ${day}` : (isWeekendDay ? `Activities are scheduled ${getScheduleConfig().days_label} only` : undefined)}
-              >
-                <div className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-[6px] [.activities-page_&]:min-h-[20px]">
-                  <span className="[.activities-page_&]:text-[12px] [.activities-page_&]:font-[750] [.activities-page_&]:text-[color:var(--text-secondary,_inherit)] [.activities-page_.big-calendar-day.is-today_&]:text-[color:var(--accent,_#aeb6ff)]">{day}</span>
-                  {canManage && !isWeekendDay && (
-                    <button
-                      type="button"
-                      className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:w-[20px] [.activities-page_&]:h-[20px] [.activities-page_&]:p-0 [.activities-page_&]:[border:1px_solid_var(--act-line)] [.activities-page_&]:rounded-[4px] [.activities-page_&]:[background:transparent] [.activities-page_&]:text-[color:var(--muted,_#8590a8)] [.activities-page_&]:text-[9px] [.activities-page_&]:cursor-pointer [.activities-page_&]:opacity-[0] [.activities-page_&]:[transition:opacity_0.15s_ease,_color_0.15s_ease,_border-color_0.15s_ease] [.activities-page_.big-calendar-day:hover_&]:opacity-[1] [.activities-page_&:focus-visible]:opacity-[1] [.activities-page_&:hover]:text-[color:var(--accent,_#aeb6ff)] [.activities-page_&:hover]:border-[color:var(--act-accent)]"
-                      aria-label={`Schedule activity on day ${day}`}
-                      onClick={(event) => { event.stopPropagation(); addOnDay(day); }}
-                    >
-                      <FaPlus aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-                <div className="[.activities-page_&]:flex [.activities-page_&]:flex-col [.activities-page_&]:gap-1 [.activities-page_&]:min-w-0">
-                  {groupTimeSlots(dayEvents).slice(0, 3).map((slot) => {
-                    const first = slot[0];
-                    const pinKey = `${day}:${first.id}`;
-                    const single = slot.length === 1;
-                    const listOpen = openPin === pinKey && !single;
-                    return (
-                      <div className="[.activities-page_&]:relative [.activities-page_&]:max-w-full" key={first.id}>
-                        <button
-                          type="button"
-                          className="[.activities-page_&]:inline-flex [.activities-page_&]:items-center [.activities-page_&]:gap-[6px] [.activities-page_&]:self-start [.activities-page_&]:max-w-full [.activities-page_&]:p-[3px_8px_3px_4px] [.activities-page_&]:border [.activities-page_&]:border-[rgba(123,_136,_255,_0.45)] [.activities-page_&]:rounded-[999px] [.activities-page_&]:text-[#e6e9ff] [.activities-page_&]:[background:#0c1224] [.activities-page_&]:text-[11px] [.activities-page_&]:font-[700] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:filter_0.15s_ease] [.activities-page_&:hover]:[filter:brightness(1.2)] [.activities-page_&_small]:whitespace-nowrap [.activities-page_&_small]:text-[11px] [.activities-page_&_small]:font-[700]"
-                          draggable={canEdit && single}
-                          onDragStart={(event) => { if (!single) { event.preventDefault(); return; } event.dataTransfer.setData('text/plain', String(first.id)); }}
-                          onTouchStart={(event) => { if (!canEdit || !single) return; const touch = event.touches[0]; touchRef.current = { id: first.id, x: touch.clientX, y: touch.clientY }; }}
-                          onTouchEnd={(event) => {
-                            const start = touchRef.current;
-                            touchRef.current = null;
-                            if (!canEdit || !single || !start || start.id !== first.id) return;
-                            const touch = event.changedTouches[0];
-                            const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest?.('[data-calendar-day]');
-                            if (!target) return;
-                            const targetDay = Number(target.dataset.calendarDay);
-                            if (!targetDay || targetDay === day) return;
-                            onMoveEvent(first, new Date(year, month, targetDay));
-                          }}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (single) { onOpenEvent(first); return; }
-                            setOpenPin(listOpen ? null : pinKey);
-                          }}
-                          title={slot.map((item) => `${item.person} · ${activityLabel(item)}`).join('\n')}
-                          aria-expanded={single ? undefined : listOpen}
-                        >
-                          <span className="[.activities-page_&]:inline-flex [.activities-page_&]:items-center">
-                            {slot.slice(0, 3).map((item) => (
-                              <span className="[.activities-page_&]:w-[20px] [.activities-page_&]:h-[20px] [.activities-page_&]:grid [.activities-page_&]:place-items-center [.activities-page_&]:-ml-[6px] [.activities-page_&]:border-[2px] [.activities-page_&]:border-[#0c1224] [.activities-page_&]:rounded-[50%] [.activities-page_&]:text-[#fff] [.activities-page_&]:[background:#4f5fd6] [.activities-page_&]:text-[8px] [.activities-page_&]:font-[800] [.activities-page_&:first-child]:ml-0" key={item.id} aria-hidden="true">{initialsOf(item.person)}</span>
-                            ))}
-                            {slot.length > 3 && <span className="[.activities-page_&]:ml-1 [.activities-page_&]:text-[10px] [.activities-page_&]:font-[800] [.activities-page_&]:text-[#e6e9ff]">+{slot.length - 3}</span>}
-                          </span>
-                          <small>{formatTimeRange(first)}</small>
-                        </button>
-                        {listOpen && (
-                          <ul className="[.activities-page_&]:absolute [.activities-page_&]:top-[calc(100%_+_4px)] [.activities-page_&]:left-0 [.activities-page_&]:z-5 [.activities-page_&]:min-w-[180px] [.activities-page_&]:m-0 [.activities-page_&]:p-1 [.activities-page_&]:[list-style:none] [.activities-page_&]:border [.activities-page_&]:border-[rgba(123,_136,_255,_0.45)] [.activities-page_&]:rounded-[8px] [.activities-page_&]:[background:#0c1224] [.activities-page_&]:[box-shadow:0_8px_24px_rgba(0,_0,_0,_0.45)] [.activities-page_&_button]:w-full [.activities-page_&_button]:p-[6px_8px] [.activities-page_&_button]:border-0 [.activities-page_&_button]:rounded-[6px] later:[.activities-page_&_button]:text-[#e6e9ff] later-2:[.activities-page_&_button]:[background:transparent] [.activities-page_&_button]:text-[11px] later:[.activities-page_&_button]:font-[700] [.activities-page_&_button]:text-left [.activities-page_&_button]:cursor-pointer later:[.activities-page_&_button:hover]:[background:rgba(123,_136,_255,_0.18)] [.activities-page_&_small]:ml-1 later:[.activities-page_&_small]:font-[600] [.activities-page_&_small]:text-[color:var(--muted,_#8590a8)]" onClick={(event) => event.stopPropagation()}>
-                            {slot.map((item) => (
-                              <li key={item.id}>
-                                <button type="button" onClick={() => { setOpenPin(null); onOpenEvent(item); }}>
-                                  {item.person} <small>{activityLabel(item)}</small>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {groupTimeSlots(dayEvents).length > 3 && <span className="[.activities-page_&]:pl-1 [.activities-page_&]:text-[10px] [.activities-page_&]:font-[650] [.activities-page_&]:text-[color:var(--muted,_#8590a8)]">+{groupTimeSlots(dayEvents).length - 3} more</span>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <p className="[.activities-page_&]:m-[16px_0_0] [.activities-page_&]:text-[11.5px] [.activities-page_&]:text-[color:var(--muted,_#8590a8)]">
-        {canManage
-          ? 'Click a day to schedule. Admin can click or drag an event to adjust it.'
-          : 'Click an event to see its schedule details.'}
-      </p>
-      </div>
-    </section>
-    {/* Schedule summary follows the calendar's selected month. */}
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] [.activities-page_&]:p-5 later:[.activities-page_&_h2]:mt-0 [.activities-page_&]:border-0 later:[.activities-page_&]:rounded-[0] [.activities-page_&]:max-h-[80vh] [.activities-page_&]:overflow-y-auto [.activities-page_&_.panel-title_h2]:text-[18px] [.activities-page_&_.panel-title_h2]:uppercase [.activities-page_&_.panel-title_h2]:tracking-[.06em] later-2:[.activities-page_&_.panel-heading-copy_span]:text-[26px] later:[.activities-page_&_.panel-heading-copy_span]:text-[#9ba5bd] later:[.activities-page_&_.panel-heading-copy_span]:font-[500]">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px] [.activities-page_.data-panel_&]:[box-sizing:border-box] [.activities-page_.data-panel_&]:p-[18px_var(--act-pad)]">
-        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]"><h2 className="[.activities-page_&]:text-[color:var(--text,_inherit)]">Scheduled</h2><span className="[.activities-page_&]:text-[color:var(--text,_inherit)] [.activities-page_&]:text-[22px] [.activities-page_&]:font-[800]">{monthName}</span></div>
-      </div>
-      {trackedTypes.map((type) => {
-        const items = monthEvents.filter((item) => item.activity_type === type);
-        return (
-          <div className="[.activities-page_&]:mb-3 [.activities-page_&]:p-[14px] [.activities-page_&]:border [.activities-page_&]:border-line [.activities-page_&]:rounded-[14px] [.activities-page_&]:[background:var(--panel-2,_transparent)] [.activities-page_&_h3]:m-[0_0_8px] [.activities-page_&_h3]:text-[12px] [.activities-page_&_h3]:tracking-[.04em] [.activities-page_&_ul]:[list-style:none] [.activities-page_&_ul]:m-0 [.activities-page_&_ul]:p-0 [.activities-page_&_ul]:grid [.activities-page_&_ul]:gap-2 [.activities-page_&_li]:grid [.activities-page_&_li]:grid-cols-[40px_1fr] [.activities-page_&_li]:gap-[2px_12px] [.activities-page_&_li]:items-center [.activities-page_&_li_small]:col-[2] [.activities-page_&_li_small]:text-[#9ba5bd] [.activities-page_&_li_small]:text-[11px]" key={type}>
-            <h3 className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between">{titleCase(type)} <span className="[.activities-page_&]:inline-grid [.activities-page_&]:place-items-center [.activities-page_&]:min-w-[22px] [.activities-page_&]:h-[20px] [.activities-page_&]:px-[7px] [.activities-page_&]:rounded-full [.activities-page_&]:bg-[rgba(123,136,255,0.16)] [.activities-page_&]:text-[#c5c9ff] [.activities-page_&]:text-[11px] [.activities-page_&]:font-[750]">{items.length}</span></h3>
-            <div className="[.activities-page_&]:h-[1px] [.activities-page_&]:[background:#2a3350] [.activities-page_&]:mb-2" aria-hidden="true" />
-            {items.length ? (
-              <ul>
-                {items.map((item) => (
-                  <li key={item.id} role="button" tabIndex={0} onClick={() => onOpenEvent?.(item)} onKeyDown={(event) => { if (event.key === 'Enter') onOpenEvent?.(item); }} className="[.activities-page_&]:p-[10px_12px] [.activities-page_&]:rounded-[12px] [.activities-page_&]:border [.activities-page_&]:border-[#2a3350] [.activities-page_&]:bg-[#1b2336] [.activities-page_&]:cursor-pointer [.activities-page_&]:[transition:border-color_.15s_ease,_background_.15s_ease] [.activities-page_&:hover]:border-[#7b88ff] [.activities-page_&:hover]:bg-[#212b43]">
-                    <span className="drawer-avatar flex-none w-[40px] h-[40px] grid place-items-center rounded-[50%] font-[700] text-[0.8rem] text-[#d4d9ff] [background:radial-gradient(circle_at_25%_20%,_rgba(123,_136,_255,_0.45),_transparent_70%),_rgba(123,_136,_255,_0.12)] border border-[rgba(123,_136,_255,_0.45)] [box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.08),_0_4px_12px_rgba(123,_136,_255,_0.18)]" aria-hidden="true">{initialsOf(item.person)}</span>
-                    <span className="[.activities-page_&]:text-[15px] [.activities-page_&]:font-[700]">{item.person}</span>
-                    <small>{formatDate(item.starts_at)} · {formatTimeRange(item)}</small>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="[.activities-page_&]:m-0 [.activities-page_&]:text-[#9ba5bd] [.activities-page_&]:text-[12px]">No scheduled {titleCase(type).toLowerCase()} this month</p>
-            )}
-          </div>
-        );
-      })}
-    </section>
-    </div>
-  );
-}
-
-// Activities sharing the same start and end time become one pin on the day.
-function groupTimeSlots(list) {
-  const slots = new Map();
-  list.forEach((activity) => {
-    const key = `${activity.starts_at}|${activity.ends_at ?? ''}`;
-    slots.set(key, [...(slots.get(key) || []), activity]);
-  });
-  return [...slots.values()];
-}
-
-// "2:30 - 4:30pm" when both ends share a period, otherwise "11:00am - 1:00pm".
-function formatTimeRange(activity) {
-  const parts = (value) => {
-    const text = new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-    const match = text.match(/^(\d{1,2}:\d{2})\s*([AP]M)$/i);
-    return match ? { time: match[1], period: match[2].toLowerCase() } : { time: text, period: '' };
-  };
-  const start = parts(activity.starts_at);
-  if (!activity.ends_at) return `${start.time}${start.period}`;
-  const end = parts(activity.ends_at);
-  return start.period === end.period
-    ? `${start.time} - ${end.time}${end.period}`
-    : `${start.time}${start.period} - ${end.time}${end.period}`;
-}
 
 /**
  * Schedule / Edit form fields, in this order:
@@ -754,8 +455,8 @@ export default function Activities() {
   }, []);
   const [archiving, setArchiving] = useState(null); // group being archived
   const [deleting, setDeleting] = useState(null); // group whose ongoing schedule will be cancelled
-  // 'table' (data panel) | 'calendar' (set schedules) | 'people' (mini calendar + category chart)
-  // The view lives in the URL (?view=calendar | master-schedule), so refresh
+  // 'table' (data panel) | 'master' (Master Schedule).
+  // The view lives in the URL (?view=master-schedule), so refresh
   // and direct links work. Master Schedule (sessions) is Admin + Sales only;
   // any other role asking for it falls back to the table.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1278,16 +979,6 @@ export default function Activities() {
 
   const currentKey = selectedGroup?.person || null;
 
-  // Clicking a calendar event: managers jump straight to editing it; everyone
-  // else (franchisees) opens the read-only schedule drawer for that person.
-  const openEventFromCalendar = (activity) => {
-    if (role === 'admin') {
-      openEdit(activity);
-      return;
-    }
-    setSelectedKey(activity.person || activity.applicant?.full_name || null);
-  };
-
   // The read panel is anchored to a table row, so close it when leaving the table view.
   const changeView = (next) => {
     if (next !== 'table' && next !== view) setSelectedKey(null);
@@ -1375,9 +1066,6 @@ export default function Activities() {
         <div className="flex items-center flex-[0_1_auto] min-w-0 gap-[2px] p-1 overflow-x-auto border border-[#1f2638] rounded-[10px] [background:#0b0f19] light:border-line light:[background:var(--panel-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>button]:flex-[0_0_auto] [&>button]:inline-flex [&>button]:items-center [&>button]:justify-center [&>button]:gap-[7px] [&>button]:min-h-[34px] [&>button]:p-[7px_15px] later-2:[&>button]:border later-2:[&>button]:border-transparent later-2:[&>button]:rounded-[8px] [&>button]:[background:transparent] [&>button]:text-[#8a94a6] light:[&>button]:text-muted [&>button]:[font-family:inherit] [&>button]:[font-style:inherit] later-2:[&>button]:text-[13px] later-2:[&>button]:font-[600] later:[&>button]:leading-[1.2] [&>button]:whitespace-nowrap later:[&>button]:cursor-pointer [&>button]:[transition:background_.15s_ease,_color_.15s_ease,_border-color_.15s_ease] [&>button:hover:not(.active):not([aria-selected='true'])]:text-[#d7ddf5] light:[&>button:hover:not(.active):not([aria-selected='true'])]:text-text [&>button:hover:not(.active):not([aria-selected='true'])]:[background:rgba(255,_255,_255,_.04)] [&>button:hover:not(.active):not([aria-selected='true'])]:border-transparent [&>button.active]:[background:#252e42] light:[&>button.active]:[background:var(--active)] [&>button.active]:text-[#fff] light:[&>button.active]:text-accent-text [&>button.active]:font-[600] [&>button.active]:border-transparent [&>button.active]:[box-shadow:none] later:[&>button[aria-selected='true']]:[background:#252e42] light:[&>button[aria-selected='true']]:[background:var(--active)] [&>button[aria-selected='true']]:text-[#fff] light:[&>button[aria-selected='true']]:text-accent-text [&>button[aria-selected='true']]:font-[600] [&>button[aria-selected='true']]:border-transparent [&>button[aria-selected='true']]:[box-shadow:none] later:[&>button:focus-visible]:[outline:2px_solid_#8175ff] later:[&>button:focus-visible]:[outline-offset:2px] [&>button_svg]:flex-[0_0_auto] [&>button_svg]:text-[12px] max-[721px]:later:flex-[1_1_100%]" role="group" aria-label="Schedule view">
           <button type="button" className={view === 'table' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} onClick={() => changeView('table')} aria-pressed={view === 'table'}>
             <FaTableList aria-hidden="true" /> Table
-          </button>
-          <button type="button" className={view === 'calendar' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} onClick={() => changeView('calendar')} aria-pressed={view === 'calendar'}>
-            <FaCalendarDays aria-hidden="true" /> Calendar
           </button>
           {canMasterSchedule && (
             <button type="button" className={view === 'master' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} onClick={() => changeView('master')} aria-pressed={view === 'master'}>
@@ -1641,26 +1329,6 @@ export default function Activities() {
           panel, form, live rule check, drag-and-merge, role actions). */}
       {view === 'master' && <MasterSchedule embedded />}
 
-      {view === 'calendar' && (
-        <div className="[.activities-page_&]:block max-[1101px]:[.activities-page_&]:grid-cols-[1fr]">
-          <BigCalendar
-            groups={currentGroups.filter((group) => !isGroupArchived(group))}
-            canManage={canManage}
-            canEdit={role === 'admin'}
-            onAddEvent={(date) => openCreate(date)}
-            onOpenEvent={openEventFromCalendar}
-            onMoveEvent={async (activity, date) => {
-              const start = new Date(activity.starts_at);
-              start.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
-              try {
-                await api.put(`/activities/${activity.id}/move`, { starts_at: start.toISOString(), duration_minutes: activity.duration_minutes || diffMinutes(activity) });
-                await remote.reload();
-                setSuccess('Schedule moved.');
-              } catch (error) { setActionError(firstValidationMessage(error)); }
-            }}
-          />
-        </div>
-      )}
 
       {(showCreate || editing) && createPortal(
         <div className="activities-page [--act-radius-panel:10px] [--act-radius-control:8px] [--act-radius-cell:6px] [--act-pad:22px] [--act-line:var(--border,_#262f45)] [--act-cell:var(--surface-subtle,_rgba(255,_255,_255,_0.03))] [--act-accent:var(--accent,_#7b88ff)] [&_.data-panel]:rounded-[var(--act-radius-panel)] [&_.muted-note]:text-[color:var(--muted,_#8590a8)] [&_.muted-note]:text-[12px] later-4:[&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later-5:[&>:empty]:hidden! [&_.data-panel]:m-0 [&_.duration-presets]:flex [&_.duration-presets]:flex-wrap [&_.duration-presets]:gap-2 [&_.duration-preset]:inline-flex [&_.duration-preset]:items-center [&_.duration-preset]:gap-[6px] [&_.duration-preset]:p-[7px_14px] [&_.duration-preset]:rounded-[var(--act-radius-cell)] [&_.duration-preset]:[border:1px_solid_var(--act-line)] [&_.duration-preset]:[background:transparent] [&_.duration-preset]:text-[color:inherit] [&_.duration-preset]:text-[13px] [&_.duration-preset]:font-[600] [&_.duration-preset]:cursor-pointer [&_.duration-preset]:[transition:background_0.15s_ease,_border-color_0.15s_ease] [&_.duration-preset:hover]:border-[color:var(--act-accent)] [&_.duration-preset.active]:[background:rgba(123,_136,_255,_0.16)] [&_.duration-preset.active]:border-[color:var(--act-accent)] [&_.duration-preset.active]:text-[color:var(--accent,_#aeb6ff)] max-[721px]:later:[--act-pad:16px] [&_tr.is-archived]:opacity-[0.88] [&_tr.is-archived:hover]:opacity-[1] [&_.drawer-archive-btn]:[background:rgba(59,_130,_246,_0.14)] [&_.drawer-archive-btn]:border-[rgba(59,_130,_246,_0.4)] [&_.drawer-archive-btn]:text-[#60a5fa] [&_.drawer-archive-btn:hover:not(:disabled)]:[background:rgba(59,_130,_246,_0.26)] [&_.drawer-archive-btn:hover:not(:disabled)]:text-[#93c5fd] motion-reduce:[&_*]:[transition:none]! activities-modal-root contents [&_.danger-button]:[background:#dc2626] [&_.danger-button]:border-[#b91c1c] [&_.danger-button]:text-[#fff] [&_.danger-button:hover:not(:disabled)]:[filter:brightness(1.08)]">
