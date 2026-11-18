@@ -1,4 +1,7 @@
--- Chat message delete: "delete for everyone" marks the row deleted_at; "delete for me" hides it per user.
+-- Chat message delete. Additive only.
+-- "Delete for everyone" (the sender only) sets deleted_at; the original text stays stored for the record but
+-- the API never returns it (it shows "This message was deleted"). "Delete for me" hides it for that user only.
+-- Both are written to audit_logs.
 alter table public."chat_messages" add column if not exists "deleted_at" timestamptz;
 
 create table if not exists public."chat_message_hidden" (
