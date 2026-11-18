@@ -772,6 +772,48 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Phones and tablets: the whole system fits the screen width. Only .table-wrap (tables) scrolls sideways. */
+@media (max-width: 861px) {
+  #root,
+  #root > div,
+  #root > div > div,
+  #root main,
+  #root header {
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .herald-header,
+  .herald-header > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .herald-header .header-right {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .herald-header nav {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .page-container,
+  .page-container > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-container .toolbar,
+  .page-container .data-panel,
+  .page-container [class*='unified-toolbar'] {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {
   .inquiries-page,
