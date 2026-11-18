@@ -143,7 +143,7 @@ function countBarLabel({ x, y, width, height, value }) {
   const posY = Number(y) + Number(height) / 2;
   if (!Number.isFinite(posX) || !Number.isFinite(posY) || value === undefined || value === null) return null;
   return (
-    <text x={posX} y={posY} dominantBaseline="middle" className="[.branch-portal-page_&]:[fill:var(--text-secondary)] [.branch-portal-page_&]:text-[9px] [.branch-portal-page_&]:font-[750] [.dashboard-page_&]:[fill:var(--text-secondary)] [.dashboard-page_&]:text-[9px] [.dashboard-page_&]:font-[750]">
+    <text x={posX} y={posY} dominantBaseline="middle" className="[.branch-portal-page_&]:[fill:var(--text-secondary)] [.branch-portal-page_&]:text-[9px] [.branch-portal-page_&]:font-[750] [.dashboard-page_&]:[fill:var(--text-secondary)] [.dashboard-page_&]:text-[11px] [.dashboard-page_&]:font-[800]">
       <CountUp value={value} decimals={1} />
     </text>
   );
@@ -185,9 +185,9 @@ export function SalesTrendCombo({ rows }) {
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 12, right: 10, left: -14, bottom: 0 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
-            <YAxis yAxisId="qty" allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={44} />
-            <YAxis yAxisId="sales" orientation="right" allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={34} />
+            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+            <YAxis yAxisId="qty" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={44} />
+            <YAxis yAxisId="sales" orientation="right" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={34} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar yAxisId="qty" dataKey="quantity" name="Units sold" fill="#6687ff" radius={[5, 5, 0, 0]} maxBarSize={30} />
             <Line yAxisId="sales" dataKey="sales" name="Transactions" type="monotone" stroke="#32c997" strokeWidth={2.2} dot={{ r: 2.4, fill: '#32c997', strokeWidth: 0 }} activeDot={{ r: 4.5 }} />
@@ -220,9 +220,9 @@ export function ProductionTrendCombo({ rows }) {
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 12, right: 10, left: -14, bottom: 0 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
-            <YAxis yAxisId="units" allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={44} />
-            <YAxis yAxisId="transactions" orientation="right" allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={34} />
+            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+            <YAxis yAxisId="units" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={44} />
+            <YAxis yAxisId="transactions" orientation="right" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={34} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar yAxisId="units" dataKey="units" name="Units produced" fill="#6687ff" radius={[5, 5, 0, 0]} maxBarSize={30} />
             <Line yAxisId="transactions" dataKey="transactions" name="Production transactions" type="monotone" stroke="#32c997" strokeWidth={2.2} dot={{ r: 2.4, fill: '#32c997', strokeWidth: 0 }} activeDot={{ r: 4.5 }} />
@@ -325,11 +325,11 @@ export function SourceDonut({ entries, categories = KNOWN_SOURCES, colors = null
           <span>leads</span>
         </div>
       </div>
-      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[11.5px] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[8px] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
+      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[13px] [.dashboard-page_&_li_strong]:font-[800] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[10px] [.dashboard-page_&_li_small]:font-[700] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
         {legend.map((entry) => (
           <li key={entry.name}>
             <span className="[.dashboard-page_&]:w-[9px] [.dashboard-page_&]:h-[9px] [.dashboard-page_&]:rounded-[50%]" style={{ background: entry.swatch }} />
-            <span className="[.dashboard-page_.donut-legend_&]:whitespace-nowrap [.dashboard-page_.donut-legend_&]:overflow-hidden [.dashboard-page_.donut-legend_&]:text-ellipsis">{titleCase(entry.name)}</span>
+            <span className="[.dashboard-page_.donut-legend_&]:whitespace-nowrap [.dashboard-page_.donut-legend_&]:overflow-hidden [.dashboard-page_.donut-legend_&]:text-ellipsis [.dashboard-page_.donut-legend_&]:uppercase [.dashboard-page_.donut-legend_&]:text-[11px] [.dashboard-page_.donut-legend_&]:font-[700] [.dashboard-page_.donut-legend_&]:tracking-[0.03em]">{titleCase(entry.name)}</span>
             <strong><CountUp value={entry.value} /></strong>
             <small>{percentOf(entry.value)}%</small>
           </li>
@@ -387,8 +387,8 @@ export function AcquisitionBars({ rows }) {
           <BarChart data={data} layout="vertical" margin={{ top: 8, right: 56, left: 8, bottom: 4 }} barCategoryGap={14}>
             <SourceGradientDefs />
             <CartesianGrid horizontal={false} stroke={GRID} />
-            <XAxis type="number" domain={[0, maxLeads]} allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} />
-            <YAxis type="category" dataKey="source" tickFormatter={titleCase} tick={{ fill: '#c9d1e4', fontSize: 10 }} axisLine={false} tickLine={false} width={92} />
+            <XAxis type="number" domain={[0, maxLeads]} allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} />
+            <YAxis type="category" dataKey="source" tickFormatter={titleCase} tick={{ fill: '#c9d1e4', fontSize: 11.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={92} />
             <Tooltip content={acquisitionTooltip} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar dataKey="leads" name="Leads" radius={[0, 7, 7, 0]} maxBarSize={26}>
               {data.map((entry) => (
@@ -504,7 +504,7 @@ export function InventoryDonut({ status }) {
           <span>SKUs</span>
         </div>
       </div>
-      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[11.5px] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[8px] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
+      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[13px] [.dashboard-page_&_li_strong]:font-[800] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[10px] [.dashboard-page_&_li_small]:font-[700] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
         {empty ? (
           <li className="muted-note text-muted text-[8px] leading-[1.6]">No inventory records in this view.</li>
         ) : data.map((entry) => (
@@ -541,8 +541,8 @@ export function TopBranchesBars({ rows, metric }) {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 8, right: 58, left: 8, bottom: 4 }} barCategoryGap={10}>
             <CartesianGrid horizontal={false} stroke={GRID} />
-            <XAxis type="number" allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} />
-            <YAxis type="category" dataKey="name" tick={{ fill: '#c9d1e4', fontSize: 9.5 }} axisLine={false} tickLine={false} width={116} />
+            <XAxis type="number" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} />
+            <YAxis type="category" dataKey="name" tick={{ fill: '#c9d1e4', fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} width={116} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar dataKey={dataKey} name={metric === 'sales' ? 'Transactions' : 'Units sold'} radius={[0, 7, 7, 0]} maxBarSize={24}>
               {data.map((row, index) => (
@@ -576,8 +576,8 @@ export function StageBarChart({ stages }) {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 14, right: 10, left: -18, bottom: 0 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 8.5 }} axisLine={{ stroke: GRID }} tickLine={false} interval={0} angle={-18} textAnchor="end" height={46} />
-            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={40} />
+            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} interval={0} angle={-18} textAnchor="end" height={46} />
+            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={40} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar dataKey="count" name="Requests" radius={[6, 6, 0, 0]} maxBarSize={44}>
               {data.map((stage) => (
@@ -618,8 +618,8 @@ export function FulfillmentTrend({ rows }) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 12, right: 12, left: -18, bottom: 0 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 9 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={14} />
-            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} tickLine={false} width={40} />
+            <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={14} />
+            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={40} />
             <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'rgba(102, 135, 255, .35)' }} />
             <Line dataKey="submitted" name="Submitted" type="monotone" stroke="#6687ff" strokeWidth={2.2} dot={{ r: 2.4, fill: '#6687ff', strokeWidth: 0 }} />
             <Line dataKey="completed" name="Completed" type="monotone" stroke="#32c997" strokeWidth={2.2} dot={{ r: 2.4, fill: '#32c997', strokeWidth: 0 }} />
