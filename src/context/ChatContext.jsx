@@ -127,6 +127,13 @@ export function ChatProvider({ children }) {
     try {
       const response = await api.get(`/chat/channels/${chanId}/messages`, { since_id: sinceId, mark_read: 1 });
       const newItems = response.data?.messages || [];
+      // Older messages the sender deleted for everyone: show them as deleted here too.
+      const deletedIds = new Set(response.data?.deleted_ids || []);
+      if (deletedIds.size > 0) {
+        setMessages((prev) => (prev.some((m) => deletedIds.has(m.id) && !m.deleted_at)
+          ? prev.map((m) => (deletedIds.has(m.id) && !m.deleted_at ? { ...m, message: 'This message was deleted', deleted_at: new Date().toISOString() } : m))
+          : prev));
+      }
       if (newItems.length > 0) {
         setMessages((prev) => {
           const existingIds = new Set(prev.map((m) => m.id));
@@ -205,6 +212,18 @@ export function ChatProvider({ children }) {
       throw err;
     } finally {
       setSendingMessage(false);
+    }
+  };
+
+  // Delete a message: 'everyone' (the sender only; shown as deleted to everyone) or 'me' (hidden for me only).
+  const deleteMessage = async (message, scope) => {
+    const chanId = activeChannelRef.current;
+    if (!chanId || !message?.id || message._optimistic) return;
+    await api.delete(`/chat/channels/${chanId}/messages/${message.id}?scope=${scope === 'everyone' ? 'everyone' : 'me'}`);
+    if (scope === 'everyone') {
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, message: 'This message was deleted', deleted_at: new Date().toISOString() } : m)));
+    } else {
+      setMessages((prev) => prev.filter((m) => m.id !== message.id));
     }
   };
 
@@ -309,6 +328,7 @@ export function ChatProvider({ children }) {
     setIsMinimized,
     selectChannel,
     sendMessage,
+    deleteMessage,
     startDirectChat,
     loadDirectory,
     loadChannels,

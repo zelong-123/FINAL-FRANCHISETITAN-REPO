@@ -5,12 +5,20 @@ import type { Db, Row } from '../lib/db.ts';
 import { abort, boolParam, intParam, ok, routeId } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
 import { requireFound } from '../lib/middleware.ts';
+import { audit } from '../services/users.ts';
 
 export const chatRoutes = new Hono<AppEnv>();
 
 const ONLINE_WINDOW = `now() - interval '3 minutes'`;
 const USER_JSON = `(to_jsonb(u) - 'auth_user_id') || jsonb_build_object('role', (select to_jsonb(r) from roles r where r.id = u.role_id))`;
-const MESSAGE_SELECT = `m.*, (select ${USER_JSON} from users u where u.id = m.user_id) as "user"`;
+const CHAT_MESSAGE_MODEL = 'App\\Models\\ChatMessage';
+export const DELETED_TEXT = 'This message was deleted';
+// The text of a message deleted for everyone stays in the database but is never returned to anyone.
+const MESSAGE_SELECT = `m.id, m.channel_id, m.user_id, m.created_at, m.updated_at, m.deleted_at,
+  case when m.deleted_at is null then m.message else '${DELETED_TEXT}' end as message,
+  (select ${USER_JSON} from users u where u.id = m.user_id) as "user"`;
+// Messages a user hid with "delete for me" are dropped from that user's view only.
+const NOT_HIDDEN = (userParam: string) => `not exists (select 1 from chat_message_hidden h where h.message_id = m.id and h.user_id = ${userParam})`;
 
 async function loadChannel(db: Db, id: number, userId: number): Promise<Row> {
   const channel = requireFound((await db.query(`select * from chat_channels where id = $1`, [id]))[0]);
@@ -40,7 +48,7 @@ chatRoutes.get('/channels', async (c) => {
      select v.*,
        (select count(*)::int from chat_messages m where m.channel_id = v.id and m.user_id <> $1
           and m.id > coalesce((select cm.last_read_message_id from chat_channel_members cm where cm.channel_id = v.id and cm.user_id = $1), 0)) as unread_count,
-       (select to_jsonb(lm) from (select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = v.id order by m.id desc limit 1) lm) as last_message,
+       (select to_jsonb(lm) from (select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = v.id and ${NOT_HIDDEN('$1')} order by m.id desc limit 1) lm) as last_message,
        other.id as other_id, other.full_name as other_name, other.last_seen_at >= ${ONLINE_WINDOW} as other_online,
        (select coalesce(r.label, r.name) from roles r where r.id = other.role_id) as other_role
      from visible v
@@ -78,15 +86,24 @@ chatRoutes.get('/channels/:channel/messages', async (c) => {
   const channel = await loadChannel(db, routeId(c, 'channel'), me);
   const sinceId = intParam(c.req.query('since_id'));
   const messages = sinceId > 0
-    ? await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and m.id > $2 order by m.id asc limit 50`, [channel.id, sinceId])
-    : (await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 order by m.id desc limit 60`, [channel.id])).reverse();
+    ? await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and m.id > $2 and ${NOT_HIDDEN('$3')} order by m.id asc limit 50`, [channel.id, sinceId, me])
+    : (await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and ${NOT_HIDDEN('$2')} order by m.id desc limit 60`, [channel.id, me])).reverse();
 
   // Fetching must never mark as seen: the client asks only when the user is really looking.
   const latest = messages[messages.length - 1];
   if (latest && boolParam(c.req.query('mark_read'))) await markRead(db, channel.id, me, latest.id);
 
+  // An open conversation polls with since_id only: tell it which of its older messages were deleted for
+  // everyone recently, so the other person's screen updates without a reload.
+  const deletedIds = sinceId > 0
+    ? (await db.query(
+      `select m.id from chat_messages m where m.channel_id = $1 and m.id <= $2 and m.deleted_at > now() - interval '10 minutes'`,
+      [channel.id, sinceId],
+    )).map((r) => Number(r.id))
+    : [];
+
   const { id, slug, name, type, department, description } = channel;
-  return ok(c, { channel: { id, slug, name, type, department, description }, messages });
+  return ok(c, { channel: { id, slug, name, type, department, description }, messages, deleted_ids: deletedIds });
 });
 
 chatRoutes.post('/channels/:channel/messages', async (c) => {
@@ -102,6 +119,37 @@ chatRoutes.post('/channels/:channel/messages', async (c) => {
     return (await tx.query(`select ${MESSAGE_SELECT} from chat_messages m where m.id = $1`, [row.id]))[0];
   });
   return ok(c, message, 'Message sent.', 201);
+});
+
+/**
+ * Delete a message: ?scope=everyone (the sender only: everyone sees "This message was deleted"; the text is
+ * kept but never returned) or ?scope=me (any member: hidden for you only, the others still see it). Audited.
+ */
+chatRoutes.delete('/channels/:channel/messages/:message', async (c) => {
+  const { db } = c.get('deps');
+  const me = c.get('user').id;
+  const channel = await loadChannel(db, routeId(c, 'channel'), me);
+  const messageId = routeId(c, 'message');
+  const scope = c.req.query('scope');
+  if (scope !== 'everyone' && scope !== 'me') return c.json({ message: 'Choose delete for everyone or delete for me.', errors: { scope: ['Choose delete for everyone or delete for me.'] } }, 422);
+  const message = requireFound((await db.query(
+    `select id, user_id, deleted_at from chat_messages where id = $1 and channel_id = $2`,
+    [messageId, channel.id],
+  ))[0]);
+  if (scope === 'everyone') {
+    if (Number(message.user_id) !== Number(me)) abort(403, 'Only the sender can delete a message for everyone.');
+    if (!message.deleted_at) {
+      await db.query(`update chat_messages set deleted_at = now() where id = $1 and deleted_at is null`, [messageId]);
+      await audit(c, db, 'chat.message_deleted_for_everyone', { type: CHAT_MESSAGE_MODEL, id: messageId }, null, { channel_id: channel.id, scope });
+    }
+  } else {
+    const [hidden] = await db.query(
+      `insert into chat_message_hidden (message_id, user_id) values ($1, $2) on conflict do nothing returning message_id`,
+      [messageId, me],
+    );
+    if (hidden) await audit(c, db, 'chat.message_deleted_for_me', { type: CHAT_MESSAGE_MODEL, id: messageId }, null, { channel_id: channel.id, scope });
+  }
+  return ok(c, { id: messageId, scope }, scope === 'everyone' ? 'Message deleted for everyone.' : 'Message deleted for you.');
 });
 
 chatRoutes.post('/direct', async (c) => {

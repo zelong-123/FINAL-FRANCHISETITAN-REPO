@@ -15,6 +15,7 @@ import {
   FaMinus,
   FaPaperPlane,
   FaStore,
+  FaTrash,
   FaUser,
   FaUsers,
   FaUserShield,
@@ -174,6 +175,7 @@ export default function MessengerWidget() {
     setIsMinimized,
     selectChannel,
     sendMessage,
+    deleteMessage,
     startDirectChat,
     toggleMessenger,
   } = useChat();
@@ -222,6 +224,19 @@ export default function MessengerWidget() {
   const handleAddReaction = (emoji) => {
     setInputText((prev) => (prev ? `${prev} ${emoji}` : emoji));
     inputRef.current?.focus();
+  };
+
+  // The open delete choice: { id, canEveryone } (your own message: for everyone or for me; others': for me).
+  const [deleteChoice, setDeleteChoice] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
+  const handleDeleteMessage = async (msg, scope) => {
+    setDeleteChoice(null);
+    setDeleteError('');
+    try {
+      await deleteMessage(msg, scope);
+    } catch {
+      setDeleteError('Could not delete the message. Please try again.');
+    }
   };
 
   const handleOpenChannel = (chanId) => {
@@ -376,9 +391,25 @@ export default function MessengerWidget() {
                                   </div>
                                 )}
                                 <div className="p-[9px_14px] rounded-[16px] text-[13px] leading-[1.45] [word-break:break-word] relative [.sent-me_&]:[background:linear-gradient(135deg,_var(--accent)_0%,_#4f46e5_100%)] [.sent-me_&]:text-[#fff] [.sent-me_&]:[border-bottom-right-radius:4px] [.sent-me_&]:[box-shadow:0_4px_12px_rgba(79,_70,_229,_0.25)] later:[.sent-them_&]:[background:var(--panel-2)] [.sent-them_&]:border [.sent-them_&]:border-line later:[.sent-them_&]:text-text later:[.sent-them_&]:[border-bottom-left-radius:4px]">
-                                  {msg.message}
+                                  {msg.deleted_at ? (
+                                    <span className="italic opacity-[0.75]">This message was deleted</span>
+                                  ) : (
+                                    msg.message
+                                  )}
                                   <div className="flex items-center justify-end gap-1 text-[10px] mt-[3px] opacity-[0.75] [.sent-me_&]:text-[rgba(255,_255,_255,_0.85)] later:[.sent-them_&]:text-muted">
                                     <span>{formatMessageTime(msg.created_at)}</span>
+                                    {!msg._optimistic && (
+                                      <button
+                                        type="button"
+                                        className="[background:transparent] border-0 p-0 ml-[4px] text-[10px] cursor-pointer opacity-[0.8] hover:opacity-100 focus-visible:[outline:2px_solid_currentColor] focus-visible:[outline-offset:2px]"
+                                        onClick={() => setDeleteChoice(deleteChoice?.id === msg.id ? null : { id: msg.id, canEveryone: isMe && !msg.deleted_at })}
+                                        title="Delete message"
+                                        aria-label="Delete message"
+                                        aria-expanded={deleteChoice?.id === msg.id}
+                                      >
+                                        <FaTrash />
+                                      </button>
+                                    )}
                                     {isMe && (
                                       msg._optimistic ? (
                                         <span style={{ opacity: 0.6 }}>•</span>
@@ -387,6 +418,15 @@ export default function MessengerWidget() {
                                       )
                                     )}
                                   </div>
+                                  {deleteChoice?.id === msg.id && (
+                                    <div className="flex flex-wrap justify-end gap-[6px] mt-[6px] text-[11px]" role="group" aria-label="Delete message">
+                                      {deleteChoice.canEveryone && (
+                                        <button type="button" className="p-[3px_8px] border border-[rgba(255,255,255,.45)] rounded-[8px] [background:rgba(0,0,0,.18)] text-inherit cursor-pointer hover:[background:rgba(0,0,0,.3)]" onClick={() => handleDeleteMessage(msg, 'everyone')}>Delete for everyone</button>
+                                      )}
+                                      <button type="button" className="p-[3px_8px] border border-[color:color-mix(in_srgb,_currentColor_45%,_transparent)] rounded-[8px] [background:transparent] text-inherit cursor-pointer hover:[background:rgba(0,0,0,.12)]" onClick={() => handleDeleteMessage(msg, 'me')}>{deleteChoice.canEveryone ? 'Delete for me' : 'Delete for me (others still see it)'}</button>
+                                      <button type="button" className="p-[3px_8px] border-0 [background:transparent] text-inherit opacity-[0.8] cursor-pointer hover:opacity-100" onClick={() => setDeleteChoice(null)}>Cancel</button>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -412,6 +452,7 @@ export default function MessengerWidget() {
                     ))}
                   </div>
 
+                  {deleteError && <p className="m-0 p-[6px_14px] text-danger-text text-[12px] [background:var(--panel-2)]" role="alert">{deleteError}</p>}
                   {/* Composer */}
                   <form className="p-[8px_14px_12px] [background:var(--panel-2)] border-t border-t-line flex items-center gap-2" onSubmit={handleSend}>
                     <input
