@@ -47,13 +47,13 @@ function Metric({ label, value, suffix = '', Icon = FaChartPie, tone = '', capti
   );
 }
 
-function PanelShell({ title, subtitle, actions, children }) {
+function PanelShell({ title, subtitle, actions, children, chart = false }) {
   return (
     <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
+      <div className={`panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px] ${chart ? '[&_h2]:text-[15px] [&_h2]:font-[800]' : '[&_h2]:text-[11px] [&_h2]:font-[780]'}`}>
         <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
           <h2>{title}</h2>
-          {subtitle && <span>{subtitle}</span>}
+          {subtitle && !chart && <span>{subtitle}</span>}
         </div>
         {actions}
       </div>
@@ -325,6 +325,7 @@ function AcquisitionBody({ rows, loading, error }) {
 function AcquisitionPanel({ rows, loading, error, range }) {
   return (
     <PanelShell
+      chart
       title="Inquiry acquisition"
       subtitle="Leads per channel from Admin and Marketing entries — hover for conversion"
       actions={<span className="[.dashboard-page_&]:p-[5px_11px] [.dashboard-page_&]:border [.dashboard-page_&]:border-[color:color-mix(in_srgb,_var(--accent)_26%,_var(--border))] [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:text-accent-text [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--accent)_7%,_transparent)] [.dashboard-page_&]:text-[8.5px] [.dashboard-page_&]:font-[700] [.dashboard-page_&]:whitespace-nowrap">{formatDate(range.from)} — {formatDate(range.to)}</span>}
@@ -407,6 +408,7 @@ function InquirySourcePanel({ sources, branches, loading, error }) {
   const isBranch = view === 'branch';
   return (
     <PanelShell
+      chart
       title="Inquiry by source"
       subtitle={isBranch ? 'Lead share per branch' : 'Lead share per acquisition channel'}
       actions={<ViewDropdown value={view} onChange={setView} />}
@@ -424,7 +426,7 @@ function InquirySourcePanel({ sources, branches, loading, error }) {
 
 function ApplicantFunnelPanel({ funnel, loading, error }) {
   return (
-    <PanelShell title="Applicant funnel" subtitle="Drop-off between pipeline stages">
+    <PanelShell chart title="Applicant funnel" subtitle="Drop-off between pipeline stages">
       <PanelBody loading={loading} error={error}>
         <ApplicantFunnel funnel={funnel} />
       </PanelBody>
@@ -434,7 +436,7 @@ function ApplicantFunnelPanel({ funnel, loading, error }) {
 
 function InventoryHealthPanel({ status, loading, error, title, subtitle }) {
   return (
-    <PanelShell title={title} subtitle={subtitle}>
+    <PanelShell chart title={title} subtitle={subtitle}>
       <PanelBody loading={loading} error={error}>
         <InventoryDonut status={status} />
       </PanelBody>
@@ -445,6 +447,7 @@ function InventoryHealthPanel({ status, loading, error, title, subtitle }) {
 function ProductionTrendPanel({ rows, period, onPeriodChange, loading, error }) {
   return (
     <PanelShell
+      chart
       title="Production trend"
       subtitle="All branches · units produced (bars) vs production transactions (line)"
       actions={(
@@ -473,6 +476,7 @@ function TopBranchesPanel({ rows, loading, error }) {
   const [metric, setMetric] = useState('quantity');
   return (
     <PanelShell
+      chart
       title="Top performing branches"
       subtitle={metric === 'quantity' ? 'Ranked by quantity sold' : 'Ranked by number of sales'}
       actions={(
@@ -680,7 +684,7 @@ function FranchisingInsights({ data, loading, error }) {
 
 function StageBreakdownPanel({ stages, loading, error }) {
   return (
-    <PanelShell title="Requests per stage" subtitle="Volume sitting in each workflow stage">
+    <PanelShell chart title="Requests per stage" subtitle="Volume sitting in each workflow stage">
       <PanelBody loading={loading} error={error}>
         <StageBarChart stages={stages} />
       </PanelBody>
@@ -690,7 +694,7 @@ function StageBreakdownPanel({ stages, loading, error }) {
 
 function FulfillmentTrendPanel({ rows, loading, error }) {
   return (
-    <PanelShell title="Fulfillment trend" subtitle="Submitted vs completed supply requests per month">
+    <PanelShell chart title="Fulfillment trend" subtitle="Submitted vs completed supply requests per month">
       <PanelBody loading={loading} error={error}>
         <FulfillmentTrend rows={rows} />
       </PanelBody>
