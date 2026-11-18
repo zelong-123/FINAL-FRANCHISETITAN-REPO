@@ -318,6 +318,11 @@
 @layer utilities {
 body,
 #root { min-width: 320px; min-height: 100vh; margin: 0; }
+.recharts-wrapper,
+.recharts-wrapper *:focus,
+.recharts-wrapper *:focus-visible,
+.recharts-surface:focus,
+.recharts-surface:focus-visible { outline: none !important; box-shadow: none !important; }
 button:disabled { opacity: .52; cursor: not-allowed; }
 ::selection { color: #fff; background: color-mix(in srgb, var(--accent) 75%, transparent); }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 2px; }
