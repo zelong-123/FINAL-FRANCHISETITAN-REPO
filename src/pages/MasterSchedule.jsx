@@ -398,6 +398,12 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity })
           slotMaxTime="17:00:00"
           slotDuration="01:00:00"
           allDaySlot={false}
+          dayHeaderContent={(arg) => {
+            const weekday = arg.date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'Asia/Manila' }).toUpperCase();
+            if (mode !== 'week') return weekday;
+            const day = arg.date.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'Asia/Manila' });
+            return `${weekday} ${day}`;
+          }}
           slotEventOverlap
           nowIndicator
           navLinks
