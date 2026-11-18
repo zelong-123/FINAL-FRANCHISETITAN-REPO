@@ -263,7 +263,7 @@ export default function MessengerWidget() {
 
       {isOpen && !isMinimized && (
         <aside
-          className={`fixed bottom-[96px] right-[28px] w-[410px] h-[600px] max-w-[calc(100vw_-_36px)] max-h-[calc(100vh_-_120px)] [background:var(--panel)] border border-line-strong rounded-[20px] [box-shadow:var(--shadow-xl),_0_20px_40px_rgba(0,_0,_0,_0.35)] flex flex-col overflow-hidden z-9999 [animation:messenger-pop-in_0.25s_cubic-bezier(0.16,_1,_0.3,_1)] [&.minimized]:h-auto [&.minimized]:rounded-[16px] ${isMinimized ? ' minimized' : ''}`}
+          className={`fixed bottom-[96px] right-[28px] w-[410px] h-[600px] max-w-[calc(100vw_-_36px)] max-h-[calc(100vh_-_var(--header-height)_-_120px)] [background:var(--panel)] border border-line-strong rounded-[20px] [box-shadow:var(--shadow-xl),_0_20px_40px_rgba(0,_0,_0,_0.35)] flex flex-col overflow-hidden z-9999 [animation:messenger-pop-in_0.25s_cubic-bezier(0.16,_1,_0.3,_1)] [&.minimized]:h-auto [&.minimized]:rounded-[16px] ${isMinimized ? ' minimized' : ''}`}
           aria-label="Team Live Messenger"
         >
           {/* Header */}
