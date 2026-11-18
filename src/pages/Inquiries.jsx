@@ -1139,7 +1139,6 @@ export default function Inquiries() {
                   {typeof inquiry.days_in_status === 'number' && !inquiry.archived_at && (
                     <small className="block mt-1 text-muted">
                       {inquiry.days_in_status} day{inquiry.days_in_status === 1 ? '' : 's'}
-                      {inquiry.overdue && <span className="inline-flex ml-[6px] p-[1px_8px] rounded-[999px] border border-[rgba(255,_92,_102,_.6)] text-[#ff5c66] text-[11px] font-normal" title={`More than ${inquiry.overdue_after_days} days in this status`}>Overdue</span>}
                     </small>
                   )}
                 </td>

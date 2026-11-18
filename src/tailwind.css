@@ -318,6 +318,11 @@
 @layer utilities {
 body,
 #root { min-width: 320px; min-height: 100vh; margin: 0; }
+.recharts-wrapper,
+.recharts-wrapper *:focus,
+.recharts-wrapper *:focus-visible,
+.recharts-surface:focus,
+.recharts-surface:focus-visible { outline: none !important; box-shadow: none !important; }
 button:disabled { opacity: .52; cursor: not-allowed; }
 ::selection { color: #fff; background: color-mix(in srgb, var(--accent) 75%, transparent); }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 2px; }
@@ -610,18 +615,12 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
-/* Phones: tighter page padding, date filters stack, buttons stay tappable. */
+/* Phones: tighter page padding, buttons stay tappable. */
 @media (max-width: 600px) {
   .inquiries-page,
   .applicant-pipeline-page,
   .activities-page {
     padding: 14px 10px 24px;
-  }
-
-  .inquiries-page [aria-label='Inquiry date range'] > label,
-  .inquiries-page [aria-label='Inquiry date range'] > button,
-  .inquiries-page [aria-label='Inquiry date range'] > span {
-    flex: 1 1 100%;
   }
 
   .inquiries-page [aria-label='Inquiry date range'] input,
@@ -635,6 +634,59 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   .applicant-pipeline-page .table-wrap table,
   .activities-page .table-wrap table {
     min-width: 620px;
+  }
+
+  /* Lead names wrap by word, not letter by letter, so a name stays readable on phones. */
+  .inquiries-page .table-wrap td:first-child strong {
+    min-width: 130px;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+}
+
+/* Phones and tablets: the page itself never scrolls sideways. Only the table wrapper (its own scrollbar) does. */
+@media (max-width: 1024px) {
+  #main-content,
+  .inquiries-page,
+  .applicant-pipeline-page,
+  .activities-page,
+  .dashboard-page {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .inquiries-page .table-wrap,
+  .applicant-pipeline-page .table-wrap,
+  .activities-page .table-wrap {
+    overflow-x: auto;
+  }
+}
+
+/* Phones and tablets: From and To date fields sit side by side in one row, equal width. */
+@media (max-width: 1024px) {
+  .inquiries-page [aria-label='Inquiry date range'] {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .inquiries-page [aria-label='Inquiry date range'] > label {
+    min-width: 0;
+  }
+
+  .inquiries-page [aria-label='Inquiry date range'] input {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+}
+
+/* Dashboard tabs (Inquiries / Operation / Supply): on phones the tabs wrap onto a second line instead of being cut off. */
+@media (max-width: 681px) {
+  .dashboard-page .dashboard-tabs {
+    flex-wrap: wrap !important;
+    row-gap: 6px;
   }
 }
 
@@ -693,6 +745,115 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li small,
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child p { color: var(--muted) !important; }
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child .drawer-avatar { color: #3e5fd3 !important; background: rgba(72, 105, 235, 0.12) !important; }
+
+/* Phones: KPI metric cards sit three per row instead of one long column. */
+@media (max-width: 681px) {
+  .dashboard-page .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px;
+  }
+}
+
+/* Narrow phones: three cards are tight, so trim the padding and value size to keep numbers on one line. */
+@media (max-width: 451px) {
+  .dashboard-page .metric-grid .metric-card {
+    padding: 10px 9px !important;
+  }
+  .dashboard-page .metric-grid .metric-card strong {
+    font-size: 17px !important;
+    overflow-wrap: normal;
+  }
+}
+
+/* Large TV screens: the dashboard scales up too, like the other pages. */
+@media (min-width: 2200px) {
+  .dashboard-page {
+    zoom: 1.2;
+  }
+}
+
+/* Phones: charts are shorter so they do not look stretched. Desktop keeps its own heights. */
+@media (max-width: 681px) {
+  .dashboard-page .chart-frame,
+  .dashboard-page .chart-row-2 .chart-frame,
+  .branch-portal-page .chart-frame {
+    height: 200px !important;
+  }
+}
+
+/* Phones and tablets: the whole system fits the screen width. Only .table-wrap (tables) scrolls sideways. */
+@media (max-width: 861px) {
+  #root,
+  #root > div,
+  #root > div > div,
+  #root main,
+  #root header {
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .herald-header,
+  .herald-header > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .herald-header .header-right {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .herald-header nav {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .page-container,
+  .page-container > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-container .toolbar,
+  .page-container .data-panel,
+  .page-container [class*='unified-toolbar'] {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+/* Phones: keep the profile avatar visible on small screens (iPhone X / 16). The breadcrumb shrinks instead. */
+@media (max-width: 681px) {
+  .herald-header {
+    gap: 8px;
+  }
+
+  .herald-header .header-right {
+    flex-shrink: 0;
+    overflow: visible;
+    gap: 4px;
+  }
+
+  .herald-header .header-right > button,
+  .herald-header .header-right > div > button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .herald-header .header-right button[aria-haspopup='dialog'] {
+    width: auto;
+    height: auto;
+    margin-left: 0;
+    padding: 0;
+  }
+
+  .herald-header .header-right button[aria-haspopup='dialog'] > span:first-child {
+    width: 34px;
+    height: 34px;
+    font-size: 13px;
+  }
+}
 
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {

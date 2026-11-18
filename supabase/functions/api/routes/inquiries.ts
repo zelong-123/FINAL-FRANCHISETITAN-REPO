@@ -122,6 +122,8 @@ inquiryRoutes.get('/inquiries', marketingAdminSales, async (c) => {
   );
   if (ranked) { order.push(ranked.orderBy); orderParams.push(...ranked.orderParams); }
   if (name === 'marketing') order.push(`case franchise_inquiries.status when 'new' then 0 when 'endorsed' then 1 when 'converted' then 2 else 3 end`);
+  // Admin: Endorsed (not yet converted) leads first, then Converted, then the rest.
+  if (name === 'admin' && !archived && q.sort !== 'date') order.push(`case franchise_inquiries.status when 'endorsed' then 0 when 'converted' then 1 else 2 end`);
   if (q.sort === 'date') order.push('franchise_inquiries.inquiry_date desc', 'franchise_inquiries.id desc');
   else if (archived) order.push('franchise_inquiries.archived_at desc', 'franchise_inquiries.id desc');
   else order.push('franchise_inquiries.id asc');

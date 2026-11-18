@@ -17,12 +17,13 @@ import { formatDate, formatNumber, localDateInputValue, titleCase } from '../lib
 import { kpiConversionRate } from '../lib/conversion';
 import RecordCode from '../components/RecordCode';
 import { downloadCsv, downloadPdf } from '../lib/export';
-import { EmptyState, LoadingState, Notice, PageHeader, StatusBadge } from '../components/ApiUi';
+import { EmptyState, LoadingState, Notice, PageHeader, Pagination, StatusBadge } from '../components/ApiUi';
 import { useAuth } from '../context/AuthContext';
 import { can, panelsFor } from '../lib/roleAccess';
 import {
   AcquisitionBars,
   ApplicantFunnel,
+  CountUp,
   FulfillmentTrend,
   InventoryDonut,
   ProductionTrendCombo,
@@ -46,13 +47,13 @@ function Metric({ label, value, suffix = '', Icon = FaChartPie, tone = '', capti
   );
 }
 
-function PanelShell({ title, subtitle, actions, children }) {
+function PanelShell({ title, subtitle, actions, children, chart = false, large = false }) {
   return (
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
-        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
+    <section data-large={large || undefined} className={`data-panel overflow-hidden mb-[18px] ${chart ? 'rounded-[10px] [background:#080b13] light:[background:color-mix(in_srgb,_var(--panel)_96%,_transparent)]' : large ? 'rounded-[10px] [background:#080b13] light:[background:color-mix(in_srgb,_var(--panel)_96%,_transparent)]' : 'rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)]'} [&[data-large]_h2]:uppercase [&[data-large]_h2]:text-[16px] [&[data-large]_h2]:font-[800] [&[data-large]_th]:text-[13px] [&[data-large]_th]:font-[800] [&[data-large]_th]:py-[12px] [&[data-large]_td]:text-[14px] [&[data-large]_td]:font-[600] [&[data-large]_td]:py-[14px] [&[data-large]_td]:text-text [&[data-large]_span]:text-[12px] [&[data-large]_small]:text-[11px] border border-line [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]`}>
+      <div className={`panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[12px] [&_small]:text-muted [&_small]:text-[8px] ${chart ? '[&_h2]:text-[15px] [&_h2]:font-[700] [&_h2]:uppercase' : '[&_h2]:text-[11px] [&_h2]:font-[780]'}`}>
+        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[12px]">
           <h2>{title}</h2>
-          {subtitle && <span>{subtitle}</span>}
+          {subtitle && !chart && <span>{subtitle}</span>}
         </div>
         {actions}
       </div>
@@ -293,7 +294,7 @@ function KpiGrid({ role, kpi, loading, error }) {
             <Metric
               key={descriptor.key}
               label={descriptor.label}
-              value={formatNumber(value, descriptor.decimals ?? 0)}
+              value={<CountUp value={value} decimals={descriptor.decimals ?? 0} />}
               suffix={descriptor.suffix || ''}
               Icon={descriptor.Icon}
               tone={kpiTone(descriptor, value)}
@@ -324,6 +325,7 @@ function AcquisitionBody({ rows, loading, error }) {
 function AcquisitionPanel({ rows, loading, error, range }) {
   return (
     <PanelShell
+      chart
       title="Inquiry acquisition"
       subtitle="Leads per channel from Admin and Marketing entries — hover for conversion"
       actions={<span className="[.dashboard-page_&]:p-[5px_11px] [.dashboard-page_&]:border [.dashboard-page_&]:border-[color:color-mix(in_srgb,_var(--accent)_26%,_var(--border))] [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:text-accent-text [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--accent)_7%,_transparent)] [.dashboard-page_&]:text-[8.5px] [.dashboard-page_&]:font-[700] [.dashboard-page_&]:whitespace-nowrap">{formatDate(range.from)} — {formatDate(range.to)}</span>}
@@ -406,6 +408,7 @@ function InquirySourcePanel({ sources, branches, loading, error }) {
   const isBranch = view === 'branch';
   return (
     <PanelShell
+      chart
       title="Inquiry by source"
       subtitle={isBranch ? 'Lead share per branch' : 'Lead share per acquisition channel'}
       actions={<ViewDropdown value={view} onChange={setView} />}
@@ -423,7 +426,7 @@ function InquirySourcePanel({ sources, branches, loading, error }) {
 
 function ApplicantFunnelPanel({ funnel, loading, error }) {
   return (
-    <PanelShell title="Applicant funnel" subtitle="Drop-off between pipeline stages">
+    <PanelShell chart title="Applicant funnel" subtitle="Drop-off between pipeline stages">
       <PanelBody loading={loading} error={error}>
         <ApplicantFunnel funnel={funnel} />
       </PanelBody>
@@ -433,7 +436,7 @@ function ApplicantFunnelPanel({ funnel, loading, error }) {
 
 function InventoryHealthPanel({ status, loading, error, title, subtitle }) {
   return (
-    <PanelShell title={title} subtitle={subtitle}>
+    <PanelShell chart title={title} subtitle={subtitle}>
       <PanelBody loading={loading} error={error}>
         <InventoryDonut status={status} />
       </PanelBody>
@@ -444,6 +447,7 @@ function InventoryHealthPanel({ status, loading, error, title, subtitle }) {
 function ProductionTrendPanel({ rows, period, onPeriodChange, loading, error }) {
   return (
     <PanelShell
+      chart
       title="Production trend"
       subtitle="All branches · units produced (bars) vs production transactions (line)"
       actions={(
@@ -472,6 +476,7 @@ function TopBranchesPanel({ rows, loading, error }) {
   const [metric, setMetric] = useState('quantity');
   return (
     <PanelShell
+      chart
       title="Top performing branches"
       subtitle={metric === 'quantity' ? 'Ranked by quantity sold' : 'Ranked by number of sales'}
       actions={(
@@ -517,6 +522,7 @@ function RecentApplicationsPanel({ applications, loading, error }) {
 
   return (
     <PanelShell
+      large
       title="Recent franchise applications"
       subtitle="Newest candidates in the pipeline"
       actions={(
@@ -565,15 +571,18 @@ function TransactionBadge({ type }) {
 }
 
 function TransactionsPanel({ from, to }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [from, to]);
   // /inventory-transactions is a paginated endpoint: the payload itself is
   // { data: [...], meta }, so the whole payload must be kept — unwrapping it
   // here (payload.data) left `data.data` undefined and the table always empty.
   const { data, loading, error } = useRemote(
     async () => (await api.get('/inventory-transactions', {
-      per_page: 15,
+      per_page: 20,
+      page,
       ...(from ? { from, to } : {}),
     })),
-    [from, to],
+    [from, to, page],
   );
 
   const rows = data?.data || [];
@@ -593,6 +602,7 @@ function TransactionsPanel({ from, to }) {
 
   return (
     <PanelShell
+      large
       title="Transaction records"
       subtitle="Receipts, dispatches, delivery confirmations, branch deductions, and adjustments"
       actions={(
@@ -632,6 +642,7 @@ function TransactionsPanel({ from, to }) {
             </tbody>
           </table>
         </div>
+        <Pagination meta={data?.meta} onPage={setPage} />
       </PanelBody>
     </PanelShell>
   );
@@ -641,32 +652,32 @@ function FranchisingInsights({ data, loading, error }) {
   const insights = data?.insights || [];
   const alerts = data?.alerts || [];
   return (
-    <PanelShell title="Insights" subtitle="What the network is telling you right now">
+    <PanelShell large title="Insights" subtitle="What the network is telling you right now">
       <PanelBody loading={loading} error={error}>
         <div className="grid gap-[9px] p-[15px_18px]">
           {!insights.length ? (
-            <span className="muted-note text-muted text-[8px] leading-[1.6]">No insights available yet.</span>
+            <span className="muted-note text-muted text-[12px] leading-[1.6]">No insights available yet.</span>
           ) : insights.map((insight) => (
-            <div className="flex items-start gap-[9px] text-text-secondary text-[9px] leading-[1.6]" key={`${insight.type}-${insight.message}`}>
+            <div className="flex items-start gap-[9px] text-text-secondary text-[12px] font-[600] leading-[1.6]" key={`${insight.type}-${insight.message}`}>
               <FaLightbulb aria-hidden="true" />
               <span>{insight.message}</span>
             </div>
           ))}
         </div>
-        <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px] [&.panel-title]:mt-[7px] [&.panel-title]:border-t [&.panel-title]:border-t-line">
-          <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
+        <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_h2]:font-[800] [&_h2]:uppercase [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[12px] [&_small]:text-muted [&_small]:text-[8px] [&.panel-title]:mt-[7px] [&.panel-title]:border-t [&.panel-title]:border-t-line">
+          <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[12px]">
             <h2>Alerts &amp; warnings</h2>
             <span>Items that need attention</span>
           </div>
         </div>
         <div className="grid gap-2 p-[15px_18px]">
           {!alerts.length ? (
-            <div className="flex items-start gap-[9px] p-[10px_12px] border border-line rounded-[12px] text-[9px] leading-[1.55] [&.severity-danger]:text-danger-text [&.severity-danger]:border-[color:color-mix(in_srgb,_var(--danger)_26%,_transparent)] [&.severity-danger]:[background:color-mix(in_srgb,_var(--danger)_7%,_transparent)] later:[&.severity-warning]:text-[color:var(--warning-text)] later:[&.severity-warning]:border-[color:color-mix(in_srgb,_var(--warning)_26%,_transparent)] later:[&.severity-warning]:[background:color-mix(in_srgb,_var(--warning)_7%,_transparent)] later-2:[&.severity-clear]:text-success-text later-2:[&.severity-clear]:border-[color:color-mix(in_srgb,_var(--success)_26%,_transparent)] later-2:[&.severity-clear]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] severity-clear">
+            <div className="flex items-start gap-[9px] p-[10px_12px] border border-line rounded-[12px] text-[12px] font-[600] leading-[1.55] [&.severity-danger]:text-danger-text [&.severity-danger]:border-[color:color-mix(in_srgb,_var(--danger)_26%,_transparent)] [&.severity-danger]:[background:color-mix(in_srgb,_var(--danger)_7%,_transparent)] later:[&.severity-warning]:text-[color:var(--warning-text)] later:[&.severity-warning]:border-[color:color-mix(in_srgb,_var(--warning)_26%,_transparent)] later:[&.severity-warning]:[background:color-mix(in_srgb,_var(--warning)_7%,_transparent)] later-2:[&.severity-clear]:text-success-text later-2:[&.severity-clear]:border-[color:color-mix(in_srgb,_var(--success)_26%,_transparent)] later-2:[&.severity-clear]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] severity-clear">
               <FaCircleCheck aria-hidden="true" />
               <span>No warnings. Every branch, applicant, and supply request is on track.</span>
             </div>
           ) : alerts.map((alert) => (
-            <div className={`flex items-start gap-[9px] p-[10px_12px] border border-line rounded-[12px] text-[9px] leading-[1.55] [&.severity-danger]:text-danger-text [&.severity-danger]:border-[color:color-mix(in_srgb,_var(--danger)_26%,_transparent)] [&.severity-danger]:[background:color-mix(in_srgb,_var(--danger)_7%,_transparent)] later:[&.severity-warning]:text-[color:var(--warning-text)] later:[&.severity-warning]:border-[color:color-mix(in_srgb,_var(--warning)_26%,_transparent)] later:[&.severity-warning]:[background:color-mix(in_srgb,_var(--warning)_7%,_transparent)] later-2:[&.severity-clear]:text-success-text later-2:[&.severity-clear]:border-[color:color-mix(in_srgb,_var(--success)_26%,_transparent)] later-2:[&.severity-clear]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] severity-${alert.severity}`} key={alert.message}>
+            <div className={`flex items-start gap-[9px] p-[10px_12px] border border-line rounded-[12px] text-[12px] font-[600] leading-[1.55] [&.severity-danger]:text-danger-text [&.severity-danger]:border-[color:color-mix(in_srgb,_var(--danger)_26%,_transparent)] [&.severity-danger]:[background:color-mix(in_srgb,_var(--danger)_7%,_transparent)] later:[&.severity-warning]:text-[color:var(--warning-text)] later:[&.severity-warning]:border-[color:color-mix(in_srgb,_var(--warning)_26%,_transparent)] later:[&.severity-warning]:[background:color-mix(in_srgb,_var(--warning)_7%,_transparent)] later-2:[&.severity-clear]:text-success-text later-2:[&.severity-clear]:border-[color:color-mix(in_srgb,_var(--success)_26%,_transparent)] later-2:[&.severity-clear]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] severity-${alert.severity}`} key={alert.message}>
               <FaTriangleExclamation aria-hidden="true" />
               <span>{alert.message}</span>
             </div>
@@ -679,7 +690,7 @@ function FranchisingInsights({ data, loading, error }) {
 
 function StageBreakdownPanel({ stages, loading, error }) {
   return (
-    <PanelShell title="Requests per stage" subtitle="Volume sitting in each workflow stage">
+    <PanelShell chart title="Requests per stage" subtitle="Volume sitting in each workflow stage">
       <PanelBody loading={loading} error={error}>
         <StageBarChart stages={stages} />
       </PanelBody>
@@ -689,7 +700,7 @@ function StageBreakdownPanel({ stages, loading, error }) {
 
 function FulfillmentTrendPanel({ rows, loading, error }) {
   return (
-    <PanelShell title="Fulfillment trend" subtitle="Submitted vs completed supply requests per month">
+    <PanelShell chart title="Fulfillment trend" subtitle="Submitted vs completed supply requests per month">
       <PanelBody loading={loading} error={error}>
         <FulfillmentTrend rows={rows} />
       </PanelBody>
@@ -829,7 +840,7 @@ function DashboardBody({ role, panels }) {
           </div>
         );
       case 'followUpBySales':
-        return <PanelShell key="followUpBySales" title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user"><FollowUpBySalesTable /></PanelShell>;
+        return <PanelShell key="followUpBySales" large title="Follow-up by Sales" subtitle="Overdue and Stalled applicants per Sales user"><FollowUpBySalesTable /></PanelShell>;
       case 'kpi':
         return <KpiGrid key="kpi" role={role} kpi={overview.data?.kpis} loading={overview.loading} error={overview.error} />;
       case 'inquiryAcquisition':
@@ -1002,7 +1013,7 @@ function FranchiseeDashboard() {
         <Metric label="Open requests" value={openRequests} Icon={FaTruckFast} tone={openRequests ? 'warning' : 'success'} caption="Supply orders still in progress" />
       </div>
       <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-        <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]"><div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]"><h2>Latest supply requests</h2><span>Your most recent fulfillment activity</span></div></div>
+        <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[12px] [&_small]:text-muted [&_small]:text-[8px]"><div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[12px]"><h2>Latest supply requests</h2><span>Your most recent fulfillment activity</span></div></div>
         {data.requests.length === 0 ? <EmptyState /> : (
           <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer"><table><thead><tr><th>Request</th><th>Location</th><th>Status</th><th>Delivery date</th></tr></thead><tbody>
             {data.requests.slice(0, 8).map((request) => <tr key={request.id}><td><strong>{request.request_number}</strong></td><td>{request.location?.name || '—'}</td><td><StatusBadge value={request.status} /></td><td>{request.target_delivery_date || '—'}</td></tr>)}

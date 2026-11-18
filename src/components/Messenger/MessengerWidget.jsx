@@ -73,6 +73,91 @@ export function getInitials(name = 'User') {
   );
 }
 
+const BUBBLE_SIZE = 68;
+const BUBBLE_RIGHT = 28;
+const BUBBLE_EDGE_BOTTOM_GAP = 24;
+
+function bubbleBottomTop() {
+  return window.innerHeight - BUBBLE_SIZE - BUBBLE_EDGE_BOTTOM_GAP;
+}
+
+function MinimizedBubble({ unread, onRestore, onClose }) {
+  const [pos, setPos] = useState(() => ({ left: window.innerWidth - BUBBLE_SIZE - BUBBLE_RIGHT, top: bubbleBottomTop() }));
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef(null);
+
+  const handlePointerDown = (e) => {
+    if (e.target.closest('[data-bubble-close]')) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origLeft: pos.left, origTop: pos.top, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(true);
+  };
+
+  const handlePointerMove = (e) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
+    const maxLeft = window.innerWidth - BUBBLE_SIZE;
+    const maxTop = window.innerHeight - BUBBLE_SIZE;
+    setPos({
+      left: Math.min(Math.max(0, drag.origLeft + dx), maxLeft),
+      top: Math.min(Math.max(0, drag.origTop + dy), maxTop),
+    });
+  };
+
+  const handlePointerUp = () => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setDragging(false);
+    if (!drag) return;
+    if (!drag.moved) {
+      onRestore();
+      return;
+    }
+    // Always snap back to the lower-right resting position.
+    setPos({ left: window.innerWidth - BUBBLE_SIZE - BUBBLE_RIGHT, top: bubbleBottomTop() });
+  };
+
+  return (
+    <div
+      className="fixed z-9999 w-[68px] h-[68px] touch-none select-none cursor-grab active:cursor-grabbing"
+      style={{
+        left: pos.left,
+        top: pos.top,
+        transition: dragging ? 'none' : 'left 0.35s cubic-bezier(0.16, 1, 0.3, 1), top 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+      }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+    >
+      <button
+        type="button"
+        className="w-full h-full rounded-[50%] border border-[rgba(255,_255,_255,_0.35)] text-[#fff] text-[24px] grid place-items-center cursor-pointer [background:linear-gradient(145deg,_rgba(129,_140,_248,_0.92)_0%,_rgba(79,_70,_229,_0.82)_100%)] [backdrop-filter:blur(14px)_saturate(160%)] [box-shadow:inset_0_1px_0_rgba(255,_255,_255,_0.45),_inset_0_-8px_18px_rgba(30,_27,_75,_0.35),_0_14px_32px_rgba(79,_70,_229,_0.45)] [transition:transform_0.2s_ease,_box-shadow_0.2s_ease] hover:[transform:scale(1.06)]"
+        aria-label={`Open messenger${unread ? `, ${unread} unread` : ''}`}
+        tabIndex={-1}
+      >
+        <FaComments />
+      </button>
+      {unread > 0 && (
+        <span className="absolute right-[-2px] top-[-2px] min-w-[20px] h-[20px] grid place-items-center p-[0_5px] rounded-[999px] text-[#fff] text-[10px] font-[800] [background:var(--danger)] border-2 border-bg pointer-events-none">{unread > 99 ? '99+' : unread}</span>
+      )}
+      <button
+        type="button"
+        data-bubble-close=""
+        className="absolute left-[-6px] top-[-6px] w-[20px] h-[20px] rounded-[50%] border border-line-strong grid place-items-center text-[10px] text-text cursor-pointer [background:var(--panel)]"
+        onClick={onClose}
+        aria-label="Close messenger"
+        title="Close Messenger"
+      >
+        <FaXmark />
+      </button>
+    </div>
+  );
+}
+
 export default function MessengerWidget() {
   const { user } = useAuth();
 
@@ -168,9 +253,17 @@ export default function MessengerWidget() {
    
 
       {/* Floating Messenger Window */}
-      {isOpen && (
+      {isOpen && isMinimized && (
+        <MinimizedBubble
+          unread={unreadTotal}
+          onRestore={() => setIsMinimized(false)}
+          onClose={() => setIsOpen(false)}
+        />
+      )}
+
+      {isOpen && !isMinimized && (
         <aside
-          className={`fixed bottom-[96px] right-[28px] w-[410px] h-[600px] max-w-[calc(100vw_-_36px)] max-h-[calc(100vh_-_120px)] [background:var(--panel)] border border-line-strong rounded-[20px] [box-shadow:var(--shadow-xl),_0_20px_40px_rgba(0,_0,_0,_0.35)] flex flex-col overflow-hidden z-9999 [animation:messenger-pop-in_0.25s_cubic-bezier(0.16,_1,_0.3,_1)] [&.minimized]:h-auto [&.minimized]:rounded-[16px] ${isMinimized ? ' minimized' : ''}`}
+          className={`fixed bottom-[96px] right-[28px] w-[410px] h-[600px] max-w-[calc(100vw_-_36px)] max-h-[calc(100vh_-_var(--header-height)_-_120px)] [background:var(--panel)] border border-line-strong rounded-[20px] [box-shadow:var(--shadow-xl),_0_20px_40px_rgba(0,_0,_0,_0.35)] flex flex-col overflow-hidden z-9999 [animation:messenger-pop-in_0.25s_cubic-bezier(0.16,_1,_0.3,_1)] [&.minimized]:h-auto [&.minimized]:rounded-[16px] ${isMinimized ? ' minimized' : ''}`}
           aria-label="Team Live Messenger"
         >
           {/* Header */}
