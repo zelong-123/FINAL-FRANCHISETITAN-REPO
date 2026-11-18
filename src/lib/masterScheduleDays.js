@@ -108,6 +108,20 @@ export function isOutsideHours(session) {
   return start < BUSINESS_START_MINUTES || end > BUSINESS_END_MINUTES;
 }
 
+/**
+ * Picks the counts for the panels. Uses the summary endpoint when it answered; otherwise
+ * counts the loaded sessions (so an older API without /summary still shows numbers).
+ */
+export function panelCounts(summary, sessions) {
+  const statusFromList = sessions.reduce((counts, s) => ({ ...counts, [s.status]: (counts[s.status] ?? 0) + 1 }), {});
+  const activityFromList = sessions.reduce((counts, s) => ({ ...counts, [s.activity_type]: (counts[s.activity_type] ?? 0) + 1 }), { orientation: 0, training: 0 });
+  return {
+    status: summary?.status_counts ?? statusFromList,
+    activity: summary?.activity_counts ?? activityFromList,
+    source: summary ? 'summary' : 'list',
+  };
+}
+
 /** "YYYY-MM-DD" in Manila for an ISO timestamp. */
 export function manilaDateOf(iso) {
   return manilaToday(new Date(iso));

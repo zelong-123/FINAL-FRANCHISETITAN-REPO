@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addDays, dayDots, isOutsideHours, manilaToday, mondayOf, monthWeeks, shiftBusinessDay, shiftMonth, weekDays, weekdayOf,
+  addDays, dayDots, isOutsideHours, manilaToday, panelCounts, mondayOf, monthWeeks, shiftBusinessDay, shiftMonth, weekDays, weekdayOf,
 } from './masterScheduleDays.js';
 
 test('weekday and Monday arithmetic use calendar dates', () => {
@@ -52,6 +52,23 @@ test('sessions outside 9 AM-5 PM Manila are flagged, inside ones are not', () =>
   assert.equal(isOutsideHours({ start_at: '2026-11-18T01:00:00Z', end_at: '2026-11-18T03:00:00Z' }), false);
   assert.equal(isOutsideHours({ start_at: '2026-11-17T23:30:00Z', end_at: '2026-11-18T01:00:00Z' }), true);
   assert.equal(isOutsideHours({ start_at: '2026-11-18T08:30:00Z', end_at: '2026-11-18T10:00:00Z' }), true);
+});
+
+test('panel counts fall back to the loaded list when the summary is missing', () => {
+  const sessions = [
+    { status: 'confirmed', activity_type: 'orientation' },
+    { status: 'pending', activity_type: 'training' },
+    { status: 'confirmed', activity_type: 'training' },
+  ];
+  // 404 / 500 from /schedule-sessions/summary -> summary is null.
+  const fallback = panelCounts(null, sessions);
+  assert.equal(fallback.source, 'list');
+  assert.deepEqual(fallback.status, { confirmed: 2, pending: 1 });
+  assert.deepEqual(fallback.activity, { orientation: 1, training: 2 });
+  // Summary present -> it wins.
+  const live = panelCounts({ status_counts: { confirmed: 9 }, activity_counts: { orientation: 4, training: 5 } }, sessions);
+  assert.equal(live.source, 'summary');
+  assert.deepEqual(live.activity, { orientation: 4, training: 5 });
 });
 
 test('a Manila late-night time stays on the Manila date', () => {

@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
 import { ActivitiesPanel, MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
-import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, shiftBusinessDay } from '../lib/masterScheduleDays';
+import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
@@ -110,16 +110,9 @@ export default function MasterSchedule({ embedded = false }) {
     return () => { cancelled = true; };
   }, [range, filters.activity_type, filters.brand_id, filters.handler_id]);
 
-  const statusCounts = useMemo(() => {
-    if (summaryData.status) return summaryData.status;
-    return sessions.reduce((counts, session) => ({ ...counts, [session.status]: (counts[session.status] ?? 0) + 1 }), {});
-  }, [summaryData.status, sessions]);
-
-  // Week ACTIVITIES counts. The week range is requested separately only in Week mode.
-  const activityCounts = useMemo(() => {
-    if (summaryData.activity && mode === 'week') return summaryData.activity;
-    return sessions.reduce((counts, session) => ({ ...counts, [session.activity_type]: (counts[session.activity_type] ?? 0) + 1 }), { orientation: 0, training: 0 });
-  }, [summaryData.activity, sessions, mode]);
+  // Same fallback rule for both panels (see panelCounts): summary when it answered, else the loaded list.
+  const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, sessions).status, [summaryData.status, sessions]);
+  const activityCounts = useMemo(() => panelCounts(summaryData.activity ? { activity_counts: summaryData.activity } : null, sessions).activity, [summaryData.activity, sessions]);
 
   // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
   useEffect(() => {
@@ -155,9 +148,9 @@ export default function MasterSchedule({ embedded = false }) {
       id: String(session.id),
       start: session.start_at,
       end: session.end_at,
-      // Tinted cards keep the calendar readable; the status colour stays as the accent.
-      backgroundColor: `color-mix(in srgb, ${color} 16%, transparent)`,
-      borderColor: `color-mix(in srgb, ${color} 42%, transparent)`,
+      // Dark pinned cards (EventBody); the status colour stays as the left edge accent only.
+      backgroundColor: '#1f2533',
+      borderColor: color,
       classNames: [`ms-event`, `is-${session.status}`],
       // Only live sessions can be dragged (reschedule; Admin may also merge).
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
@@ -300,11 +293,12 @@ export default function MasterSchedule({ embedded = false }) {
         <div className="flex flex-wrap items-end gap-[10px] min-w-0 max-[901px]:flex-[1_1_100%]" role="group" aria-label="Calendar filters">
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Activity</span>
-            <select value={filters.activity_type} onChange={(event) => setFilters({ ...filters, activity_type: event.target.value })} aria-label="Filter by activity">
+            <select value={filters.activity_type} onChange={(event) => setFilters({ ...filters, activity_type: event.target.value, brand_id: '' })} aria-label="Filter by activity">
               <option value="">All activities</option>
               {ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
+          {filters.activity_type === 'training' && (
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Brand</span>
             <select value={filters.brand_id} onChange={(event) => setFilters({ ...filters, brand_id: event.target.value })} aria-label="Filter by brand">
@@ -312,6 +306,7 @@ export default function MasterSchedule({ embedded = false }) {
               {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
             </select>
           </label>
+          )}
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Handler</span>
             <select value={filters.handler_id} onChange={(event) => setFilters({ ...filters, handler_id: event.target.value })} aria-label="Filter by handler">
@@ -398,7 +393,7 @@ export default function MasterSchedule({ embedded = false }) {
           slotMaxTime="17:00:00"
           slotDuration="01:00:00"
           allDaySlot={false}
-          slotEventOverlap={false}
+          slotEventOverlap
           nowIndicator
           navLinks
           dayMaxEvents={3}
@@ -476,6 +471,7 @@ export default function MasterSchedule({ embedded = false }) {
 
 /** "9:00 AM – 11:00 AM" in Manila time — the schedule's own timezone. */
 const manilaTime = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' });
+const manilaDate = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 function sessionTime(startIso, endIso) {
   if (!startIso) return '';
   return `${manilaTime.format(new Date(startIso))} – ${endIso ? manilaTime.format(new Date(endIso)) : ''}`;
@@ -495,12 +491,20 @@ function eventTooltip(session) {
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
 function EventBody({ session, isAdmin }) {
+  const taken = session.participant_count ?? 0;
+  const capacity = session.max_capacity ?? 5;
   return (
-    <div className="ms-event-body grid gap-[1px] overflow-hidden p-[4px_6px] text-text text-[11px] leading-[1.25] [&_strong]:overflow-hidden later:[&_strong]:text-text later:[&_strong]:text-[11.5px] [&_strong]:font-[700] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap">
-      <span className="ms-event-time overflow-hidden text-muted text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)}</span>
+    <div className="ms-event-body grid gap-[2px] overflow-hidden p-[5px_7px] rounded-[7px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#1f2533] border border-[#d9dee9] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[11.5px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+      <span className="ms-event-time overflow-hidden text-[#c9d1e0] text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)} · {session.start_at ? manilaDate.format(new Date(session.start_at)) : ''}</span>
       <strong>{activityLabel(session.activity_type)}</strong>
-      <span className="ms-event-meta overflow-hidden text-text-secondary text-[10.5px] text-ellipsis whitespace-nowrap">
-        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any brand' : '—')} · {session.occupancy}
+      <span className="ms-event-meta overflow-hidden text-[#e6ebf5] text-[10.5px] text-ellipsis whitespace-nowrap">
+        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any brand' : 'No brand')} - {taken}/{capacity}
+      </span>
+      <span className="flex items-center gap-[3px] text-[10px] text-[#c9d1e0]" aria-label={`${taken} of ${capacity} applicants`}>
+        {Array.from({ length: capacity }, (_, index) => (
+          <i key={index} className={`w-[7px] h-[7px] rounded-[50%] ${index < taken ? 'bg-[#f5f7fb]' : 'border border-[#c9d1e0]'}`} aria-hidden="true" />
+        ))}
+        <span className="ml-[4px] overflow-hidden text-ellipsis whitespace-nowrap">{session.handler?.full_name || 'No handler'}</span>
       </span>
       {isAdmin && session.merge_suggested && <em className="ms-merge-badge [justify-self:start] p-[1px_6px] rounded-[999px] [background:color-mix(in_srgb,_var(--accent-2)_85%,_transparent)] text-[#fff] text-[9px] not-italic font-[650]">Merge</em>}
     </div>
