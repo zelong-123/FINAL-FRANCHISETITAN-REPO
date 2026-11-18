@@ -76,7 +76,7 @@ export function getInitials(name = 'User') {
 const BUBBLE_SIZE = 56;
 const BUBBLE_RIGHT = 28;
 const BUBBLE_EDGE_TOP = 120;
-const BUBBLE_EDGE_BOTTOM_GAP = 96;
+const BUBBLE_EDGE_BOTTOM_GAP = 24;
 
 function bubbleBottomTop() {
   return window.innerHeight - BUBBLE_SIZE - BUBBLE_EDGE_BOTTOM_GAP;
