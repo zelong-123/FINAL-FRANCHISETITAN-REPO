@@ -643,6 +643,14 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Dashboard tabs (Inquiries / Operation / Supply): on phones the tabs wrap onto a second line instead of being cut off. */
+@media (max-width: 681px) {
+  .dashboard-page .dashboard-tabs {
+    flex-wrap: wrap !important;
+    row-gap: 6px;
+  }
+}
+
 /* Applicants > Application Detail tab: roomier spacing, larger text, darker canvas so cards stand out. Dark mode only for the background. */
 .ap-detail-panel { padding: 16px 18px 18px !important; }
 .ap-detail-panel > div:first-child { padding: 0 0 4px; gap: 12px; }
@@ -698,6 +706,13 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child li small,
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child p { color: var(--muted) !important; }
 :root[data-theme='light'] .activities-page .big-calendar-split > section:last-child .drawer-avatar { color: #3e5fd3 !important; background: rgba(72, 105, 235, 0.12) !important; }
+
+/* Large TV screens: the dashboard scales up too, like the other pages. */
+@media (min-width: 2200px) {
+  .dashboard-page {
+    zoom: 1.2;
+  }
+}
 
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {
