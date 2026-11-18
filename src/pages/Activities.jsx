@@ -510,6 +510,8 @@ export default function Activities() {
   // Phase 3b: glowing "Schedule Activity" button after arriving from the
   // Update modal's Set Schedule (stops when clicked or after creation).
   const [scheduleGlow, setScheduleGlow] = useState(false);
+  // Bumped after a save so the embedded Master Schedule reloads its data.
+  const [masterRefreshKey, setMasterRefreshKey] = useState(0);
   const preselectHandled = useRef(false);
 
   const remote = useRemote(async () => {
@@ -830,6 +832,7 @@ export default function Activities() {
         setSuccess(role === 'sales' ? 'Adjustment requested; awaiting Admin approval.' : 'Activity updated successfully.');
         closeForm();
         await remote.reload();
+        setMasterRefreshKey((key) => key + 1);
         return;
       }
 
@@ -849,6 +852,7 @@ export default function Activities() {
 
       const created = ids.length - failed.length;
       await remote.reload();
+      setMasterRefreshKey((key) => key + 1);
       setScheduleGlow(false); // the schedule was created: the glow stops
 
       if (failed.length) {
@@ -1327,7 +1331,7 @@ export default function Activities() {
 
       {/* Master Schedule tab: the full session calendar (views, filters, session
           panel, form, live rule check, drag-and-merge, role actions). */}
-      {view === 'master' && <MasterSchedule embedded onScheduleActivity={canManage ? () => { setScheduleGlow(false); openCreate(); } : undefined} />}
+      {view === 'master' && <MasterSchedule embedded refreshKey={masterRefreshKey} onScheduleActivity={canManage ? () => { setScheduleGlow(false); openCreate(); } : undefined} />}
 
 
       {(showCreate || editing) && createPortal(

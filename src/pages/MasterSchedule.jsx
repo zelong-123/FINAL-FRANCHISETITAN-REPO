@@ -31,7 +31,7 @@ import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatS
  * (/activities?view=master-schedule). Same features; only the outer page
  * frame is dropped and the heading becomes a section heading.
  */
-export default function MasterSchedule({ embedded = false, onScheduleActivity }) {
+export default function MasterSchedule({ embedded = false, onScheduleActivity, refreshKey = 0 }) {
   const { role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useMemo(() => ({
@@ -86,6 +86,14 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity })
   }, [range, filters]);
   const sessions = useMemo(() => feed.data || [], [feed.data]);
   const loadSessions = feed.reload;
+  // A save made in the Schedule activity modal (Activities page) bumps refreshKey.
+  const reloadRef = useRef(loadSessions);
+  reloadRef.current = loadSessions;
+  const firstRefresh = useRef(true);
+  useEffect(() => {
+    if (firstRefresh.current) { firstRefresh.current = false; return; }
+    void reloadRef.current();
+  }, [refreshKey]);
 
   // Counts for the status panel (month) and the Week ACTIVITIES panel (week). Uses the
   // summary endpoint; if it is missing or fails, counts come from the loaded list.
@@ -108,7 +116,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity })
       }
     })();
     return () => { cancelled = true; };
-  }, [range, filters.activity_type, filters.brand_id, filters.handler_id]);
+  }, [range, filters.activity_type, filters.brand_id, filters.handler_id, refreshKey]);
 
   // Same fallback rule for both panels (see panelCounts): summary when it answered, else the loaded list.
   const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, sessions).status, [summaryData.status, sessions]);
