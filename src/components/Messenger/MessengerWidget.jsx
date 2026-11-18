@@ -15,6 +15,7 @@ import {
   FaMinus,
   FaPaperPlane,
   FaStore,
+  FaTrash,
   FaUser,
   FaUsers,
   FaUserShield,
@@ -174,6 +175,7 @@ export default function MessengerWidget() {
     setIsMinimized,
     selectChannel,
     sendMessage,
+    deleteMessage,
     startDirectChat,
     toggleMessenger,
   } = useChat();
@@ -222,6 +224,16 @@ export default function MessengerWidget() {
   const handleAddReaction = (emoji) => {
     setInputText((prev) => (prev ? `${prev} ${emoji}` : emoji));
     inputRef.current?.focus();
+  };
+
+  const handleDeleteMessage = async (msg, isMe) => {
+    const confirmText = isMe ? 'Delete this message for everyone?' : 'Delete this message for you? The other person will still see it.';
+    if (!window.confirm(confirmText)) return;
+    try {
+      await deleteMessage(msg);
+    } catch {
+      window.alert('Could not delete the message. Please try again.');
+    }
   };
 
   const handleOpenChannel = (chanId) => {
@@ -376,9 +388,24 @@ export default function MessengerWidget() {
                                   </div>
                                 )}
                                 <div className="p-[9px_14px] rounded-[16px] text-[13px] leading-[1.45] [word-break:break-word] relative [.sent-me_&]:[background:linear-gradient(135deg,_var(--accent)_0%,_#4f46e5_100%)] [.sent-me_&]:text-[#fff] [.sent-me_&]:[border-bottom-right-radius:4px] [.sent-me_&]:[box-shadow:0_4px_12px_rgba(79,_70,_229,_0.25)] later:[.sent-them_&]:[background:var(--panel-2)] [.sent-them_&]:border [.sent-them_&]:border-line later:[.sent-them_&]:text-text later:[.sent-them_&]:[border-bottom-left-radius:4px]">
-                                  {msg.message}
+                                  {msg.deleted_at ? (
+                                    <span className="italic opacity-[0.75]">This message was deleted</span>
+                                  ) : (
+                                    msg.message
+                                  )}
                                   <div className="flex items-center justify-end gap-1 text-[10px] mt-[3px] opacity-[0.75] [.sent-me_&]:text-[rgba(255,_255,_255,_0.85)] later:[.sent-them_&]:text-muted">
                                     <span>{formatMessageTime(msg.created_at)}</span>
+                                    {!msg._optimistic && !msg.deleted_at && (
+                                      <button
+                                        type="button"
+                                        className="[background:transparent] border-0 p-0 ml-[4px] text-[10px] cursor-pointer opacity-[0.8] hover:opacity-100"
+                                        onClick={() => handleDeleteMessage(msg, isMe)}
+                                        title={isMe ? 'Delete for everyone' : 'Delete for me'}
+                                        aria-label={isMe ? 'Delete for everyone' : 'Delete for me'}
+                                      >
+                                        <FaTrash />
+                                      </button>
+                                    )}
                                     {isMe && (
                                       msg._optimistic ? (
                                         <span style={{ opacity: 0.6 }}>•</span>

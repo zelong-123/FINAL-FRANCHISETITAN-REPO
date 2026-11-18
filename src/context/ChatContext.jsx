@@ -208,6 +208,19 @@ export function ChatProvider({ children }) {
     }
   };
 
+  // Delete a message: own message for everyone (shown as deleted), someone else's for me only.
+  const deleteMessage = async (message) => {
+    const chanId = activeChannelRef.current;
+    if (!chanId || !message?.id || message._optimistic) return;
+    const response = await api.delete(`/chat/channels/${chanId}/messages/${message.id}`);
+    const scope = response.data?.scope;
+    if (scope === 'everyone') {
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, message: '', deleted_at: new Date().toISOString() } : m)));
+    } else {
+      setMessages((prev) => prev.filter((m) => m.id !== message.id));
+    }
+  };
+
   // Switch active channel
   const selectChannel = (channelId) => {
     setActiveChannelId(channelId);
@@ -309,6 +322,7 @@ export function ChatProvider({ children }) {
     setIsMinimized,
     selectChannel,
     sendMessage,
+    deleteMessage,
     startDirectChat,
     loadDirectory,
     loadChannels,

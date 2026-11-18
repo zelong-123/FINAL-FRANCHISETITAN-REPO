@@ -11,6 +11,8 @@ export const chatRoutes = new Hono<AppEnv>();
 const ONLINE_WINDOW = `now() - interval '3 minutes'`;
 const USER_JSON = `(to_jsonb(u) - 'auth_user_id') || jsonb_build_object('role', (select to_jsonb(r) from roles r where r.id = u.role_id))`;
 const MESSAGE_SELECT = `m.*, (select ${USER_JSON} from users u where u.id = m.user_id) as "user"`;
+// Messages a user hid with "delete for me" are dropped from that user's view only.
+const NOT_HIDDEN = (userParam: string) => `not exists (select 1 from chat_message_hidden h where h.message_id = m.id and h.user_id = ${userParam})`;
 
 async function loadChannel(db: Db, id: number, userId: number): Promise<Row> {
   const channel = requireFound((await db.query(`select * from chat_channels where id = $1`, [id]))[0]);
@@ -78,8 +80,8 @@ chatRoutes.get('/channels/:channel/messages', async (c) => {
   const channel = await loadChannel(db, routeId(c, 'channel'), me);
   const sinceId = intParam(c.req.query('since_id'));
   const messages = sinceId > 0
-    ? await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and m.id > $2 order by m.id asc limit 50`, [channel.id, sinceId])
-    : (await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 order by m.id desc limit 60`, [channel.id])).reverse();
+    ? await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and m.id > $2 and ${NOT_HIDDEN('$3')} order by m.id asc limit 50`, [channel.id, sinceId, me])
+    : (await db.query(`select ${MESSAGE_SELECT} from chat_messages m where m.channel_id = $1 and ${NOT_HIDDEN('$2')} order by m.id desc limit 60`, [channel.id, me])).reverse();
 
   // Fetching must never mark as seen: the client asks only when the user is really looking.
   const latest = messages[messages.length - 1];
@@ -102,6 +104,27 @@ chatRoutes.post('/channels/:channel/messages', async (c) => {
     return (await tx.query(`select ${MESSAGE_SELECT} from chat_messages m where m.id = $1`, [row.id]))[0];
   });
   return ok(c, message, 'Message sent.', 201);
+});
+
+// Delete a message. Your own message is deleted for everyone; someone else's is hidden for you only.
+chatRoutes.delete('/channels/:channel/messages/:message', async (c) => {
+  const { db } = c.get('deps');
+  const me = c.get('user').id;
+  const channel = await loadChannel(db, routeId(c, 'channel'), me);
+  const messageId = routeId(c, 'message');
+  const message = requireFound((await db.query(
+    `select id, user_id, deleted_at from chat_messages where id = $1 and channel_id = $2`,
+    [messageId, channel.id],
+  ))[0]);
+  if (message.user_id === me) {
+    await db.query(`update chat_messages set deleted_at = coalesce(deleted_at, now()), message = '' where id = $1`, [messageId]);
+  } else {
+    await db.query(
+      `insert into chat_message_hidden (message_id, user_id) values ($1, $2) on conflict do nothing`,
+      [messageId, me],
+    );
+  }
+  return ok(c, { id: messageId, scope: message.user_id === me ? 'everyone' : 'me' }, 'Message deleted.');
 });
 
 chatRoutes.post('/direct', async (c) => {
