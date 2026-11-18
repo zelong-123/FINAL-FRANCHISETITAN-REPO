@@ -17,7 +17,7 @@ import { formatDate, formatNumber, localDateInputValue, titleCase } from '../lib
 import { kpiConversionRate } from '../lib/conversion';
 import RecordCode from '../components/RecordCode';
 import { downloadCsv, downloadPdf } from '../lib/export';
-import { EmptyState, LoadingState, Notice, PageHeader, StatusBadge } from '../components/ApiUi';
+import { EmptyState, LoadingState, Notice, PageHeader, Pagination, StatusBadge } from '../components/ApiUi';
 import { useAuth } from '../context/AuthContext';
 import { can, panelsFor } from '../lib/roleAccess';
 import {
@@ -571,15 +571,18 @@ function TransactionBadge({ type }) {
 }
 
 function TransactionsPanel({ from, to }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [from, to]);
   // /inventory-transactions is a paginated endpoint: the payload itself is
   // { data: [...], meta }, so the whole payload must be kept — unwrapping it
   // here (payload.data) left `data.data` undefined and the table always empty.
   const { data, loading, error } = useRemote(
     async () => (await api.get('/inventory-transactions', {
-      per_page: 15,
+      per_page: 20,
+      page,
       ...(from ? { from, to } : {}),
     })),
-    [from, to],
+    [from, to, page],
   );
 
   const rows = data?.data || [];
@@ -599,6 +602,7 @@ function TransactionsPanel({ from, to }) {
 
   return (
     <PanelShell
+      large
       title="Transaction records"
       subtitle="Receipts, dispatches, delivery confirmations, branch deductions, and adjustments"
       actions={(
@@ -638,6 +642,7 @@ function TransactionsPanel({ from, to }) {
             </tbody>
           </table>
         </div>
+        <Pagination meta={data?.meta} onPage={setPage} />
       </PanelBody>
     </PanelShell>
   );

@@ -500,18 +500,18 @@ export function InventoryDonut({ status }) {
           </ResponsiveContainer>
         </ChartFrame>
         <div className="[.dashboard-page_&]:absolute [.dashboard-page_&]:inset-0 [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-center [.dashboard-page_&]:pointer-events-none [.dashboard-page_&_strong]:text-text later-3:[.dashboard-page_&_strong]:text-[clamp(22px,_2.4vw,_29px)] later:[.dashboard-page_&_strong]:tracking-[-0.045em] later:[.dashboard-page_&_strong]:leading-[1] [.dashboard-page_&_span]:mt-[5px] [.dashboard-page_&_span]:text-muted later-4:[.dashboard-page_&_span]:text-[8px] [.dashboard-page_&_span]:font-[800] [.dashboard-page_&_span]:tracking-[0.14em] [.dashboard-page_&_span]:uppercase">
-          <strong>{formatNumber(total)}</strong>
+          <strong><CountUp value={total} /></strong>
           <span>SKUs</span>
         </div>
       </div>
-      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[9px] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[13px] [.dashboard-page_&_li_strong]:font-[800] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[10px] [.dashboard-page_&_li_small]:font-[700] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
+      <ul className="donut-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-[9px] [.dashboard-page_&]:m-0 [.dashboard-page_&]:p-0 [.dashboard-page_&]:[list-style:none] [.dashboard-page_&_li]:grid [.dashboard-page_&_li]:grid-cols-[10px_minmax(0,_1fr)_auto_auto] [.dashboard-page_&_li]:gap-[9px] [.dashboard-page_&_li]:items-center [.dashboard-page_&_li]:p-[8px_10px] [.dashboard-page_&_li]:border [.dashboard-page_&_li]:border-line [.dashboard-page_&_li]:rounded-[11px] [.dashboard-page_&_li]:[background:var(--surface-subtle)] [.dashboard-page_&_li]:text-text-secondary [.dashboard-page_&_li]:text-[11px] [.dashboard-page_&_li]:font-[700] [.dashboard-page_&_li]:uppercase [.dashboard-page_&_li]:tracking-[0.03em] [.dashboard-page_&_li_strong]:text-text [.dashboard-page_&_li_strong]:text-[13px] [.dashboard-page_&_li_strong]:font-[800] [.dashboard-page_&_li_small]:min-w-[32px] [.dashboard-page_&_li_small]:text-muted [.dashboard-page_&_li_small]:text-[10px] [.dashboard-page_&_li_small]:font-[700] [.dashboard-page_&_li_small]:text-right [.dashboard-page_&_li.legend-normal_strong]:text-success-text later:[.dashboard-page_&_li.legend-low_strong]:text-[color:var(--warning-text)] later-2:[.dashboard-page_&_li.legend-critical_strong]:text-danger-text">
         {empty ? (
           <li className="muted-note text-muted text-[8px] leading-[1.6]">No inventory records in this view.</li>
         ) : data.map((entry) => (
           <li key={entry.key} className={`legend-${entry.key}`}>
             <span className="[.dashboard-page_&]:w-[9px] [.dashboard-page_&]:h-[9px] [.dashboard-page_&]:rounded-[50%]" style={{ background: entry.color }} />
             <span className="[.dashboard-page_.donut-legend_&]:whitespace-nowrap [.dashboard-page_.donut-legend_&]:overflow-hidden [.dashboard-page_.donut-legend_&]:text-ellipsis">{entry.name}</span>
-            <strong>{formatNumber(entry.value)}</strong>
+            <strong><CountUp value={entry.value} /></strong>
           </li>
         ))}
       </ul>
