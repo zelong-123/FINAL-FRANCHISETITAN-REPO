@@ -644,6 +644,25 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Phones and tablets: the page itself never scrolls sideways. Only the table wrapper (its own scrollbar) does. */
+@media (max-width: 1024px) {
+  #main-content,
+  .inquiries-page,
+  .applicant-pipeline-page,
+  .activities-page,
+  .dashboard-page {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .inquiries-page .table-wrap,
+  .applicant-pipeline-page .table-wrap,
+  .activities-page .table-wrap {
+    overflow-x: auto;
+  }
+}
+
 /* Phones and tablets: From and To date fields sit side by side in one row, equal width. */
 @media (max-width: 1024px) {
   .inquiries-page [aria-label='Inquiry date range'] {
