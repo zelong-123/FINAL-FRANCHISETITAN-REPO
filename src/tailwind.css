@@ -772,6 +772,14 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Phones: charts are shorter so they do not look stretched. Desktop keeps its own heights. */
+@media (max-width: 681px) {
+  .dashboard-page .chart-frame,
+  .dashboard-page .chart-row-2 .chart-frame {
+    height: 200px !important;
+  }
+}
+
 /* Phones and tablets: the whole system fits the screen width. Only .table-wrap (tables) scrolls sideways. */
 @media (max-width: 861px) {
   #root,
