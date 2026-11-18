@@ -37,6 +37,38 @@ import { FollowUpBySalesTable } from '../components/dashboard/FollowUpPanels';
 /* Shared building blocks                                              */
 /* ------------------------------------------------------------------ */
 
+/* Counts from the last shown value up to `value` (ease-out) so KPI numbers visibly move when data arrives. */
+function CountUp({ value, decimals = 0 }) {
+  const target = Number(value) || 0;
+  const [display, setDisplay] = useState(0);
+  const shownRef = useRef(0);
+
+  useEffect(() => {
+    const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      shownRef.current = target;
+      setDisplay(target);
+      return undefined;
+    }
+    const from = shownRef.current;
+    const start = performance.now();
+    const duration = 900;
+    let frame;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = from + (target - from) * eased;
+      shownRef.current = next;
+      setDisplay(next);
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  return <>{formatNumber(display, decimals)}</>;
+}
+
 function Metric({ label, value, suffix = '', Icon = FaChartPie, tone = '', caption }) {
   return (
     <article className={`metric-card relative min-h-[136px] flex flex-col justify-between overflow-hidden p-[18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [transition:transform_.22s_ease,_border-color_.22s_ease,_box-shadow_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:w-[120px] [&::after]:h-[120px] [&::after]:-right-[60px] [&::after]:-top-[65px] [&::after]:rounded-[50%] [&::after]:[background:color-mix(in_srgb,_var(--accent)_8%,_transparent)] [&::after]:[transition:transform_.35s_ease] hover:[transform:translateY(-3px)] hover:border-[color:color-mix(in_srgb,_var(--accent)_22%,_var(--border))] hover:[box-shadow:var(--shadow-md)] [&:hover::after]:[transform:scale(1.25)] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[680] [&_strong]:relative [&_strong]:z-1 [&_strong]:block [&_strong]:[overflow-wrap:anywhere] [&_strong]:text-text [&_strong]:text-[clamp(22px,_2.4vw,_31px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.045em] max-[681px]:later:min-h-[124px] max-[451px]:later-2:min-h-[120px] ${tone ? ` metric-tone-${tone}` : ''}`}>
@@ -293,7 +325,7 @@ function KpiGrid({ role, kpi, loading, error }) {
             <Metric
               key={descriptor.key}
               label={descriptor.label}
-              value={formatNumber(value, descriptor.decimals ?? 0)}
+              value={<CountUp value={value} decimals={descriptor.decimals ?? 0} />}
               suffix={descriptor.suffix || ''}
               Icon={descriptor.Icon}
               tone={kpiTone(descriptor, value)}
