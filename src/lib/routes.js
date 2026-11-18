@@ -34,7 +34,7 @@ export const routeTabs = {
   '/activities': {
     param: 'view',
     defaultKey: 'table',
-    labels: { table: 'Table', calendar: 'Calendar', 'master-schedule': 'Master Schedule' },
+    labels: { table: 'Table', 'master-schedule': 'Master Schedule' },
   },
 };
 

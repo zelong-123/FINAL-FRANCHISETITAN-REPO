@@ -88,6 +88,36 @@ sessionRoutes.get('/schedule-sessions', gate, async (c) => {
   return ok(c, rows.map((s) => present(s)));
 });
 
+// Counts for the Master Schedule status and activity panels. Same range and brand/handler filters as the list.
+// Sales sees only the sessions where they are the handler.
+sessionRoutes.get('/schedule-sessions/summary', gate, async (c) => {
+  can(c, 'schedule_sessions.view');
+  const { db } = c.get('deps');
+  const user = c.get('user');
+  const v = await validate(db, c.req.query(), {
+    from: ['required', 'date'], to: ['required', 'date', 'after:from'], activity_type: ['nullable', `in:${TRACKED_TYPES.join(',')}`],
+    brand_id: ['nullable', 'integer'], handler_id: ['nullable', 'integer'],
+  });
+  const params: unknown[] = [parseLocal(v.to), parseLocal(v.from)];
+  const where = ['s.start_at < $1', 's.end_at > $2'];
+  const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
+  if (v.activity_type) add('s.activity_type = ?', v.activity_type);
+  if (v.brand_id) add('s.brand_id = ?', v.brand_id);
+  if (v.handler_id) add('s.handler_id = ?', v.handler_id);
+  if (roleName(c) === 'sales') add('s.handler_id = ?', user.id);
+  const rows = await db.query(
+    `select s.status, s.activity_type, count(*)::int as sessions from schedule_sessions s where ${where.join(' and ')} group by s.status, s.activity_type`,
+    params,
+  );
+  const status_counts: Record<string, number> = Object.fromEntries(STATUSES.map((s) => [s, 0]));
+  const activity_counts: Record<string, number> = Object.fromEntries(TRACKED_TYPES.map((t) => [t, 0]));
+  for (const r of rows) {
+    status_counts[r.status] = (status_counts[r.status] ?? 0) + Number(r.sessions);
+    activity_counts[r.activity_type] = (activity_counts[r.activity_type] ?? 0) + Number(r.sessions);
+  }
+  return ok(c, { status_counts, activity_counts });
+});
+
 sessionRoutes.get('/schedule-sessions/config', gate, (c) => {
   can(c, 'activities.schedule');
   return ok(c, scheduleWindow.toArray());

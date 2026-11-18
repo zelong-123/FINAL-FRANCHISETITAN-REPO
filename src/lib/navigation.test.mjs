@@ -50,7 +50,10 @@ test('?view=master-schedule: Admin and Sales only; anyone else falls back to the
   assert.equal(activitiesView('master-schedule', 'sales'), 'master');
   assert.equal(activitiesView('master-schedule', 'franchisee'), 'table');
   assert.equal(activitiesView('master-schedule', 'logistics'), 'table');
-  assert.equal(activitiesView('calendar', 'sales'), 'calendar');
+  // The old Calendar URL now opens Master Schedule (same role rule).
+  assert.equal(activitiesView('calendar', 'sales'), 'master');
+  assert.equal(activitiesView('calendar', 'admin'), 'master');
+  assert.equal(activitiesView('calendar', 'franchisee'), 'table');
   assert.equal(activitiesView(null, 'admin'), 'table');
   // Same rule as the permission matrix used by the tab button.
   assert.equal(can('admin', 'schedule_sessions.view'), true);

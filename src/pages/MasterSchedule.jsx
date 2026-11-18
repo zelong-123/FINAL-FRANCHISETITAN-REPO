@@ -4,13 +4,15 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { FaPlus, FaRotateLeft } from 'react-icons/fa6';
+import { FaCalendarPlus, FaPlus, FaRotateLeft } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
 import { Notice } from '../components/ApiUi';
 import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
+import { ActivitiesPanel, MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
+import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
@@ -29,7 +31,7 @@ import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatS
  * (/activities?view=master-schedule). Same features; only the outer page
  * frame is dropped and the heading becomes a section heading.
  */
-export default function MasterSchedule({ embedded = false }) {
+export default function MasterSchedule({ embedded = false, onScheduleActivity, refreshKey = 0 }) {
   const { role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useMemo(() => ({
@@ -42,6 +44,11 @@ export default function MasterSchedule({ embedded = false }) {
   const isAdmin = permissions.merge;
 
   const [range, setRange] = useState(null);
+  // Day view is the default; the chart date and the mini-calendar month are separate.
+  const [viewDate, setViewDate] = useState(() => manilaToday());
+  const todayDate = useMemo(() => manilaToday(), []);
+  const [miniMonth, setMiniMonth] = useState(() => monthOf(manilaToday()));
+  const [summary, setSummary] = useState(null);
   const [filters, setFilters] = useState({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -79,6 +86,66 @@ export default function MasterSchedule({ embedded = false }) {
   }, [range, filters]);
   const sessions = useMemo(() => feed.data || [], [feed.data]);
   const loadSessions = feed.reload;
+  // A save made in the Schedule activity modal (Activities page) bumps refreshKey.
+  const reloadRef = useRef(loadSessions);
+  reloadRef.current = loadSessions;
+  const firstRefresh = useRef(true);
+  useEffect(() => {
+    if (firstRefresh.current) { firstRefresh.current = false; return; }
+    void reloadRef.current();
+  }, [refreshKey]);
+
+  // Counts for the status panel (month) and the Week ACTIVITIES panel (week). Uses the
+  // summary endpoint; if it is missing or fails, counts come from the loaded list.
+  const [summaryData, setSummaryData] = useState({ status: null, activity: null });
+  useEffect(() => {
+    if (!range) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await api.get('/schedule-sessions/summary', {
+          from: range.from,
+          to: range.to,
+          activity_type: filters.activity_type,
+          brand_id: filters.brand_id,
+          handler_id: filters.handler_id,
+        });
+        if (!cancelled) setSummaryData({ status: response.data?.status_counts ?? null, activity: response.data?.activity_counts ?? null });
+      } catch {
+        if (!cancelled) setSummaryData({ status: null, activity: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [range, filters.activity_type, filters.brand_id, filters.handler_id, refreshKey]);
+
+  // Same fallback rule for both panels (see panelCounts): summary when it answered, else the loaded list.
+  const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, sessions).status, [summaryData.status, sessions]);
+  const activityCounts = useMemo(() => panelCounts(summaryData.activity ? { activity_counts: summaryData.activity } : null, sessions).activity, [summaryData.activity, sessions]);
+
+  // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
+  useEffect(() => {
+    if (mode === 'week') {
+      setRange({ from: `${weekStart}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
+      return;
+    }
+    const from = `${miniMonth}-01T00:00:00+08:00`;
+    const next = new Date(from);
+    next.setMonth(next.getMonth() + 1);
+    setRange({ from, to: next.toISOString() });
+  }, [mode, weekStart, miniMonth]);
+
+  const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
+  const dayDate = viewDate;
+  const pickDay = (date) => setViewDate(date);
+
+  // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
+  const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
+  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
+  const weekStart = mondayOf(dayDate);
+  const shiftView = (step) => {
+    if (mode === 'week') pickDay(addDays(weekStart, step * 7));
+    else pickDay(shiftBusinessDay(dayDate, step));
+  };
 
   const hasFilters = Boolean(filters.activity_type || filters.brand_id || filters.handler_id || filters.status || filters.merge_suggested);
   const resetFilters = () => setFilters({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
@@ -89,9 +156,9 @@ export default function MasterSchedule({ embedded = false }) {
       id: String(session.id),
       start: session.start_at,
       end: session.end_at,
-      // Tinted cards keep the calendar readable; the status colour stays as the accent.
-      backgroundColor: `color-mix(in srgb, ${color} 16%, transparent)`,
-      borderColor: `color-mix(in srgb, ${color} 42%, transparent)`,
+      // Dark pinned cards (EventBody); the status colour stays as the left edge accent only.
+      backgroundColor: '#1f2533',
+      borderColor: color,
       classNames: [`ms-event`, `is-${session.status}`],
       // Only live sessions can be dragged (reschedule; Admin may also merge).
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
@@ -217,6 +284,17 @@ export default function MasterSchedule({ embedded = false }) {
 
   const openForm = (next) => setForm(next);
 
+  // Card three-dot menu: only the actions this role may take for this session's status.
+  const cardMenu = (session) => {
+    const live = ['pending', 'confirmed'].includes(session.status);
+    const items = [{ label: 'View details', run: () => openDetail(session.id) }];
+    if (live && permissions.confirm && session.status === 'pending') items.push({ label: 'Confirm', run: () => openDetail(session.id) });
+    if (live && permissions.cancel) items.push({ label: 'Cancel', run: () => openDetail(session.id) });
+    if (live && permissions.schedule) items.push({ label: 'Set Again', run: () => openDetail(session.id) });
+    if (live && isAdmin && session.activity_type !== 'training') items.push({ label: 'Merge…', run: () => openDetail(session.id) });
+    return items;
+  };
+
   const onSaved = (response) => {
     setForm(null);
     setNotice(response?.message || 'Saved.');
@@ -234,11 +312,12 @@ export default function MasterSchedule({ embedded = false }) {
         <div className="flex flex-wrap items-end gap-[10px] min-w-0 max-[901px]:flex-[1_1_100%]" role="group" aria-label="Calendar filters">
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Activity</span>
-            <select value={filters.activity_type} onChange={(event) => setFilters({ ...filters, activity_type: event.target.value })} aria-label="Filter by activity">
+            <select value={filters.activity_type} onChange={(event) => setFilters({ ...filters, activity_type: event.target.value, brand_id: '' })} aria-label="Filter by activity">
               <option value="">All activities</option>
               {ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
+          {filters.activity_type === 'training' && (
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Brand</span>
             <select value={filters.brand_id} onChange={(event) => setFilters({ ...filters, brand_id: event.target.value })} aria-label="Filter by brand">
@@ -246,11 +325,13 @@ export default function MasterSchedule({ embedded = false }) {
               {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
             </select>
           </label>
+          )}
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
             <span>Handler</span>
             <select value={filters.handler_id} onChange={(event) => setFilters({ ...filters, handler_id: event.target.value })} aria-label="Filter by handler">
               <option value="">All handlers</option>
-              {handlers.map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+              {/* Filter only: admins are not listed here (the session form still uses every handler). */}
+              {handlers.filter((user) => user.role !== 'admin').map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
             </select>
           </label>
         </div>
@@ -258,6 +339,11 @@ export default function MasterSchedule({ embedded = false }) {
           {permissions.schedule && (
             <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] flex-[0_0_auto] max-[641px]:w-full" onClick={() => openForm({ mode: 'create' })}>
               <FaPlus aria-hidden="true" /> Schedule session
+            </button>
+          )}
+          {onScheduleActivity && (
+            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760] tracking-[.01em] flex-[0_0_auto] max-[641px]:w-full" onClick={onScheduleActivity}>
+              <FaCalendarPlus aria-hidden="true" /> Schedule activity
             </button>
           )}
           {isAdmin && (
@@ -296,18 +382,51 @@ export default function MasterSchedule({ embedded = false }) {
             {feed.loading && <em> · loading…</em>}
           </span>
         </div>
+        <div className="grid grid-cols-[minmax(0,_1fr)_240px] gap-[14px] p-[12px] max-[901px]:grid-cols-1">
+        <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-[8px] mb-[8px]">
+          <div className="flex items-center gap-[6px]">
+            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
+            <button type="button" className="text-muted hover:text-text p-[4px_10px] border border-line rounded-[8px] text-[11px] font-[650]" onClick={() => pickDay(manilaToday())}>Today</button>
+            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>
+          </div>
+          <strong className="text-text text-[13px] font-[700]">
+            {mode === 'week'
+              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${weekStart}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
+              : new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}
+          </strong>
+          <div className="inline-flex border border-line rounded-[9px] overflow-hidden" role="group" aria-label="Calendar view">
+            {[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([value, text]) => (
+              <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`p-[5px_12px] text-[11px] font-[650] ${mode === value ? 'text-text [background:var(--surface-strong)]' : 'text-muted hover:text-text'}`}>{text}</button>
+            ))}
+          </div>
+        </div>
+        {outsideHours.length > 0 && (
+          <p className="mb-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
+            <strong>Outside business hours:</strong> {outsideHours.length} {outsideHours.length === 1 ? 'session' : 'sessions'} in this range (before 9 AM or after 5 PM). {outsideHours.slice(0, 3).map((s) => activityLabel(s.activity_type)).join(', ')}
+          </p>
+        )}
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
-          buttonText={{ today: 'Today', month: 'Month', week: 'Week', day: 'Day' }}
-          slotMinTime="08:00:00"
-          slotMaxTime="19:00:00"
+          initialView={mode === 'month' ? 'dayGridMonth' : mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
+          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? weekStart : dayDate}
+          key={`${mode}-${mode === 'week' ? weekStart : mode === 'month' ? miniMonth : dayDate}`}
+          headerToolbar={false}
+          weekends={false}
+          slotMinTime="09:00:00"
+          slotMaxTime="18:00:00"
+          slotDuration="01:00:00"
           allDaySlot={false}
-          slotEventOverlap={false}
+          dayHeaderContent={(arg) => {
+            const weekday = arg.date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'Asia/Manila' }).toUpperCase();
+            if (mode !== 'week') return weekday;
+            const day = arg.date.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'Asia/Manila' });
+            return `${weekday} ${day}`;
+          }}
+          slotEventOverlap
           nowIndicator
           navLinks
-          dayMaxEvents={3}
+          dayMaxEvents={mode === 'month' ? 3 : false}
           height="auto"
           events={events}
           eventClick={(info) => openDetail(info.event.id)}
@@ -326,9 +445,22 @@ export default function MasterSchedule({ embedded = false }) {
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          datesSet={(info) => setRange({ from: info.start.toISOString(), to: info.end.toISOString() })}
-          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} />}
+          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} />}
         />
+        </div>
+        <aside className="grid gap-[12px] content-start min-w-0" aria-label="Schedule side panels">
+          <MiniCalendar
+            month={miniMonth}
+            selectedDate={dayDate}
+            todayDate={todayDate}
+            sessions={sessions}
+            onMonth={setMiniMonth}
+            onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
+          />
+          <StatusPanel counts={statusCounts} />
+          {mode === 'week' && <ActivitiesPanel counts={activityCounts} />}
+        </aside>
+        </div>
       </section>
 
       {detailId && (
@@ -369,6 +501,7 @@ export default function MasterSchedule({ embedded = false }) {
 
 /** "9:00 AM – 11:00 AM" in Manila time — the schedule's own timezone. */
 const manilaTime = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' });
+const manilaDate = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
 function sessionTime(startIso, endIso) {
   if (!startIso) return '';
   return `${manilaTime.format(new Date(startIso))} – ${endIso ? manilaTime.format(new Date(endIso)) : ''}`;
@@ -387,14 +520,36 @@ function eventTooltip(session) {
 }
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
-function EventBody({ session, isAdmin }) {
+function EventBody({ session, isAdmin, menu }) {
+  const taken = session.participant_count ?? 0;
+  const capacity = session.max_capacity ?? 5;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const items = menu ? menu(session) : [];
   return (
-    <div className="ms-event-body grid gap-[1px] overflow-hidden p-[4px_6px] text-text text-[11px] leading-[1.25] [&_strong]:overflow-hidden later:[&_strong]:text-text later:[&_strong]:text-[11.5px] [&_strong]:font-[700] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap">
-      <span className="ms-event-time overflow-hidden text-muted text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)}</span>
+    <div className="ms-event-body relative grid gap-[2px] overflow-hidden p-[5px_7px] rounded-[7px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#1f2533] border border-[#d9dee9] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[11.5px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+      <span className="ms-event-time overflow-hidden text-[#c9d1e0] text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)} · {session.start_at ? manilaDate.format(new Date(session.start_at)) : ''}</span>
       <strong>{activityLabel(session.activity_type)}</strong>
-      <span className="ms-event-meta overflow-hidden text-text-secondary text-[10.5px] text-ellipsis whitespace-nowrap">
-        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any brand' : '—')} · {session.occupancy}
+      <span className="ms-event-meta overflow-hidden text-[#e6ebf5] text-[10.5px] text-ellipsis whitespace-nowrap">
+        {session.brand?.name || (session.activity_type === 'orientation' ? 'Any Brand' : 'No brand')} - {taken}/{capacity}
       </span>
+      <span className="flex items-center gap-[3px] text-[10px] text-[#c9d1e0]" aria-label={`${taken} of ${capacity} applicants`}>
+        {Array.from({ length: capacity }, (_, index) => (
+          <i key={index} className={`w-[7px] h-[7px] rounded-[50%] ${index < taken ? 'bg-[#f5f7fb]' : 'border border-[#c9d1e0]'}`} aria-hidden="true" />
+        ))}
+        <span className="ml-[4px] overflow-hidden text-ellipsis whitespace-nowrap">{session.handler?.full_name || 'No handler'}</span>
+      </span>
+      {items.length > 0 && (
+        <button type="button" className="ms-card-menu-button absolute top-[2px] right-[3px] w-[20px] h-[20px] text-[#c9d1e0] text-[13px] leading-none rounded-[5px] hover:[background:rgba(255,255,255,0.12)]" aria-label="Session actions" aria-expanded={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }} onMouseDown={(event) => event.stopPropagation()}>⋮</button>
+      )}
+      {menuOpen && items.length > 0 && (
+        <ul className="ms-card-menu absolute top-[22px] right-[3px] z-[5] grid gap-[2px] min-w-[130px] p-[4px] rounded-[8px] border border-[#d9dee9] [background:#1f2533] shadow-[0_8px_20px_rgba(0,0,0,0.4)] [list-style:none] m-0" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+          {items.map((item) => (
+            <li key={item.label} role="none">
+              <button type="button" role="menuitem" className="w-full text-left p-[5px_8px] rounded-[6px] text-[#f5f7fb] text-[11px] font-[600] hover:[background:rgba(255,255,255,0.1)]" onClick={(event) => { event.stopPropagation(); setMenuOpen(false); item.run(); }}>{item.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
       {isAdmin && session.merge_suggested && <em className="ms-merge-badge [justify-self:start] p-[1px_6px] rounded-[999px] [background:color-mix(in_srgb,_var(--accent-2)_85%,_transparent)] text-[#fff] text-[9px] not-italic font-[650]">Merge</em>}
     </div>
   );

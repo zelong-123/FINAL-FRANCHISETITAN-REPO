@@ -11,12 +11,13 @@ export const FORECASTING_SECTION_ROLES = ['admin', 'logistics'];
 /**
  * Which Activities & Schedule view a URL asks for:
  *   ?view=master-schedule -> 'master' (Admin / Sales only, otherwise 'table')
- *   ?view=calendar        -> 'calendar'
+ *   ?view=calendar        -> 'master' (the old Calendar was replaced by Master Schedule)
  *   anything else         -> 'table'
  */
 export function activitiesView(viewParam, role) {
-  if (viewParam === 'master-schedule') return MASTER_SCHEDULE_ROLES.includes(role) ? 'master' : 'table';
-  if (viewParam === 'calendar') return 'calendar';
+  if (viewParam === 'master-schedule' || viewParam === 'calendar') {
+    return MASTER_SCHEDULE_ROLES.includes(role) ? 'master' : 'table';
+  }
   return 'table';
 }
 
