@@ -52,7 +52,7 @@ function CountUp({ value, decimals = 0 }) {
     }
     const from = shownRef.current;
     const start = performance.now();
-    const duration = 900;
+    const duration = 1400;
     let frame;
     const tick = (now) => {
       const t = Math.min(1, (now - start) / duration);
