@@ -408,9 +408,9 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
         )}
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView={mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
-          initialDate={mode === 'week' ? weekStart : dayDate}
-          key={`${mode}-${mode === 'week' ? weekStart : dayDate}`}
+          initialView={mode === 'month' ? 'dayGridMonth' : mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
+          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? weekStart : dayDate}
+          key={`${mode}-${mode === 'week' ? weekStart : mode === 'month' ? miniMonth : dayDate}`}
           headerToolbar={false}
           weekends={false}
           slotMinTime="09:00:00"
@@ -426,7 +426,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
           slotEventOverlap
           nowIndicator
           navLinks
-          dayMaxEvents={3}
+          dayMaxEvents={mode === 'month' ? 3 : false}
           height="auto"
           events={events}
           eventClick={(info) => openDetail(info.event.id)}
