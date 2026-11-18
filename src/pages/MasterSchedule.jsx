@@ -62,8 +62,8 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
     void (async () => {
       try {
         const [brandList, handlerList] = await Promise.all([api.get('/brands'), api.get('/schedule-sessions/handlers')]);
-        setBrands(brandList.data || []);
-        setHandlers(handlerList.data || []);
+        setBrands(Array.isArray(brandList?.data) ? brandList.data : []);
+        setHandlers(Array.isArray(handlerList?.data) ? handlerList.data : []);
       } catch (loadError) {
         setError(firstValidationMessage(loadError));
       }
@@ -84,7 +84,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
     });
     return response.data || [];
   }, [range, filters]);
-  const sessions = useMemo(() => feed.data || [], [feed.data]);
+  const sessions = useMemo(() => (Array.isArray(feed.data) ? feed.data : []), [feed.data]);
   const loadSessions = feed.reload;
   // A save made in the Schedule activity modal (Activities page) bumps refreshKey.
   const reloadRef = useRef(loadSessions);
@@ -122,7 +122,17 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
   const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, sessions).status, [summaryData.status, sessions]);
   const activityCounts = useMemo(() => panelCounts(summaryData.activity ? { activity_counts: summaryData.activity } : null, sessions).activity, [summaryData.activity, sessions]);
 
+  const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
+  const dayDate = viewDate;
+  const pickDay = (date) => setViewDate(date);
+
+  // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
+  const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
+  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
+  const weekStart = mondayOf(dayDate);
+
   // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
+  // Must come after `mode` and `weekStart` are declared (reading them earlier throws at render time).
   useEffect(() => {
     if (mode === 'week') {
       setRange({ from: `${weekStart}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
@@ -133,15 +143,6 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
   }, [mode, weekStart, miniMonth]);
-
-  const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
-  const dayDate = viewDate;
-  const pickDay = (date) => setViewDate(date);
-
-  // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
-  const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
-  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
-  const weekStart = mondayOf(dayDate);
   const shiftView = (step) => {
     if (mode === 'week') pickDay(addDays(weekStart, step * 7));
     else pickDay(shiftBusinessDay(dayDate, step));
