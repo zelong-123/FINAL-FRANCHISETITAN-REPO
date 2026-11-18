@@ -284,3 +284,33 @@ test('Activities API: Sales booking waits for approval, the Complete and Attende
   const preview = await call('GET', `/activities/session-preview?activity_type=orientation&starts_at=${encodeURIComponent(slot(15, '09:00'))}`, { token: admin });
   assert.equal(preview.json.data.capacity, 5);
 });
+
+test('summary: counts by status and activity for a range; Sales sees only its own sessions', async () => {
+  const other = await createStaff(call, admin, { full_name: 'Summary Sales Two', email: 'summary.sales2@example.test', phone: '09179990018', role: 'sales' });
+  const [otherUser] = await q(`select id from users where email = 'summary.sales2@example.test'`);
+  const mine = await schedulable();
+  const theirs = await schedulable();
+  await q(`update applicants set assigned_sales_user_id = $1 where id = $2`, [otherUser.id, theirs]);
+  const start = slot(21, '13:00');
+  const own = await call('POST', '/schedule-sessions', { token: admin, body: session([mine], start, { handler_id: salesUser.id }) });
+  assert.equal(own.status, 201, JSON.stringify(own.json));
+  const foreign = await call('POST', '/schedule-sessions', { token: other, body: session([theirs], start, { handler_id: otherUser.id }) });
+  assert.equal(foreign.status, 201, JSON.stringify(foreign.json));
+
+  const day = start.slice(0, 10);
+  const range = `from=${day}T00:00:00%2B08:00&to=${day}T23:59:00%2B08:00`;
+  const all = await call('GET', `/schedule-sessions/summary?${range}`, { token: admin });
+  assert.equal(all.status, 200, JSON.stringify(all.json));
+  assert.ok(all.json.data.status_counts.confirmed >= 1, 'Admin session is confirmed');
+  assert.ok(all.json.data.status_counts.pending >= 1, 'the other Sales user session waits as pending');
+  assert.equal(all.json.data.activity_counts.orientation >= 2, true);
+  assert.equal(all.json.data.status_counts.rescheduled !== undefined && all.json.data.status_counts.merged !== undefined, true, 'every stored status is listed, even at zero');
+
+  const mineOnly = await call('GET', `/schedule-sessions/summary?${range}`, { token: sales });
+  assert.equal(mineOnly.status, 200, JSON.stringify(mineOnly.json));
+  const total = (counts: Record<string, number>) => Object.values(counts).reduce((n, x) => n + x, 0);
+  assert.equal(total(mineOnly.json.data.status_counts) < total(all.json.data.status_counts), true, 'Sales does not count the other Sales user');
+  const brandFilter = await call('GET', `/schedule-sessions/summary?${range}&activity_type=training`, { token: admin });
+  assert.equal(brandFilter.json.data.activity_counts.orientation, 0, 'activity filter applies');
+  assert.equal((await call('GET', `/schedule-sessions/summary?from=${day}T00:00:00%2B08:00`, { token: admin })).status, 422, 'the range needs both ends');
+});
