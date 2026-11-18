@@ -93,11 +93,11 @@ export function CountUp({ value, decimals = 0, start = true }) {
       return undefined;
     }
     const from = shownRef.current;
-    const start = performance.now();
+    const startedAt = performance.now();
     const duration = 1400;
     let frame;
     const tick = (now) => {
-      const t = Math.min(1, (now - start) / duration);
+      const t = Math.min(1, (now - startedAt) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
       const next = from + (target - from) * eased;
       shownRef.current = next;
