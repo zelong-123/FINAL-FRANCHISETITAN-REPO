@@ -287,9 +287,14 @@
 .ms-calendar .fc .fc-timegrid-slot { border-color: color-mix(in srgb, var(--border) 65%, transparent); }
 .ms-calendar .fc .fc-timegrid-slot-label-cushion { padding: 0 8px 0 2px; color: var(--muted); font-size: 10.5px; }
 .ms-calendar .fc .fc-timegrid-axis-cushion { color: var(--muted); font-size: 10px; }
-.ms-calendar .fc .fc-daygrid-day-number { padding: 6px 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
+.ms-calendar .fc .fc-daygrid-day-number { padding: 8px 10px; color: #d7ddf0; font-size: 15px; font-weight: 700; text-decoration: none; }
+.ms-calendar .fc .fc-daygrid-day { border: 1px solid #2c3a55; }
+.ms-calendar .fc .fc-scrollgrid, .ms-calendar .fc .fc-scrollgrid td, .ms-calendar .fc .fc-scrollgrid th { border-color: #2c3a55; }
+.ms-calendar .fc .fc-daygrid-day.fc-day-sat, .ms-calendar .fc .fc-daygrid-day.fc-day-sun { background: rgba(255, 255, 255, .025); }
+.ms-calendar .fc .fc-daygrid-day.fc-day-sat .fc-daygrid-day-number, .ms-calendar .fc .fc-daygrid-day.fc-day-sun .fc-daygrid-day-number { color: #7f8aa6; }
+.ms-calendar .fc .fc-daygrid-day:hover, .ms-calendar .fc .fc-daygrid-day:hover .fc-daygrid-day-frame, .ms-calendar .fc .fc-daygrid-day-frame:hover { background: transparent; }
+.ms-calendar .fc tbody tr:hover { background: transparent; }
 .ms-calendar .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number { color: var(--accent-text); font-weight: 750; }
-.ms-calendar .fc .fc-daygrid-day-frame:hover { background: var(--surface-subtle); }
 .ms-calendar .fc-event { cursor: pointer; overflow: hidden; border-width: 1px; border-left-width: 3px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); transition: filter .15s ease, box-shadow .15s ease; }
 .ms-calendar .fc-event:hover { filter: brightness(1.12); box-shadow: 0 4px 12px rgba(0, 0, 0, .28); }
 .ms-calendar .fc-timegrid-event { overflow: visible; transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease; }
@@ -312,6 +317,8 @@
 .ms-calendar .fc-event.is-rescheduled::before { content: ''; position: absolute; inset: 0; border-radius: 8px; padding: 2px; pointer-events: none; background: conic-gradient(from var(--ms-spin), #8a94a8 0deg, transparent 90deg, transparent 270deg, #8a94a8 360deg); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: ms-resched-spin 2.4s linear infinite; }
 .ms-day-indicator { transition: left .32s cubic-bezier(.2, .8, .2, 1), top .32s cubic-bezier(.2, .8, .2, 1); }
 .ms-calendar .fc-timegrid-event .ms-event-body { min-height: 100%; box-sizing: border-box; }
+.ms-calendar .fc .fc-event.ms-event { transition: transform .4s cubic-bezier(.33,0,.2,1) .15s, box-shadow .4s ease .15s; transform-origin: center center; }
+.ms-calendar .fc .fc-event.ms-event:hover { transform: scale(1.04); z-index: 20; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); transition-delay: .15s; }
 .ms-calendar .fc-timegrid-event .ms-event-body strong { font-size: 12px; font-weight: 720; }
 .ms-calendar .fc .fc-timegrid-event-harness { right: auto !important; width: min(260px, 100%) !important; padding: 0 2px; }
 .ms-calendar .fc .fc-timegrid-now-indicator-line { box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
@@ -323,7 +330,14 @@
 .ms-calendar .fc-daygrid-event .ms-event-meta { display: none; }
 .ms-calendar .fc-daygrid-event .ms-merge-badge { display: none; }
 .ms-calendar .fc-daygrid-event .ms-event-body { display: block; padding: 1px 3px; }
-.ms-calendar .fc-daygrid-event .ms-event-body strong { font-size: 10.5px; }
+.ms-calendar .fc-daygrid-event { margin: 4px 6px; border-width: 1px; border-left-width: 3px; border-radius: 8px; padding: 0; overflow: hidden; }
+.ms-calendar .fc-daygrid-event .ms-event-body { padding: 8px 10px; min-width: 0; border: 0; border-radius: 0; }
+.ms-calendar .fc-daygrid-event .ms-card-menu-button,
+.ms-calendar .fc-daygrid-event .ms-card-menu,
+.ms-calendar .fc-daygrid-event .ms-card-collapse { display: none; }
+.ms-calendar .fc-daygrid-event .ms-applicant-row,
+.ms-calendar .fc-daygrid-event .ms-card-divider { display: none; }
+.ms-calendar .fc-daygrid-event .ms-event-body strong { font-size: 12px; }
 .ms-calendar .fc-event.ms-drop-mergeable { box-shadow: 0 0 0 2px #32c997, 0 0 16px rgba(50, 201, 151, .8); animation: ms-merge-glow 1.2s ease-in-out infinite alternate; }
 .ms-calendar .fc-event.ms-drop-blocked { filter: grayscale(1); opacity: .38; cursor: not-allowed; }
 .ms-calendar .fc-event.ms-drop-source { opacity: .5; }
@@ -334,6 +348,7 @@
 .ms-calendar .fc .fc-timegrid-body, .ms-calendar .fc .fc-timegrid-slots { background: #0d1220; }
 .ms-calendar .fc .fc-timegrid-slot { height: 44px; border-color: #243049; }
 .ms-calendar .fc .fc-timegrid-slot-minor { border-top-style: dashed; border-top-color: #2a3650; }
+.ms-calendar .fc .fc-timegrid-slot-lane.fc-timegrid-slot-minor { background: rgba(255, 255, 255, .035); }
 .ms-calendar .fc .fc-timegrid-slot-label-cushion { color: #e6ebf5; font-size: 13px; font-weight: 600; padding: 0 10px 0 4px; }
 .ms-calendar .fc .fc-timegrid-axis { border-color: #243049; }
 .ms-calendar .fc-timegrid-event { background: transparent; }

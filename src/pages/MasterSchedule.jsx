@@ -11,7 +11,7 @@ import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
-import { MiniCalendar, StatusPanel, WeekSidePanels } from '../components/schedule/MasterSchedulePanels';
+import { MiniCalendar, MonthYearWheel, StatusPanel, WeekSidePanels } from '../components/schedule/MasterSchedulePanels';
 import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
@@ -128,21 +128,21 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
 
   // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
   const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
-  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
+  const setMode = (next) => { setWeekSlide('ms-cal-grid-next'); setSearchParams((params) => { params.set('mode', next); return params; }); };
   const weekStart = mondayOf(dayDate);
 
   // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
   // Must come after `mode` and `weekStart` are declared (reading them earlier throws at render time).
   useEffect(() => {
     if (mode === 'week') {
-      setRange({ from: `${weekStart}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
+      setRange({ from: `${dayDate}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
       return;
     }
     const from = `${miniMonth}-01T00:00:00+08:00`;
     const next = new Date(from);
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
-  }, [mode, weekStart, miniMonth]);
+  }, [mode, dayDate, weekStart, miniMonth]);
   const [weekSlide, setWeekSlide] = useState('');
   const shiftView = (step) => {
     setWeekSlide(step > 0 ? 'ms-cal-grid-next' : 'ms-cal-grid-prev');
@@ -396,14 +396,14 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
               <FaRotateLeft aria-hidden="true" /> Reset
             </button>
           )}
-          <div className="inline-flex ml-auto gap-[2px] p-[3px] border border-line rounded-[12px] [background:var(--input-bg)]" role="group" aria-label="Calendar view">
+          <div className="inline-flex order-[-1] mr-auto gap-[2px] p-[3px] border border-[#3a4560] rounded-[12px] [background:var(--input-bg)]" role="group" aria-label="Calendar view">
             {[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([value, text]) => (
               <button
                 key={value}
                 type="button"
                 aria-pressed={mode === value}
                 onClick={() => setMode(value)}
-                className={`min-h-[30px] p-[6px_14px] rounded-[9px] border text-[12px] font-[650] whitespace-nowrap [transition:background_.16s_ease,_color_.16s_ease,_border-color_.16s_ease] ${mode === value ? 'border-[#3a4560] text-[#fff] [background:#252e42] [box-shadow:0_1px_2px_rgba(0,0,0,.3)]' : 'border-transparent text-[#8a94a6] [background:transparent] hover:text-[#d7ddf5] hover:[background:rgba(255,_255,_255,_.04)]'}`}
+                className={`min-h-[30px] p-[6px_14px] rounded-[9px] border text-[12px] font-[650] uppercase whitespace-nowrap [transition:background_.16s_ease,_color_.16s_ease,_border-color_.16s_ease] ${mode === value ? 'border-[#3a4560] text-[#fff] [background:#252e42] [box-shadow:0_1px_2px_rgba(0,0,0,.3)]' : 'border-[#3a4560] text-[#8a94a6] [background:transparent] hover:text-[#d7ddf5] hover:[background:rgba(255,_255,_255,_.04)]'}`}
               >
                 {text}
               </button>
@@ -412,7 +412,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
       </div>
 
       <section className="data-panel overflow-visible [background:transparent] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] ms-calendar p-0 mb-[18px] later:hover:border-line later:hover:[box-shadow:var(--shadow-sm)]">
-        {mode === 'month' && <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] mb-[14px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] max-[641px]:later:p-[8px_10px]">
+        {false && <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] mb-[14px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] max-[641px]:later:p-[8px_10px]">
           <div className="flex flex-wrap gap-[3px]" role="group" aria-label="Filter by status">
             <button type="button" className={`inline-flex items-center gap-[6px] min-h-[28px] p-[0_10px] border border-transparent rounded-[999px] [background:transparent] text-muted text-[11px] font-[600] [transition:color_.15s_ease,_background_.15s_ease,_border-color_.15s_ease] hover:text-text hover:[background:var(--hover)] [&.is-active]:text-text [&.is-active]:border-line-strong later:[&.is-active]:[background:var(--surface-strong)] [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-[50%] ${filters.status ? '' : ' is-active'}`} aria-pressed={!filters.status} onClick={() => setFilters({ ...filters, status: '' })}>All</button>
             {SESSION_STATUSES.map((item) => (
@@ -433,16 +433,19 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             {feed.loading && <em> · loading…</em>}
           </span>
         </div>}
-        <div className={`grid gap-[14px] max-[901px]:grid-cols-1 ${mode === 'week' ? 'grid-cols-[minmax(0,_1fr)_minmax(200px,_240px)]' : 'grid-cols-[minmax(0,_1fr)_minmax(300px,_380px)]'}`}>
+        <div className={`grid gap-[14px] max-[901px]:grid-cols-1 ${mode === 'month' ? 'grid-cols-[minmax(0,_1fr)]' : mode === 'week' ? 'grid-cols-[minmax(0,_1fr)_minmax(200px,_240px)]' : 'grid-cols-[minmax(0,_1fr)_minmax(300px,_380px)]'}`}>
         <div className="min-w-0 p-0 overflow-hidden border border-[#3a4560] rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]">
         {mode !== 'day' && (
-        <div className={mode === 'week' ? 'grid grid-cols-[1fr_auto_1fr] items-center gap-[8px] p-[10px_14px] mb-[8px]' : 'flex flex-wrap items-center justify-between gap-[8px] mb-[8px]'}>
+        <div className={mode === 'week' || mode === 'month' ? 'grid grid-cols-[1fr_auto_1fr] items-center gap-[8px] p-[10px_14px] mb-[8px]' : 'flex flex-wrap items-center justify-between gap-[8px] mb-[8px]'}>
           <div className={`flex items-center gap-[6px] ${mode === 'week' ? 'col-start-1 row-start-1 justify-self-start' : ''}`}>
             
             <div ref={customRef} className="relative">
               <button type="button" aria-expanded={customOpen} className="inline-flex items-center justify-center h-[34px] p-[0_14px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors text-[12px] font-[650]" onClick={() => setCustomOpen((open) => !open)}>Custom</button>
               {customOpen && (
                 <div className="absolute left-0 top-[40px] z-20 w-[300px] [zoom:0.85] [&_table]:table-fixed [&_td]:p-[3px_0] [&_th]:p-[4px_0]">
+                  {mode === 'month' ? (
+                    <MonthYearWheel month={miniMonth} todayYear={Number(todayDate.slice(0, 4))} onPick={(next) => { setMiniMonth(next); setCustomOpen(false); }} />
+                  ) : (
                   <MiniCalendar
                     month={miniMonth}
                     selectedDate={dayDate}
@@ -450,10 +453,13 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
                     sessions={sessions}
                     onMonth={setMiniMonth}
                     plain
-                    onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); setCustomOpen(false); }}
+                    activeWeekStart={dayDate}
+                    activeWeekEnd={addDays(weekStart, 6)}
+                    onPickDate={(date) => { pickDay(date === dayDate ? weekStart : date); setMiniMonth(monthOf(date)); setCustomOpen(false); }}
                   >
                     <button type="button" className="w-full inline-flex items-center justify-center h-[30px] border-0 outline-none focus:outline-none [background:transparent] text-accent text-[12px] font-[650] hover:[background:rgba(255,_255,_255,_.06)]" onClick={() => { pickDay(todayDate); setMiniMonth(monthOf(todayDate)); setCustomOpen(false); }}>Today</button>
                   </MiniCalendar>
+                  )}
                 </div>
               )}
             </div>
@@ -461,19 +467,22 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             {mode !== 'week' && <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>}
           </div>
           {mode === 'week' && <button type="button" className="col-start-3 row-start-1 justify-self-end inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label="Next week" onClick={() => shiftView(1)}>&rsaquo;</button>}
-          <strong className={`text-text font-[700] ${mode === 'week' ? 'col-start-2 row-start-1 justify-self-center text-[15px] uppercase tracking-[.04em]' : 'text-[13px]'}`}>
-            {mode === 'week'
-              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${weekStart}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
+          <strong className={`text-text font-[700] ${mode === 'week' || mode === 'month' ? 'col-start-2 row-start-1 justify-self-center text-[15px] uppercase tracking-[.04em]' : 'text-[13px]'}`}>
+            {mode === 'month'
+              ? new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${miniMonth}-01T12:00:00+08:00`))
+              : mode === 'week'
+              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
               : new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}
           </strong>
         </div>
         )}
-        <div key={`slide-${weekStart}`} className={mode === 'week' ? weekSlide : ''}>
+        <div key={`slide-${mode}-${weekStart}`} className={weekSlide}>
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView={mode === 'month' ? 'dayGridMonth' : mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
-          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? weekStart : dayDate}
-          key={`${mode}-${mode === 'week' ? weekStart : mode === 'month' ? miniMonth : dayDate}`}
+          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? dayDate : dayDate}
+          visibleRange={mode === 'week' ? { start: dayDate, end: addDays(weekStart, 5) } : undefined}
+          key={`${mode}-${mode === 'month' ? miniMonth : dayDate}`}
           headerToolbar={false}
           weekends={false}
           slotMinTime="09:00:00"
@@ -528,7 +537,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           </p>
         )}
         </div>
-        <aside className="flex flex-col gap-[12px] min-w-0 min-h-0 h-full" aria-label="Schedule side panels">
+        {mode !== 'month' && <aside className="flex flex-col gap-[12px] min-w-0 min-h-0 h-full" aria-label="Schedule side panels">
           {mode === 'week' ? <WeekSidePanels activityCounts={activityCounts} statusCounts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} /> : (
           <MiniCalendar
             month={miniMonth}
@@ -541,7 +550,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             <StatusPanel counts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} />
           </MiniCalendar>
           )}
-        </aside>
+        </aside>}
         </div>
       </section>
 
@@ -625,8 +634,8 @@ function EventBody({ session, isAdmin, menu, short }) {
       <div className={`grid min-h-0 transition-[grid-template-rows,opacity] duration-300 ease-out ${collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
       <div className="grid content-start gap-[6px] min-h-0 overflow-hidden">
       <span className="overflow-hidden text-[#8a94a6] text-[10px] text-ellipsis whitespace-nowrap">Handler({session.handler?.full_name || 'No handler'})</span>
-      <span className="mt-[12px] border-t border-[#2a3d5c]" aria-hidden="true" />
-      <span className="flex flex-nowrap gap-[8px] pt-[10px]" aria-label={`${taken} of ${capacity} applicants`}>
+      <span className="ms-card-divider mt-[12px] border-t border-[#2a3d5c]" aria-hidden="true" />
+      <span className="ms-applicant-row flex flex-nowrap gap-[8px] pt-[10px]" aria-label={`${taken} of ${capacity} applicants`}>
         {Array.from({ length: capacity }, (_, index) => {
           const applicant = session.active_participants?.[index]?.applicant;
           const initials = applicant?.full_name ? applicant.full_name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() : '';

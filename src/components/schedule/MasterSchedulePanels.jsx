@@ -7,7 +7,7 @@ const MONTH_LABEL = new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'num
 const DAY_HEADINGS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
 /** Mon-Fri mini calendar. Clicking a day switches the chart; dots = scheduled applicants. */
-export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth, onPickDate, children, plain = false }) {
+export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth, onPickDate, children, plain = false, activeWeekStart = null, activeWeekEnd = null }) {
   const weeks = monthWeeks(month);
   const title = MONTH_LABEL.format(new Date(`${month}-01T00:00:00Z`));
   const [slide, setSlide] = useState('');
@@ -40,7 +40,7 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
                 const selected = date === selectedDate;
                 const isToday = date === todayDate;
                 return (
-                  <td key={cell} className="p-[5px_2px]">
+                  <td key={cell} className={`p-[5px_2px] ${plain && activeWeekStart && date >= activeWeekStart && date <= activeWeekEnd ? '[background:rgba(59,91,143,.18)]' : ''}`}>
                     <button
                       type="button"
                       aria-label={date}
@@ -66,23 +66,59 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
   );
 }
 
-/** Minimalist Week side box: uppercase title with a rule, then label/value rows. */
-function WeekSideBox({ title, rows }) {
+const WHEEL_ROW = 32;
+const WHEEL_MONTH_NAMES = Array.from({ length: 12 }, (_, i) => ({
+  value: String(i + 1).padStart(2, '0'),
+  label: new Intl.DateTimeFormat('en-PH', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, i, 1))),
+}));
+
+function WheelColumn({ items, selected, onSelect }) {
+  const listRef = useRef(null);
+  const index = Math.max(0, items.findIndex((item) => item.value === selected));
+  // Scroll the selected item into view when the popup opens or the value changes.
+  useLayoutEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = index * WHEEL_ROW - WHEEL_ROW * 2;
+  }, [index]);
   return (
-    <div className="rounded-[4px] border border-[#3a4560] p-[18px] [background:#070b14]">
-      <h3 className="text-[#e5e7eb] text-[20px] font-[800] uppercase pb-[10px] mb-[16px] border-b border-[#3a4560]">{title}</h3>
-      <ul className="grid gap-[14px] list-none p-0 m-0">
+    <div ref={listRef} className="flex-1 h-[160px] overflow-y-auto overscroll-contain scroll-smooth [scrollbar-width:thin]">
+      {items.map((item) => (
+        <button key={item.value} type="button" aria-pressed={item.value === selected} onClick={() => onSelect(item.value)} className={`block w-full h-[32px] border-0 [background:transparent] text-[13px] font-[650] uppercase tracking-[.04em] ${item.value === selected ? 'text-accent' : 'text-muted hover:text-text'}`}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Month-mode Custom picker: a month wheel and a year wheel, no day grid. */
+export function MonthYearWheel({ month, todayYear, onPick }) {
+  const [year, monthNo] = month.split('-');
+  const years = Array.from({ length: 11 }, (_, i) => ({ value: String(todayYear - 5 + i), label: String(todayYear - 5 + i) }));
+  return (
+    <div className="flex gap-[8px] rounded-[8px] border border-line p-[10px] [background:#070A13]">
+      <WheelColumn items={WHEEL_MONTH_NAMES} selected={monthNo} onSelect={(value) => onPick(`${year}-${value}`)} />
+      <WheelColumn items={years} selected={year} onSelect={(value) => onPick(`${value}-${monthNo}`)} />
+    </div>
+  );
+}
+
+/** Minimalist Week side box: uppercase title with a rule, then label/value rows. */
+function WeekSideBox({ title, rows, className = '' }) {
+  return (
+    <div className={`rounded-[4px] border border-[#3a4560] px-[14px] py-[12px] [background:#070b14] ${className}`}>
+      <h3 className="text-[#e5e7eb] text-[15px] font-[800] uppercase pb-[7px] mb-[8px] border-b border-[#3a4560]">{title}</h3>
+      <ul className="grid gap-[8px] list-none p-0 m-0">
         {rows.map((row) => (
           <li key={row.key} className="flex items-center justify-between">
             {row.onClick ? (
               <button type="button" aria-pressed={row.active} onClick={row.onClick} className={`w-full flex items-center justify-between [background:transparent] border-0 p-0 cursor-pointer text-[#9ca3af] hover:text-[#e5e7eb] ${row.active ? 'text-[#e5e7eb]' : ''}`}>
-                <span className="text-[16px] font-[600] uppercase">{row.label}:</span>
-                <strong className="text-[#e5e7eb] text-[22px] font-[800]">{row.value}</strong>
+                <span className="text-[13px] font-[600] uppercase">{row.label}:</span>
+                <strong className="text-[#e5e7eb] text-[17px] font-[800]">{row.value}</strong>
               </button>
             ) : (
               <>
-                <span className="text-[16px] font-[600] uppercase text-[#9ca3af]">{row.label}:</span>
-                <strong className="text-[#e5e7eb] text-[22px] font-[800]">{row.value}</strong>
+                <span className="text-[13px] font-[600] uppercase text-[#9ca3af]">{row.label}:</span>
+                <strong className="text-[#e5e7eb] text-[17px] font-[800]">{row.value}</strong>
               </>
             )}
           </li>
@@ -95,7 +131,7 @@ function WeekSideBox({ title, rows }) {
 /** Week side panels: Activities counts, then Status counts (same data as the Day status list). */
 export function WeekSidePanels({ activityCounts, statusCounts, showCompleted = false, onToggleCompleted }) {
   return (
-    <div className="flex flex-col gap-[16px]">
+    <div className="flex flex-col gap-[12px] h-full">
       <WeekSideBox
         title="Activities"
         rows={[
@@ -104,6 +140,7 @@ export function WeekSidePanels({ activityCounts, statusCounts, showCompleted = f
         ]}
       />
       <WeekSideBox
+        className="flex-1"
         title="Status"
         rows={SESSION_STATUSES.map((item) => ({
           key: item.value,
