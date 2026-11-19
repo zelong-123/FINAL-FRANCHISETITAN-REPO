@@ -4,7 +4,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { FaRotateLeft } from 'react-icons/fa6';
+import { FaChevronDown, FaRotateLeft } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
 import { Notice } from '../components/ApiUi';
 import useRemote from '../lib/useRemote';
@@ -151,7 +151,24 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
   const hasFilters = Boolean(filters.activity_type || filters.brand_id || filters.handler_id || filters.status || filters.merge_suggested);
   const resetFilters = () => setFilters({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
 
-  const events = useMemo(() => sessions.map((session) => {
+  // "Show Pinned Activity" checkboxes: a session shows on the chart only when its group is checked.
+  // The Status "Completed" legend toggles the Completed checkbox, so both stay in sync.
+  const PINNED_GROUPS = { completed: ['completed'], scheduled: ['pending', 'confirmed'], cancelled: ['cancelled', 'rescheduled'] };
+  const [pinnedShown, setPinnedShown] = useState({ completed: false, scheduled: true, cancelled: true });
+  const [pinnedOpen, setPinnedOpen] = useState(false);
+  const pinnedRef = useRef(null);
+  useEffect(() => {
+    if (!pinnedOpen) return undefined;
+    const close = (event) => { if (!pinnedRef.current?.contains(event.target)) setPinnedOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [pinnedOpen]);
+  const togglePinned = (key) => setPinnedShown((current) => ({ ...current, [key]: !current[key] }));
+  const chartSessions = useMemo(() => sessions.filter((session) => (
+    Object.keys(PINNED_GROUPS).some((key) => pinnedShown[key] && PINNED_GROUPS[key].includes(session.status))
+  )), [sessions, pinnedShown]);
+
+  const events = useMemo(() => chartSessions.map((session) => {
     const color = STATUS_COLORS[session.status] || '#6b7488';
     return {
       id: String(session.id),
@@ -165,7 +182,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
       extendedProps: { session },
     };
-  }), [sessions, permissions.schedule]);
+  }), [chartSessions, permissions.schedule]);
 
   // ---------------- Phase 3: drag-and-merge ----------------
   // Event elements by session id, so a drag can colour them without
@@ -337,6 +354,27 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
               {handlers.filter((user) => user.role !== 'admin').map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
             </select>
           </label>
+          <div className="relative min-w-[138px]" ref={pinnedRef}>
+            <button
+              type="button"
+              className="w-full min-h-[36px] p-[0_12px] border border-line rounded-[9px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[12px] font-[600] [outline:none] cursor-pointer hover:border-line-strong focus:border-accent inline-flex items-center justify-between gap-[10px]"
+              onClick={() => setPinnedOpen((open) => !open)}
+              aria-expanded={pinnedOpen}
+              aria-haspopup="true"
+            >
+              Show Pinned Activity <FaChevronDown aria-hidden="true" className="text-[10px]" />
+            </button>
+            {pinnedOpen && (
+              <div className="absolute left-0 top-[calc(100%_+_6px)] z-[30] min-w-[200px] grid gap-[2px] p-[8px] border border-line-strong rounded-[10px] [background:var(--panel)] [box-shadow:var(--shadow-md)]" role="group" aria-label="Show pinned activity">
+                {[['completed', 'Completed'], ['scheduled', 'Scheduled'], ['cancelled', 'Cancelled']].map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-[9px] p-[6px_8px] rounded-[6px] text-text text-[13px] cursor-pointer hover:[background:var(--hover)]">
+                    <input type="checkbox" className="[accent-color:var(--accent)]" checked={pinnedShown[key]} onChange={() => togglePinned(key)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           {isAdmin && (
             <label className="inline-flex items-center gap-[10px] h-[36px] p-[0_12px] border border-input-line rounded-[9px] [background:var(--input-bg)] text-text-secondary text-[12px] font-[600] whitespace-nowrap cursor-pointer select-none [transition:border-color_.16s_ease,_background-color_.16s_ease,_color_.16s_ease,_box-shadow_.16s_ease] hover:border-line-strong hover:[background:var(--hover)] hover:text-text has-[:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] has-[:checked]:text-text has-[:checked]:[background:color-mix(in_srgb,_var(--accent)_12%,_var(--input-bg))] has-[:focus-visible]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] [&_input]:[appearance:none] [&_input]:relative [&_input]:w-[30px] [&_input]:h-[18px] [&_input]:flex-[0_0_auto] [&_input]:m-0 [&_input]:border [&_input]:border-line-strong [&_input]:rounded-[999px] [&_input]:[background:var(--surface-strong)] [&_input]:[transition:background_.18s_ease,_border-color_.18s_ease] [&_input::after]:[content:''] [&_input::after]:absolute [&_input::after]:top-[2px] [&_input::after]:left-[2px] [&_input::after]:w-[12px] [&_input::after]:h-[12px] [&_input::after]:rounded-[50%] [&_input::after]:[background:var(--muted)] [&_input::after]:[transition:transform_.18s_ease,_background_.18s_ease] [&_input:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] [&_input:checked]:[background:color-mix(in_srgb,_var(--accent)_30%,_transparent)] [&_input:checked::after]:[transform:translateX(12px)] [&_input:checked::after]:[background:var(--accent-text)]">
               <input type="checkbox" checked={filters.merge_suggested} onChange={(event) => setFilters({ ...filters, merge_suggested: event.target.checked })} />
@@ -459,7 +497,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           </p>
         )}
         </div>
-        <aside className="flex flex-col gap-[12px] min-w-0" aria-label="Schedule side panels">
+        <aside className="flex flex-col gap-[12px] min-w-0 min-h-0 h-full" aria-label="Schedule side panels">
           <MiniCalendar
             month={miniMonth}
             selectedDate={dayDate}
@@ -468,7 +506,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             onMonth={setMiniMonth}
             onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
           >
-            <StatusPanel counts={statusCounts} />
+            <StatusPanel counts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} />
           </MiniCalendar>
           {mode === 'week' && <ActivitiesPanel counts={activityCounts} />}
         </aside>

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { FaChevronDown } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../../lib/api';
 import { LoadingState, Modal, Notice } from '../ApiUi';
 import RecordCode from '../RecordCode';
@@ -19,6 +20,7 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
   const [confirm, setConfirm] = useState(null); // { kind, ... }
   const [remarks, setRemarks] = useState('');
   const [mergeTargets, setMergeTargets] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const load = useCallback(async () => {
     setError('');
@@ -53,7 +55,11 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
   const live = ['pending', 'confirmed'].includes(session?.status);
   const participants = session?.active_participants || [];
 
-  const openMerge = async () => {
+  const toggleMerge = async () => {
+    if (mergeTargets) {
+      setMergeTargets(null);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -61,10 +67,14 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
       const from = new Date(start.getTime() - 14 * 864e5).toISOString();
       const to = new Date(start.getTime() + 14 * 864e5).toISOString();
       const response = await api.post(`/schedule-sessions/${session.id}/evaluate-drag`, { from, to });
-      const ids = (response.data.targets || []).filter((row) => row.status === 'mergeable').map((row) => row.session_id);
-      // Details (time, handler, venue) for the confirmation, from the calendar feed.
-      const feed = ids.length ? await api.get('/schedule-sessions', { from, to }) : { data: [] };
-      setMergeTargets((feed.data || []).filter((row) => ids.includes(row.id)));
+      // Business day (Manila/+08:00) of a timestamp, so past and same-day sessions are dropped in the UI too.
+      const dayOf = (value) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(value));
+      const today = dayOf(new Date());
+      const verdicts = new Map((response.data.targets || []).map((row) => [row.session_id, row]));
+      // Details (time, handler, venue) for the list, from the calendar feed. Targets the server did not return (past or same day) are not shown.
+      const feed = verdicts.size ? await api.get('/schedule-sessions', { from, to }) : { data: [] };
+      const visible = (feed.data || []).filter((row) => verdicts.has(row.id) && dayOf(row.start_at) > today);
+      setMergeTargets(visible.map((row) => ({ ...row, locked: verdicts.get(row.id).status !== 'mergeable', lockedReason: verdicts.get(row.id).reasons?.[0] })));
     } catch (mergeError) {
       setError(firstValidationMessage(mergeError));
     } finally {
@@ -85,7 +95,7 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
       <Notice type="error">{error}</Notice>
       <Notice type="success">{notice}</Notice>
       {!session ? (error ? null : <LoadingState />) : (
-        <div className="grid gap-4 [&_h4]:m-[0_0_8px] [&_h4]:text-text [&_h4]:text-[13px]">
+        <div className="grid gap-4 h-[560px] content-start overflow-y-auto pr-1 [&_h4]:m-[0_0_8px] [&_h4]:text-text [&_h4]:text-[13px]">
           <header className="grid gap-2 [&_h3]:m-0 [&_h3]:text-text [&_h3]:text-[17px] [&_dl]:grid [&_dl]:grid-cols-[repeat(auto-fit,_minmax(140px,_1fr))] [&_dl]:gap-[8px_16px] [&_dl]:m-0 [&_dl_.full]:col-span-full [&_dt]:text-muted [&_dt]:text-[10.5px] [&_dt]:uppercase [&_dt]:tracking-[.04em] [&_dd]:m-[2px_0_0] [&_dd]:text-text-secondary [&_.ms-merge-badge]:relative">
             <span className="[justify-self:start] p-[2px_9px] [border:1px_solid_var(--chip)] rounded-[999px] [background:color-mix(in_srgb,_var(--chip)_16%,_transparent)] text-[color:var(--chip)] text-[11px] font-[600]" style={{ '--chip': STATUS_COLORS[session.status] }}>{statusLabel(session.status)}</span>
             {session.merge_suggested && <span className="ms-merge-badge [justify-self:start] p-[1px_6px] rounded-[999px] [background:color-mix(in_srgb,_var(--accent-2)_85%,_transparent)] text-[#fff] text-[9px] not-italic font-[650]">Merge suggested</span>}
@@ -107,21 +117,21 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
               )}
               {can.schedule && <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={busy} onClick={() => onEdit(session)}>Edit</button>}
               {can.merge && session.activity_type !== 'training' && (
-                <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={busy} onClick={() => void openMerge()}>Merge…</button>
+                <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={busy} onClick={() => void toggleMerge()} aria-expanded={Boolean(mergeTargets)} style={mergeTargets ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}>Merge…</button>
               )}
               {can.cancel && <button type="button" className="danger-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] later:[background:linear-gradient(135deg,_#ef596b,_#c9374a)] later:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--danger)_21%,_transparent)]" disabled={busy} onClick={() => setConfirm({ kind: 'cancel' })}>Cancel session</button>}
             </div>
           )}
 
           {mergeTargets && (
-            <section className="[&_ul]:grid [&_ul]:gap-[6px] [&_ul]:m-0 [&_ul]:p-0 [&_ul]:[list-style:none] [&_li]:flex [&_li]:flex-wrap [&_li]:items-center [&_li]:justify-between [&_li]:gap-2 [&_li]:p-[8px_10px] [&_li]:border [&_li]:border-line [&_li]:rounded-[9px] [&_li]:[background:var(--surface-subtle)]">
+            <section className="ms-merge-section [&_ul]:grid [&_ul]:gap-[6px] [&_ul]:m-0 [&_ul]:p-0 [&_ul]:[list-style:none] [&_li]:flex [&_li]:flex-wrap [&_li]:items-center [&_li]:justify-between [&_li]:gap-2 [&_li]:p-[8px_10px] [&_li]:border [&_li]:border-line [&_li]:rounded-[9px] [&_li]:[background:var(--surface-subtle)]">
               <h4>Merge into…</h4>
               {mergeTargets.length === 0 ? <p className="text-muted text-[12px]">No session can take these applicants right now.</p> : (
                 <ul>
-                  {mergeTargets.map((target) => (
-                    <li key={target.id}>
+                  {mergeTargets.map((target, index) => (
+                    <li key={target.id} className={`ms-merge-item ${target.locked ? 'opacity-60' : ''}`} style={{ '--i': index }}>
                       <span>{formatSessionRange(target.start_at, target.end_at)} · {target.brand?.name || 'Any brand'} · {target.handler?.full_name || 'No handler'} · {target.venue || 'No venue'} · {target.occupancy}</span>
-                      <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={busy} onClick={() => setConfirm({ kind: 'merge', target })}>Merge here</button>
+                      {target.locked ? <span title={target.lockedReason} className="text-muted text-[11px] font-[700] tracking-[.06em] uppercase">Locked</span> : <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={busy} onClick={() => setConfirm({ kind: 'merge', target })}>Merge here</button>}
                     </li>
                   ))}
                 </ul>
@@ -153,8 +163,11 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
           </section>
 
           <section>
-            <h4>History</h4>
-            <ol className="grid gap-[6px] m-0 p-0 [list-style:none] [&_small]:text-muted [&_small]:text-[11px] [&_span]:text-muted [&_span]:text-[11px] later:[&_li]:grid later:[&_li]:gap-[1px] later:[&_li]:p-[6px_0] later:[&_li]:border-b later:[&_li]:border-b-line [&_strong]:text-text-secondary [&_strong]:text-[12px]">
+            <button type="button" className="w-full inline-flex items-center justify-between gap-2 p-0 border-0 [background:none] text-text cursor-pointer" onClick={() => setHistoryOpen((open) => !open)} aria-expanded={historyOpen}>
+              <h4 className="m-0">History</h4>
+              <FaChevronDown aria-hidden="true" className={`text-[10px] transition-transform duration-200 ${historyOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {historyOpen && <ol className="grid gap-[6px] m-0 p-0 [list-style:none] [&_small]:text-muted [&_small]:text-[11px] [&_span]:text-muted [&_span]:text-[11px] later:[&_li]:grid later:[&_li]:gap-[1px] later:[&_li]:p-[6px_0] later:[&_li]:border-b later:[&_li]:border-b-line [&_strong]:text-text-secondary [&_strong]:text-[12px]">
               {(session.history || []).slice().reverse().map((row) => (
                 <li key={row.id}>
                   <strong>{titleCase(row.action)}</strong>
@@ -162,7 +175,7 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
                   {row.remarks && <small>{row.remarks}</small>}
                 </li>
               ))}
-            </ol>
+            </ol>}
           </section>
         </div>
       )}
