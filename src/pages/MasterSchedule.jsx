@@ -4,14 +4,14 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { FaCalendarPlus, FaPlus, FaRotateLeft } from 'react-icons/fa6';
+import { FaChevronDown, FaRotateLeft } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../lib/api';
 import { Notice } from '../components/ApiUi';
 import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
-import { ActivitiesPanel, MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
+import { MiniCalendar, MonthYearWheel, StatusPanel, WeekSidePanels } from '../components/schedule/MasterSchedulePanels';
 import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
@@ -31,7 +31,7 @@ import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatS
  * (/activities?view=master-schedule). Same features; only the outer page
  * frame is dropped and the heading becomes a section heading.
  */
-export default function MasterSchedule({ embedded = false, onScheduleActivity, refreshKey = 0 }) {
+export default function MasterSchedule({ embedded = false, refreshKey = 0, sessionRequest = 0 }) {
   const { role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useMemo(() => ({
@@ -128,22 +128,24 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
 
   // Day is the default. The mode lives in the URL (?mode=day|week|month) so refresh and links keep it.
   const mode = ['day', 'week', 'month'].includes(searchParams.get('mode')) ? searchParams.get('mode') : 'day';
-  const setMode = (next) => setSearchParams((params) => { params.set('mode', next); return params; });
+  const setMode = (next) => { setWeekSlide('ms-cal-grid-next'); setSearchParams((params) => { params.set('mode', next); return params; }); };
   const weekStart = mondayOf(dayDate);
 
   // Range: the displayed week in Week mode (ACTIVITIES panel), otherwise the displayed month (status panel).
   // Must come after `mode` and `weekStart` are declared (reading them earlier throws at render time).
   useEffect(() => {
     if (mode === 'week') {
-      setRange({ from: `${weekStart}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
+      setRange({ from: `${dayDate}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` });
       return;
     }
     const from = `${miniMonth}-01T00:00:00+08:00`;
     const next = new Date(from);
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
-  }, [mode, weekStart, miniMonth]);
+  }, [mode, dayDate, weekStart, miniMonth]);
+  const [weekSlide, setWeekSlide] = useState('');
   const shiftView = (step) => {
+    setWeekSlide(step > 0 ? 'ms-cal-grid-next' : 'ms-cal-grid-prev');
     if (mode === 'week') pickDay(addDays(weekStart, step * 7));
     else pickDay(shiftBusinessDay(dayDate, step));
   };
@@ -151,7 +153,32 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
   const hasFilters = Boolean(filters.activity_type || filters.brand_id || filters.handler_id || filters.status || filters.merge_suggested);
   const resetFilters = () => setFilters({ activity_type: '', brand_id: '', handler_id: '', status: '', merge_suggested: false });
 
-  const events = useMemo(() => sessions.map((session) => {
+  // "Show Pinned Activity" checkboxes: a session shows on the chart only when its group is checked.
+  // The Status "Completed" legend toggles the Completed checkbox, so both stay in sync.
+  const PINNED_GROUPS = { completed: ['completed'], scheduled: ['pending', 'confirmed'], cancelled: ['cancelled', 'rescheduled'] };
+  const [pinnedShown, setPinnedShown] = useState({ completed: false, scheduled: true, cancelled: true });
+  const [pinnedOpen, setPinnedOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const customRef = useRef(null);
+  useEffect(() => {
+    if (!customOpen) return undefined;
+    const close = (event) => { if (!customRef.current?.contains(event.target)) setCustomOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [customOpen]);
+  const pinnedRef = useRef(null);
+  useEffect(() => {
+    if (!pinnedOpen) return undefined;
+    const close = (event) => { if (!pinnedRef.current?.contains(event.target)) setPinnedOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [pinnedOpen]);
+  const togglePinned = (key) => setPinnedShown((current) => ({ ...current, [key]: !current[key] }));
+  const chartSessions = useMemo(() => sessions.filter((session) => (
+    Object.keys(PINNED_GROUPS).some((key) => pinnedShown[key] && PINNED_GROUPS[key].includes(session.status))
+  )), [sessions, pinnedShown]);
+
+  const events = useMemo(() => chartSessions.map((session) => {
     const color = STATUS_COLORS[session.status] || '#6b7488';
     return {
       id: String(session.id),
@@ -165,7 +192,7 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
       extendedProps: { session },
     };
-  }), [sessions, permissions.schedule]);
+  }), [chartSessions, permissions.schedule]);
 
   // ---------------- Phase 3: drag-and-merge ----------------
   // Event elements by session id, so a drag can colour them without
@@ -285,6 +312,11 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
 
   const openForm = (next) => setForm(next);
 
+  // The header "Schedule session" button bumps sessionRequest to open the create form.
+  useEffect(() => {
+    if (sessionRequest > 0 && permissions.schedule) openForm({ mode: 'create' });
+  }, [sessionRequest, permissions.schedule]);
+
   // Card three-dot menu: only the actions this role may take for this session's status.
   const cardMenu = (session) => {
     const live = ['pending', 'confirmed'].includes(session.status);
@@ -309,10 +341,8 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
       <Notice type="error">{error || feed.error}</Notice>
       <Notice type="success">{notice}</Notice>
 
-      <div className="flex flex-wrap items-end justify-between gap-[10px_16px] mb-[14px] p-[12px_14px] border border-line rounded-[14px] [background:color-mix(in_srgb,_var(--panel)_94%,_transparent)] max-[901px]:later:items-stretch">
-        <div className="flex flex-wrap items-end gap-[10px] min-w-0 max-[901px]:flex-[1_1_100%]" role="group" aria-label="Calendar filters">
+      <div className="flex flex-wrap items-center gap-[10px_16px] mb-[14px]" role="group" aria-label="Calendar filters">
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
-            <span>Activity</span>
             <select value={filters.activity_type} onChange={(event) => setFilters({ ...filters, activity_type: event.target.value, brand_id: '' })} aria-label="Filter by activity">
               <option value="">All activities</option>
               {ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -328,27 +358,35 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
           </label>
           )}
           <label className="flex flex-col gap-[5px] min-w-[138px] [&>span]:text-muted [&>span]:text-[9px] [&>span]:font-[750] [&>span]:tracking-[.07em] [&>span]:uppercase [&_select]:w-full [&_select]:h-[36px] [&_select]:p-[0_30px_0_10px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[9px] [&_select]:[outline:none] [&_select]:text-text-secondary [&_select]:[background-color:var(--input-bg)] [&_select]:[background-image:var(--image-1)] [&_select]:[background-repeat:no-repeat] [&_select]:[background-position:right_9px_center] [&_select]:[background-size:14px] [&_select]:[appearance:none] [&_select]:text-[12px] [&_select]:font-[550] [&_select]:[transition:border-color_.16s_ease,_background-color_.16s_ease,_box-shadow_.16s_ease,_color_.16s_ease] [&_select:hover]:border-line-strong [&_select:hover]:text-text later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_12%,_transparent)] [&_select:focus]:[background-color:var(--input-focus-bg)] max-[901px]:flex-[1_1_150px] max-[641px]:later:flex-[1_1_100%]">
-            <span>Handler</span>
             <select value={filters.handler_id} onChange={(event) => setFilters({ ...filters, handler_id: event.target.value })} aria-label="Filter by handler">
               <option value="">All handlers</option>
               {/* Filter only: admins are not listed here (the session form still uses every handler). */}
               {handlers.filter((user) => user.role !== 'admin').map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
             </select>
           </label>
-        </div>
-        <div className="flex flex-wrap items-center gap-[10px_14px] max-[901px]:justify-between">
-          {permissions.schedule && (
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)] flex-[0_0_auto] max-[641px]:w-full" onClick={() => openForm({ mode: 'create' })}>
-              <FaPlus aria-hidden="true" /> Schedule session
+          <div className="relative min-w-[138px]" ref={pinnedRef}>
+            <button
+              type="button"
+              className="w-full min-h-[36px] p-[0_12px] border border-line rounded-[9px] [background:var(--input-bg,_var(--surface-subtle))] text-text text-[12px] font-[600] [outline:none] cursor-pointer hover:border-line-strong focus:border-accent inline-flex items-center justify-between gap-[10px]"
+              onClick={() => setPinnedOpen((open) => !open)}
+              aria-expanded={pinnedOpen}
+              aria-haspopup="true"
+            >
+              Show Pinned Activity <FaChevronDown aria-hidden="true" className="text-[10px]" />
             </button>
-          )}
-          {onScheduleActivity && (
-            <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[12px] font-[760] tracking-[.01em] flex-[0_0_auto] max-[641px]:w-full" onClick={onScheduleActivity}>
-              <FaCalendarPlus aria-hidden="true" /> Schedule activity
-            </button>
-          )}
+            {pinnedOpen && (
+              <div className="absolute left-0 top-[calc(100%_+_6px)] z-[30] min-w-[200px] grid gap-[2px] p-[8px] border border-line-strong rounded-[10px] [background:var(--panel)] [box-shadow:var(--shadow-md)]" role="group" aria-label="Show pinned activity">
+                {[['completed', 'Completed'], ['scheduled', 'Scheduled'], ['cancelled', 'Cancelled']].map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-[9px] p-[6px_8px] rounded-[6px] text-text text-[13px] cursor-pointer hover:[background:var(--hover)]">
+                    <input type="checkbox" className="[accent-color:var(--accent)]" checked={pinnedShown[key]} onChange={() => togglePinned(key)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           {isAdmin && (
-            <label className="inline-flex items-center gap-2 text-text-secondary text-[11px] font-[600] cursor-pointer [&_input]:[appearance:none] [&_input]:relative [&_input]:w-[30px] [&_input]:h-[18px] [&_input]:flex-[0_0_auto] [&_input]:m-0 [&_input]:border [&_input]:border-line-strong [&_input]:rounded-[999px] [&_input]:[background:var(--surface-strong)] [&_input]:[transition:background_.18s_ease,_border-color_.18s_ease] [&_input::after]:[content:''] [&_input::after]:absolute [&_input::after]:top-[2px] [&_input::after]:left-[2px] [&_input::after]:w-[12px] [&_input::after]:h-[12px] [&_input::after]:rounded-[50%] [&_input::after]:[background:var(--muted)] [&_input::after]:[transition:transform_.18s_ease,_background_.18s_ease] [&_input:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] [&_input:checked]:[background:color-mix(in_srgb,_var(--accent)_30%,_transparent)] [&_input:checked::after]:[transform:translateX(12px)] [&_input:checked::after]:[background:var(--accent-text)]">
+            <label className="inline-flex items-center gap-[10px] h-[36px] p-[0_12px] border border-input-line rounded-[9px] [background:var(--input-bg)] text-text-secondary text-[12px] font-[600] whitespace-nowrap cursor-pointer select-none [transition:border-color_.16s_ease,_background-color_.16s_ease,_color_.16s_ease,_box-shadow_.16s_ease] hover:border-line-strong hover:[background:var(--hover)] hover:text-text has-[:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] has-[:checked]:text-text has-[:checked]:[background:color-mix(in_srgb,_var(--accent)_12%,_var(--input-bg))] has-[:focus-visible]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] [&_input]:[appearance:none] [&_input]:relative [&_input]:w-[30px] [&_input]:h-[18px] [&_input]:flex-[0_0_auto] [&_input]:m-0 [&_input]:border [&_input]:border-line-strong [&_input]:rounded-[999px] [&_input]:[background:var(--surface-strong)] [&_input]:[transition:background_.18s_ease,_border-color_.18s_ease] [&_input::after]:[content:''] [&_input::after]:absolute [&_input::after]:top-[2px] [&_input::after]:left-[2px] [&_input::after]:w-[12px] [&_input::after]:h-[12px] [&_input::after]:rounded-[50%] [&_input::after]:[background:var(--muted)] [&_input::after]:[transition:transform_.18s_ease,_background_.18s_ease] [&_input:checked]:border-[color:color-mix(in_srgb,_var(--accent)_55%,_transparent)] [&_input:checked]:[background:color-mix(in_srgb,_var(--accent)_30%,_transparent)] [&_input:checked::after]:[transform:translateX(12px)] [&_input:checked::after]:[background:var(--accent-text)]">
               <input type="checkbox" checked={filters.merge_suggested} onChange={(event) => setFilters({ ...filters, merge_suggested: event.target.checked })} />
               <span>Merge suggested only</span>
             </label>
@@ -358,11 +396,23 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
               <FaRotateLeft aria-hidden="true" /> Reset
             </button>
           )}
-        </div>
+          <div className="inline-flex order-[-1] mr-auto gap-[2px] p-[3px] border border-[#3a4560] rounded-[12px] [background:var(--input-bg)]" role="group" aria-label="Calendar view">
+            {[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([value, text]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={mode === value}
+                onClick={() => setMode(value)}
+                className={`min-h-[30px] p-[6px_14px] rounded-[9px] border text-[12px] font-[650] uppercase whitespace-nowrap [transition:background_.16s_ease,_color_.16s_ease,_border-color_.16s_ease] ${mode === value ? 'border-[#3a4560] text-[#fff] [background:#252e42] [box-shadow:0_1px_2px_rgba(0,0,0,.3)]' : 'border-[#3a4560] text-[#8a94a6] [background:transparent] hover:text-[#d7ddf5] hover:[background:rgba(255,_255,_255,_.04)]'}`}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
       </div>
 
-      <section className="data-panel overflow-hidden border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] ms-calendar p-0 mb-[18px] later:hover:border-line later:hover:[box-shadow:var(--shadow-sm)]">
-        <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] border-b border-b-line max-[641px]:later:p-[8px_10px]">
+      <section className="data-panel overflow-visible [background:transparent] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] ms-calendar p-0 mb-[18px] later:hover:border-line later:hover:[box-shadow:var(--shadow-sm)]">
+        {false && <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] mb-[14px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] max-[641px]:later:p-[8px_10px]">
           <div className="flex flex-wrap gap-[3px]" role="group" aria-label="Filter by status">
             <button type="button" className={`inline-flex items-center gap-[6px] min-h-[28px] p-[0_10px] border border-transparent rounded-[999px] [background:transparent] text-muted text-[11px] font-[600] [transition:color_.15s_ease,_background_.15s_ease,_border-color_.15s_ease] hover:text-text hover:[background:var(--hover)] [&.is-active]:text-text [&.is-active]:border-line-strong later:[&.is-active]:[background:var(--surface-strong)] [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-[50%] ${filters.status ? '' : ' is-active'}`} aria-pressed={!filters.status} onClick={() => setFilters({ ...filters, status: '' })}>All</button>
             {SESSION_STATUSES.map((item) => (
@@ -382,51 +432,83 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
             <strong>{sessions.length}</strong> {sessions.length === 1 ? 'session' : 'sessions'}
             {feed.loading && <em> · loading…</em>}
           </span>
-        </div>
-        <div className="grid grid-cols-[minmax(0,_1fr)_240px] gap-[14px] p-[12px] max-[901px]:grid-cols-1">
-        <div className="min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-[8px] mb-[8px]">
-          <div className="flex items-center gap-[6px]">
-            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
-            <button type="button" className="text-muted hover:text-text p-[4px_10px] border border-line rounded-[8px] text-[11px] font-[650]" onClick={() => pickDay(manilaToday())}>Today</button>
-            <button type="button" className="text-muted hover:text-text p-[4px_8px]" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>
+        </div>}
+        <div className={`grid gap-[14px] max-[901px]:grid-cols-1 ${mode === 'month' ? 'grid-cols-[minmax(0,_1fr)]' : mode === 'week' ? 'grid-cols-[minmax(0,_1fr)_minmax(200px,_240px)]' : 'grid-cols-[minmax(0,_1fr)_minmax(300px,_380px)]'}`}>
+        <div className="min-w-0 p-0 overflow-hidden border border-[#3a4560] rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]">
+        {mode !== 'day' && (
+        <div className={mode === 'week' || mode === 'month' ? 'grid grid-cols-[1fr_auto_1fr] items-center gap-[8px] p-[10px_14px] mb-[8px]' : 'flex flex-wrap items-center justify-between gap-[8px] mb-[8px]'}>
+          <div className={`flex items-center gap-[6px] ${mode === 'week' ? 'col-start-1 row-start-1 justify-self-start' : ''}`}>
+            
+            <div ref={customRef} className="relative">
+              <button type="button" aria-expanded={customOpen} className="inline-flex items-center justify-center h-[34px] p-[0_14px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors text-[12px] font-[650]" onClick={() => setCustomOpen((open) => !open)}>Custom</button>
+              {customOpen && (
+                <div className="absolute left-0 top-[40px] z-20 w-[300px] [zoom:0.85] [&_table]:table-fixed [&_td]:p-[3px_0] [&_th]:p-[4px_0]">
+                  {mode === 'month' ? (
+                    <MonthYearWheel month={miniMonth} todayYear={Number(todayDate.slice(0, 4))} onPick={(next) => { setMiniMonth(next); setCustomOpen(false); }} />
+                  ) : (
+                  <MiniCalendar
+                    month={miniMonth}
+                    selectedDate={dayDate}
+                    todayDate={todayDate}
+                    sessions={sessions}
+                    onMonth={setMiniMonth}
+                    plain
+                    activeWeekStart={dayDate}
+                    activeWeekEnd={addDays(weekStart, 6)}
+                    onPickDate={(date) => { pickDay(date === dayDate ? weekStart : date); setMiniMonth(monthOf(date)); setCustomOpen(false); }}
+                  >
+                    <button type="button" className="w-full inline-flex items-center justify-center h-[30px] border-0 outline-none focus:outline-none [background:transparent] text-accent text-[12px] font-[650] hover:[background:rgba(255,_255,_255,_.06)]" onClick={() => { pickDay(todayDate); setMiniMonth(monthOf(todayDate)); setCustomOpen(false); }}>Today</button>
+                  </MiniCalendar>
+                  )}
+                </div>
+              )}
+            </div>
+            <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
+            {mode !== 'week' && <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>}
           </div>
-          <strong className="text-text text-[13px] font-[700]">
-            {mode === 'week'
-              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${weekStart}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
+          {mode === 'week' && <button type="button" className="col-start-3 row-start-1 justify-self-end inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label="Next week" onClick={() => shiftView(1)}>&rsaquo;</button>}
+          <strong className={`text-text font-[700] ${mode === 'week' || mode === 'month' ? 'col-start-2 row-start-1 justify-self-center text-[15px] uppercase tracking-[.04em]' : 'text-[13px]'}`}>
+            {mode === 'month'
+              ? new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${miniMonth}-01T12:00:00+08:00`))
+              : mode === 'week'
+              ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
               : new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}
           </strong>
-          <div className="inline-flex border border-line rounded-[9px] overflow-hidden" role="group" aria-label="Calendar view">
-            {[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([value, text]) => (
-              <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`p-[5px_12px] text-[11px] font-[650] ${mode === value ? 'text-text [background:var(--surface-strong)]' : 'text-muted hover:text-text'}`}>{text}</button>
-            ))}
-          </div>
         </div>
-        {outsideHours.length > 0 && (
-          <p className="mb-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
-            <strong>Outside business hours:</strong> {outsideHours.length} {outsideHours.length === 1 ? 'session' : 'sessions'} in this range (before 9 AM or after 5 PM). {outsideHours.slice(0, 3).map((s) => activityLabel(s.activity_type)).join(', ')}
-          </p>
         )}
+        <div key={`slide-${mode}-${weekStart}`} className={weekSlide}>
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView={mode === 'month' ? 'dayGridMonth' : mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
-          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? weekStart : dayDate}
-          key={`${mode}-${mode === 'week' ? weekStart : mode === 'month' ? miniMonth : dayDate}`}
+          initialDate={mode === 'month' ? `${miniMonth}-01` : mode === 'week' ? dayDate : dayDate}
+          visibleRange={mode === 'week' ? { start: dayDate, end: addDays(weekStart, 5) } : undefined}
+          key={`${mode}-${mode === 'month' ? miniMonth : dayDate}`}
           headerToolbar={false}
           weekends={false}
           slotMinTime="09:00:00"
           slotMaxTime="18:00:00"
-          slotDuration="01:00:00"
+          slotDuration="00:30:00"
+          slotLabelInterval="01:00:00"
           allDaySlot={false}
           dayHeaderContent={(arg) => {
             const weekday = arg.date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'Asia/Manila' }).toUpperCase();
+            if (mode === 'day') {
+              const dayNumber = arg.date.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'Asia/Manila' });
+              return (
+                <span className="ms-day-head">
+                  <button type="button" aria-label="Previous business day" onClick={() => shiftView(-1)}>&lsaquo;</button>
+                  <span className="ms-day-title">{weekday}<span className="ms-day-badge">{dayNumber}</span></span>
+                  <button type="button" aria-label="Next business day" onClick={() => shiftView(1)}>&rsaquo;</button>
+                </span>
+              );
+            }
             if (mode !== 'week') return weekday;
             const day = arg.date.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'Asia/Manila' });
             return `${weekday} ${day}`;
           }}
           slotEventOverlap
           nowIndicator
-          navLinks
+          navLinks={mode !== 'day'}
           dayMaxEvents={mode === 'month' ? 3 : false}
           height="auto"
           events={events}
@@ -446,10 +528,17 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} />}
+          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
         />
         </div>
-        <aside className="grid gap-[12px] content-start min-w-0" aria-label="Schedule side panels">
+        {outsideHours.length > 0 && (
+          <p className="mt-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
+            <strong>Outside business hours:</strong> {outsideHours.length} {outsideHours.length === 1 ? 'session' : 'sessions'} in this range (before 9 AM or after 5 PM). {outsideHours.slice(0, 3).map((s) => activityLabel(s.activity_type)).join(', ')}
+          </p>
+        )}
+        </div>
+        {mode !== 'month' && <aside className="flex flex-col gap-[12px] min-w-0 min-h-0 h-full" aria-label="Schedule side panels">
+          {mode === 'week' ? <WeekSidePanels activityCounts={activityCounts} statusCounts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} /> : (
           <MiniCalendar
             month={miniMonth}
             selectedDate={dayDate}
@@ -457,10 +546,11 @@ export default function MasterSchedule({ embedded = false, onScheduleActivity, r
             sessions={sessions}
             onMonth={setMiniMonth}
             onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
-          />
-          <StatusPanel counts={statusCounts} />
-          {mode === 'week' && <ActivitiesPanel counts={activityCounts} />}
-        </aside>
+          >
+            <StatusPanel counts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} />
+          </MiniCalendar>
+          )}
+        </aside>}
         </div>
       </section>
 
@@ -521,32 +611,52 @@ function eventTooltip(session) {
 }
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
-function EventBody({ session, isAdmin, menu }) {
+/** Sessions shorter than this start with the summary only; longer ones always show everything. */
+const SHORT_SESSION_MS = 120 * 60 * 1000;
+
+function EventBody({ session, isAdmin, menu, short }) {
   const taken = session.participant_count ?? 0;
   const capacity = session.max_capacity ?? 5;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = short && !expanded;
   const items = menu ? menu(session) : [];
   return (
-    <div className="ms-event-body relative grid gap-[2px] overflow-hidden p-[5px_7px] rounded-[7px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#1f2533] border border-[#d9dee9] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[11.5px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
-      <span className="ms-event-time overflow-hidden text-[#c9d1e0] text-[10px] font-[600] text-ellipsis whitespace-nowrap">{sessionTime(session.start_at, session.end_at)} · {session.start_at ? manilaDate.format(new Date(session.start_at)) : ''}</span>
+    <div className="ms-event-body relative grid content-start gap-[6px] min-w-0 p-[12px_14px] rounded-[16px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#0a0e18] border border-[#2a3d5c] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[12px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+      <span className="flex items-center justify-between gap-[6px] pr-[18px] text-[#c9d1e0] text-[10px] font-[600] whitespace-nowrap overflow-hidden">
+        <span className="ms-event-time overflow-hidden text-ellipsis">{sessionTime(session.start_at, session.end_at)}</span>
+        <span className="shrink-0">{session.start_at ? manilaDate.format(new Date(session.start_at)).split(' ').slice(-2).join(' ').toUpperCase() : ''}</span>
+      </span>
       <strong>{activityLabel(session.activity_type)}</strong>
-      <span className="ms-event-meta overflow-hidden text-[#e6ebf5] text-[10.5px] text-ellipsis whitespace-nowrap">
+      <span className="ms-event-meta overflow-hidden text-[#c9d1e0] text-[10.5px] text-ellipsis whitespace-nowrap">
         {session.brand?.name || (session.activity_type === 'orientation' ? 'Any Brand' : 'No brand')} - {taken}/{capacity}
       </span>
-      <span className="flex items-center gap-[3px] text-[10px] text-[#c9d1e0]" aria-label={`${taken} of ${capacity} applicants`}>
-        {Array.from({ length: capacity }, (_, index) => (
-          <i key={index} className={`w-[7px] h-[7px] rounded-[50%] ${index < taken ? 'bg-[#f5f7fb]' : 'border border-[#c9d1e0]'}`} aria-hidden="true" />
-        ))}
-        <span className="ml-[4px] overflow-hidden text-ellipsis whitespace-nowrap">{session.handler?.full_name || 'No handler'}</span>
+      <div className={`grid min-h-0 transition-[grid-template-rows,opacity] duration-300 ease-out ${collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
+      <div className="grid content-start gap-[6px] min-h-0 overflow-hidden">
+      <span className="overflow-hidden text-[#8a94a6] text-[10px] text-ellipsis whitespace-nowrap">Handler({session.handler?.full_name || 'No handler'})</span>
+      <span className="ms-card-divider mt-[12px] border-t border-[#2a3d5c]" aria-hidden="true" />
+      <span className="ms-applicant-row flex flex-nowrap gap-[8px] pt-[10px]" aria-label={`${taken} of ${capacity} applicants`}>
+        {Array.from({ length: capacity }, (_, index) => {
+          const applicant = session.active_participants?.[index]?.applicant;
+          const initials = applicant?.full_name ? applicant.full_name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() : '';
+          return (
+            <i key={index} className={`grid place-items-center shrink-0 w-[36px] h-[36px] rounded-[50%] text-[13px] font-[700] not-italic ${initials ? 'bg-[#3d4f8a] text-[#f5f7fb]' : 'border border-[#2a3d5c] bg-[#0d1322]'}`} aria-hidden="true">{initials}</i>
+          );
+        })}
       </span>
-      {items.length > 0 && (
-        <button type="button" className="ms-card-menu-button absolute top-[2px] right-[3px] w-[20px] h-[20px] text-[#c9d1e0] text-[13px] leading-none rounded-[5px] hover:[background:rgba(255,255,255,0.12)]" aria-label="Session actions" aria-expanded={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }} onMouseDown={(event) => event.stopPropagation()}>⋮</button>
+      </div>
+      </div>
+      {short && (
+        <button type="button" className="ms-card-collapse absolute top-[30px] right-[4px] w-[20px] h-[20px] p-0 [border:0] [box-shadow:none] [background:transparent] text-[#8a94a6] text-[10px] leading-none hover:text-[#f5f7fb]" aria-label={collapsed ? 'Show details' : 'Hide details'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); setExpanded((value) => !value); }} onMouseDown={(event) => event.stopPropagation()}>{collapsed ? '▼' : '▲'}</button>
       )}
-      {menuOpen && items.length > 0 && (
-        <ul className="ms-card-menu absolute top-[22px] right-[3px] z-[5] grid gap-[2px] min-w-[130px] p-[4px] rounded-[8px] border border-[#d9dee9] [background:#1f2533] shadow-[0_8px_20px_rgba(0,0,0,0.4)] [list-style:none] m-0" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+      {items.length > 0 && (
+        <button type="button" className="ms-card-menu-button absolute top-[6px] right-[4px] w-[30px] h-[30px] grid grid-flow-row place-content-center justify-items-center gap-[3px] rounded-[8px] [background:#1a2236] hover:[background:rgba(255,255,255,0.12)]" aria-label="Session actions" aria-expanded={menuOpen} onClick={(event) => { event.stopPropagation(); setMenuOpen((open) => !open); }} onMouseDown={(event) => event.stopPropagation()}><i className="w-[4px] h-[4px] rounded-[50%] bg-[#c9d1e0]" /><i className="w-[4px] h-[4px] rounded-[50%] bg-[#c9d1e0]" /><i className="w-[4px] h-[4px] rounded-[50%] bg-[#c9d1e0]" /></button>
+      )}
+      {items.length > 0 && (
+        <ul className={`ms-card-menu absolute top-[42px] right-[4px] z-[5] grid gap-[6px] min-w-[150px] p-[6px] rounded-[12px] border border-[#3a4560] [background:#161c2b] shadow-[0_10px_24px_rgba(0,0,0,0.45)] [list-style:none] m-0 origin-top-right transition-[opacity,transform] duration-200 ease-out ${menuOpen ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`} role="menu" aria-hidden={!menuOpen} onMouseDown={(event) => event.stopPropagation()}>
           {items.map((item) => (
             <li key={item.label} role="none">
-              <button type="button" role="menuitem" className="w-full text-left p-[5px_8px] rounded-[6px] text-[#f5f7fb] text-[11px] font-[600] hover:[background:rgba(255,255,255,0.1)]" onClick={(event) => { event.stopPropagation(); setMenuOpen(false); item.run(); }}>{item.label}</button>
+              <button type="button" role="menuitem" className="w-full text-left p-[9px_12px] rounded-[8px] border-0 [background:#222a3c] text-[#f5f7fb] text-[12px] font-[600] hover:[background:#2e3750]" onClick={(event) => { event.stopPropagation(); setMenuOpen(false); item.run(); }}>{item.label}</button>
             </li>
           ))}
         </ul>

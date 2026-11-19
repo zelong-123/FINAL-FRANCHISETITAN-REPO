@@ -265,7 +265,7 @@
 :where(.fc) td small { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 :where(.fc) td button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-secondary); background: var(--surface-subtle); font-size: 9px; font-weight: 700; transition: color .16s ease, background .16s ease, border-color .16s ease, transform .16s ease; }
 :where(.fc) td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); background: var(--hover); transform: translateY(-1px); }
-.ms-calendar .fc { --fc-border-color: color-mix(in srgb, var(--border) 80%, transparent); --fc-page-bg-color: transparent; --fc-neutral-bg-color: transparent; --fc-today-bg-color: color-mix(in srgb, var(--accent) 5%, transparent); --fc-highlight-color: color-mix(in srgb, var(--accent) 14%, transparent); --fc-now-indicator-color: var(--danger); --fc-small-font-size: 11px; padding: 0 12px 12px; color: var(--text-secondary); font-size: 12px; }
+.ms-calendar .fc { --fc-border-color: color-mix(in srgb, var(--border) 80%, transparent); --fc-page-bg-color: transparent; --fc-neutral-bg-color: transparent; --fc-today-bg-color: color-mix(in srgb, var(--accent) 5%, transparent); --fc-highlight-color: color-mix(in srgb, var(--accent) 14%, transparent); --fc-now-indicator-color: var(--danger); --fc-small-font-size: 11px; padding: 0 0 12px; color: var(--text-secondary); font-size: 12px; }
 .ms-calendar .fc .fc-toolbar { flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px 2px 12px; }
 .ms-calendar .fc .fc-toolbar-chunk { display: flex; align-items: center; gap: 4px; }
 .ms-calendar .fc .fc-toolbar-title { margin: 0 6px; color: var(--text); font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
@@ -287,14 +287,40 @@
 .ms-calendar .fc .fc-timegrid-slot { border-color: color-mix(in srgb, var(--border) 65%, transparent); }
 .ms-calendar .fc .fc-timegrid-slot-label-cushion { padding: 0 8px 0 2px; color: var(--muted); font-size: 10.5px; }
 .ms-calendar .fc .fc-timegrid-axis-cushion { color: var(--muted); font-size: 10px; }
-.ms-calendar .fc .fc-daygrid-day-number { padding: 6px 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
+.ms-calendar .fc .fc-daygrid-day-number { padding: 8px 10px; color: #d7ddf0; font-size: 15px; font-weight: 700; text-decoration: none; }
+.ms-calendar .fc .fc-daygrid-day { border: 1px solid #2c3a55; }
+.ms-calendar .fc .fc-scrollgrid, .ms-calendar .fc .fc-scrollgrid td, .ms-calendar .fc .fc-scrollgrid th { border-color: #2c3a55; }
+.ms-calendar .fc .fc-daygrid-day.fc-day-sat, .ms-calendar .fc .fc-daygrid-day.fc-day-sun { background: rgba(255, 255, 255, .025); }
+.ms-calendar .fc .fc-daygrid-day.fc-day-sat .fc-daygrid-day-number, .ms-calendar .fc .fc-daygrid-day.fc-day-sun .fc-daygrid-day-number { color: #7f8aa6; }
+.ms-calendar .fc .fc-daygrid-day:hover, .ms-calendar .fc .fc-daygrid-day:hover .fc-daygrid-day-frame, .ms-calendar .fc .fc-daygrid-day-frame:hover { background: transparent; }
+.ms-calendar .fc tbody tr:hover { background: transparent; }
 .ms-calendar .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number { color: var(--accent-text); font-weight: 750; }
-.ms-calendar .fc .fc-daygrid-day-frame:hover { background: var(--surface-subtle); }
 .ms-calendar .fc-event { cursor: pointer; overflow: hidden; border-width: 1px; border-left-width: 3px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); transition: filter .15s ease, box-shadow .15s ease; }
 .ms-calendar .fc-event:hover { filter: brightness(1.12); box-shadow: 0 4px 12px rgba(0, 0, 0, .28); }
-.ms-calendar .fc-timegrid-event .ms-event-body { padding: 5px 7px; gap: 2px; }
-.ms-calendar .fc-timegrid-event .ms-event-body strong { font-size: 11.5px; font-weight: 720; }
-.ms-calendar .fc .fc-timegrid-event-harness { padding: 0 2px; }
+.ms-calendar .fc-timegrid-event { overflow: visible; transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease; }
+.ms-calendar .fc-timegrid-event .ms-card-collapse { border: 0 !important; box-shadow: none !important; background: transparent !important; outline: none; min-width: 0; width: 20px; height: 20px; padding: 0; font-size: 10px; }
+.ms-calendar .fc-timegrid-event .ms-card-collapse:hover { background: transparent !important; }
+@keyframes ms-cal-slide-from-right { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ms-cal-slide-from-left { from { transform: translateX(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ms-day-pop { from { transform: scale(.7); opacity: .4; } to { transform: none; opacity: 1; } }
+.ms-cal-grid-next { animation: ms-cal-slide-from-right .25s ease-out; }
+.ms-cal-grid-prev { animation: ms-cal-slide-from-left .25s ease-out; }
+.ms-day-selected { animation: ms-day-pop .2s ease-out; }
+@keyframes ms-merge-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes ms-merge-item-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+.ms-merge-section { animation: ms-merge-in .28s ease-out; }
+.ms-merge-item { animation: ms-merge-item-in .3s ease-out both; animation-delay: calc(var(--i, 0) * 60ms); }
+@property --ms-spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes ms-resched-spin { to { --ms-spin: 360deg; } }
+/* Rescheduled session: a gray highlight runs around the card border so it reads as moved. */
+.ms-calendar .fc-event.is-rescheduled { position: relative; }
+.ms-calendar .fc-event.is-rescheduled::before { content: ''; position: absolute; inset: 0; border-radius: 8px; padding: 2px; pointer-events: none; background: conic-gradient(from var(--ms-spin), #8a94a8 0deg, transparent 90deg, transparent 270deg, #8a94a8 360deg); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: ms-resched-spin 2.4s linear infinite; }
+.ms-day-indicator { transition: left .32s cubic-bezier(.2, .8, .2, 1), top .32s cubic-bezier(.2, .8, .2, 1); }
+.ms-calendar .fc-timegrid-event .ms-event-body { min-height: 100%; box-sizing: border-box; }
+.ms-calendar .fc .fc-event.ms-event { transition: transform .4s cubic-bezier(.33,0,.2,1) .15s, box-shadow .4s ease .15s; transform-origin: center center; }
+.ms-calendar .fc .fc-event.ms-event:hover { transform: scale(1.04); z-index: 20; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); transition-delay: .15s; }
+.ms-calendar .fc-timegrid-event .ms-event-body strong { font-size: 12px; font-weight: 720; }
+.ms-calendar .fc .fc-timegrid-event-harness { right: auto !important; width: min(260px, 100%) !important; padding: 0 2px; }
 .ms-calendar .fc .fc-timegrid-now-indicator-line { box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
 .ms-calendar .fc-event.is-cancelled { opacity: .55; }
 .ms-calendar .fc-event.is-merged { opacity: .55; }
@@ -304,14 +330,40 @@
 .ms-calendar .fc-daygrid-event .ms-event-meta { display: none; }
 .ms-calendar .fc-daygrid-event .ms-merge-badge { display: none; }
 .ms-calendar .fc-daygrid-event .ms-event-body { display: block; padding: 1px 3px; }
-.ms-calendar .fc-daygrid-event .ms-event-body strong { font-size: 10.5px; }
+.ms-calendar .fc-daygrid-event { margin: 4px 6px; border-width: 1px; border-left-width: 3px; border-radius: 8px; padding: 0; overflow: hidden; }
+.ms-calendar .fc-daygrid-event .ms-event-body { padding: 8px 10px; min-width: 0; border: 0; border-radius: 0; }
+.ms-calendar .fc-daygrid-event .ms-card-menu-button,
+.ms-calendar .fc-daygrid-event .ms-card-menu,
+.ms-calendar .fc-daygrid-event .ms-card-collapse { display: none; }
+.ms-calendar .fc-daygrid-event .ms-applicant-row,
+.ms-calendar .fc-daygrid-event .ms-card-divider { display: none; }
+.ms-calendar .fc-daygrid-event .ms-event-body strong { font-size: 12px; }
 .ms-calendar .fc-event.ms-drop-mergeable { box-shadow: 0 0 0 2px #32c997, 0 0 16px rgba(50, 201, 151, .8); animation: ms-merge-glow 1.2s ease-in-out infinite alternate; }
 .ms-calendar .fc-event.ms-drop-blocked { filter: grayscale(1); opacity: .38; cursor: not-allowed; }
 .ms-calendar .fc-event.ms-drop-source { opacity: .5; }
 .ms-calendar .fc-event-mirror { opacity: .9; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+/* Day chart look: dark header and time gutter, taller slots, dashed half-hour lines, dark event cards. */
+.ms-calendar .fc .fc-col-header, .ms-calendar .fc .fc-timegrid-axis { background: #080c15; }
+.ms-calendar .fc .fc-col-header-cell-cushion { color: #e6ebf5; font-size: 13px; font-weight: 700; letter-spacing: .02em; padding: 12px 6px; }
+.ms-calendar .fc .fc-timegrid-body, .ms-calendar .fc .fc-timegrid-slots { background: #0d1220; }
+.ms-calendar .fc .fc-timegrid-slot { height: 44px; border-color: #243049; }
+.ms-calendar .fc .fc-timegrid-slot-minor { border-top-style: dashed; border-top-color: #2a3650; }
+.ms-calendar .fc .fc-timegrid-slot-lane.fc-timegrid-slot-minor { background: rgba(255, 255, 255, .035); }
+.ms-calendar .fc .fc-timegrid-slot-label-cushion { color: #e6ebf5; font-size: 13px; font-weight: 600; padding: 0 10px 0 4px; }
+.ms-calendar .fc .fc-timegrid-axis { border-color: #243049; }
+.ms-calendar .fc-timegrid-event { background: transparent; }
+.ms-calendar .fc .ms-day-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.ms-calendar .fc .ms-day-head button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid #2a3650; border-radius: 8px; background: transparent; color: #c9d1e0; font-size: 22px; line-height: 1; cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+.ms-calendar .fc .ms-day-head button:hover { background: linear-gradient(135deg, #3d5a94, #2b3f6b); border-color: #5b7fc4; color: #fff; transform: translateY(-1px); box-shadow: 0 6px 16px rgba(61, 90, 148, 0.45); }
+.ms-calendar .fc .ms-day-head button:active { transform: translateY(0); box-shadow: none; }
+.ms-calendar .fc .ms-day-title { display: inline-flex; align-items: center; gap: 8px; color: #f5f7fb; font-size: 13px; font-weight: 700; }
+.ms-calendar .fc .ms-day-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 50%; background: #3d5a94; color: #fff; font-size: 13px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .ms-calendar .fc-event.ms-drop-mergeable { animation: none; } }
 @media (max-width: 640px) { .ms-calendar .fc { padding: 0 6px 8px; } }
 @media (max-width: 640px) { .ms-calendar .fc .fc-toolbar { justify-content: center; } }
+/* Master Schedule tab: let the page use the full width of the content area
+   (the default page-container caps it at 1640px with side padding). */
+.activities-page:has(.master-schedule.is-embedded) { width: 100%; max-width: none; padding-left: 12px; padding-right: 12px; }
 @media (max-width: 640px) { .ms-calendar .fc .fc-toolbar-title { flex: 1 1 100%; margin: 0; text-align: center; } }
 
 /* Global rules with class-level specificity or more compete with utilities, so they are not in base. */

@@ -512,6 +512,8 @@ export default function Activities() {
   const [scheduleGlow, setScheduleGlow] = useState(false);
   // Bumped after a save so the embedded Master Schedule reloads its data.
   const [masterRefreshKey, setMasterRefreshKey] = useState(0);
+  // Bumped by the header "Schedule session" button; the Master Schedule opens its session form.
+  const [sessionRequest, setSessionRequest] = useState(0);
   const preselectHandled = useRef(false);
 
   const remote = useRemote(async () => {
@@ -1105,6 +1107,15 @@ export default function Activities() {
             <FaCalendarPlus aria-hidden="true" /> Schedule activity
           </button>
         )}
+        {view === 'master' && can(role, 'schedule_sessions.schedule') && (
+          <button
+            type="button"
+            className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] flex-[0_0_auto] max-[721px]:w-full"
+            onClick={() => setSessionRequest((count) => count + 1)}
+          >
+            <FaPlus aria-hidden="true" /> Schedule session
+          </button>
+        )}
       </div>
 
       {view === 'table' && viewFocus && (
@@ -1331,7 +1342,7 @@ export default function Activities() {
 
       {/* Master Schedule tab: the full session calendar (views, filters, session
           panel, form, live rule check, drag-and-merge, role actions). */}
-      {view === 'master' && <MasterSchedule embedded refreshKey={masterRefreshKey} onScheduleActivity={canManage ? () => { setScheduleGlow(false); openCreate(); } : undefined} />}
+      {view === 'master' && <MasterSchedule embedded refreshKey={masterRefreshKey} sessionRequest={sessionRequest} />}
 
 
       {(showCreate || editing) && createPortal(

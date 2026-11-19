@@ -254,7 +254,7 @@ async function placeInto(tx: Db, participant: Row, target: Row, actor: Row) {
   await mirror(tx, seated, target, actor.id);
 }
 
-export function mergeSessions(db: Db, sourceId: number, targetId: number, actor: Row) {
+export function mergeSessions(db: Db, sourceId: number, targetId: number, actor: Row, applicantIds: number[] | null = null) {
   if (!isAdmin(actor)) violation('Admin lang ang puwedeng mag-merge ng sessions.', [], null, 403);
   return db.tx(async (tx) => {
     const [s, t] = await tx.query(`select id, start_at from schedule_sessions where id in ($1, $2) order by id`, [sourceId, targetId]);
@@ -266,14 +266,17 @@ export function mergeSessions(db: Db, sourceId: number, targetId: number, actor:
     const target = await withRelations(tx, targetId);
     const reasons = await mergeReasons(tx, source, target);
     if (reasons.length) violation('These sessions cannot be merged.', reasons);
-    const moving = await activeParticipants(tx, sourceId);
+    const active = await activeParticipants(tx, sourceId);
+    const moving = applicantIds ? active.filter((p) => applicantIds.includes(p.applicant_id)) : active;
+    if (!moving.length) violation('Pumili ng kahit isang applicant na i-merge.');
     for (const p of moving) {
       await placeInto(tx, p, target, actor);
       await logEvent(tx, await applicantOf(tx, p.applicant_id), 'merged', actor.id, { from_session_id: sourceId, to_session_id: targetId });
     }
-    await updateRow(tx, 'schedule_sessions', sourceId, { status: 'merged', merged_into_session_id: targetId, merge_suggested: false });
+    // Only the whole session becomes 'merged'; a partial merge leaves the remaining applicants in the source.
+    if (moving.length === active.length) await updateRow(tx, 'schedule_sessions', sourceId, { status: 'merged', merged_into_session_id: targetId, merge_suggested: false });
     const ids = moving.map((p) => p.applicant_id);
-    await history(tx, sourceId, 'merged', { status: source.status }, { status: 'merged', merged_into_session_id: targetId, applicant_ids: ids }, actor);
+    await history(tx, sourceId, 'merged', { status: source.status }, { status: moving.length === active.length ? 'merged' : source.status, merged_into_session_id: targetId, applicant_ids: ids }, actor);
     await history(tx, targetId, 'merged', null, { merged_from_session_id: sourceId, applicant_ids: ids }, actor);
     await history(tx, targetId, 'merge_suggestion_accepted', null, { source_session_id: sourceId, applicant_ids: ids }, actor);
     return withRelations(tx, targetId);

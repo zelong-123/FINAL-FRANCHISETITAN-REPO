@@ -283,6 +283,8 @@ export async function mergeReasons(db: Db, source: Row, target: Row, context?: R
   if (!isLive(target) || !isLive(source)) return ['Pending o Confirmed na session lang ang puwedeng pagsamahin.'];
   if (source.activity_type !== target.activity_type) return [`Ibang activity (${activityLabel(source.activity_type)} vs ${activityLabel(target.activity_type)}) — hindi puwedeng pagsamahin.`];
   if (target.activity_type === 'training') return ['Training sessions are never merged.'];
+  // Only a future session can merge (business time): a source that is today or past cannot merge.
+  if (localDay(startOf(source)) <= localDay(new Date())) return ['Hindi na puwedeng pagsamahin ang session na ngayong araw o nakaraan na.'];
   const reasons: string[] = [];
   const moving: Row[] = source.active_participants.map((r: Row) => r.applicant).filter(Boolean);
   if (Number(source.handler_id ?? 0) !== Number(target.handler_id ?? -1)) reasons.push('Different Sales users: a session belongs to one Sales user. Reassign the applicants first.');
@@ -307,7 +309,9 @@ export async function mergeReasons(db: Db, source: Row, target: Row, context?: R
 export async function evaluateDrag(db: Db, source: Row, from: Date, to: Date, actor: Row) {
   const sessions = await liveSessions(db, from, to);
   const out: Row[] = [];
-  for (const target of sessions.filter((s) => s.id !== source.id)) {
+  // Past or same-day targets are not offered at all; only future sessions can be shown (and locked when not allowed).
+  const today = localDay(new Date());
+  for (const target of sessions.filter((s) => s.id !== source.id && localDay(startOf(s)) > today)) {
     const reasons = await mergeReasons(db, source, target, sessions);
     out.push({ session_id: target.id, status: reasons.length ? 'blocked' : isAdmin(actor) ? 'mergeable' : 'neutral', reasons });
   }
