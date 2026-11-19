@@ -219,8 +219,9 @@ sessionRoutes.post('/schedule-sessions/:session/merge', gate, async (c) => {
   can(c, 'schedule_sessions.merge');
   const { db } = c.get('deps');
   const source = await load(c);
-  const v = await validate(db, await readInput(c), { target_session_id: ['required', 'integer', 'exists:schedule_sessions,id'] });
-  return ok(c, present(await service.mergeSessions(db, source.id, v.target_session_id, c.get('user'))), 'Sessions merged.');
+  const v = await validate(db, await readInput(c), { target_session_id: ['required', 'integer', 'exists:schedule_sessions,id'], applicant_ids: ['nullable', 'array'] });
+  const applicantIds = Array.isArray(v.applicant_ids) ? v.applicant_ids.map(Number).filter(Number.isInteger) : null;
+  return ok(c, present(await service.mergeSessions(db, source.id, v.target_session_id, c.get('user'), applicantIds)), 'Sessions merged.');
 });
 
 sessionRoutes.post('/schedule-sessions/:session/participants', gate, async (c) => {

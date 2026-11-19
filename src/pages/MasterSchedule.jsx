@@ -11,7 +11,7 @@ import useRemote from '../lib/useRemote';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
-import { ActivitiesPanel, MiniCalendar, StatusPanel } from '../components/schedule/MasterSchedulePanels';
+import { MiniCalendar, StatusPanel, WeekSidePanels } from '../components/schedule/MasterSchedulePanels';
 import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
@@ -143,7 +143,9 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
   }, [mode, weekStart, miniMonth]);
+  const [weekSlide, setWeekSlide] = useState('');
   const shiftView = (step) => {
+    setWeekSlide(step > 0 ? 'ms-cal-grid-next' : 'ms-cal-grid-prev');
     if (mode === 'week') pickDay(addDays(weekStart, step * 7));
     else pickDay(shiftBusinessDay(dayDate, step));
   };
@@ -156,6 +158,14 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
   const PINNED_GROUPS = { completed: ['completed'], scheduled: ['pending', 'confirmed'], cancelled: ['cancelled', 'rescheduled'] };
   const [pinnedShown, setPinnedShown] = useState({ completed: false, scheduled: true, cancelled: true });
   const [pinnedOpen, setPinnedOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const customRef = useRef(null);
+  useEffect(() => {
+    if (!customOpen) return undefined;
+    const close = (event) => { if (!customRef.current?.contains(event.target)) setCustomOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [customOpen]);
   const pinnedRef = useRef(null);
   useEffect(() => {
     if (!pinnedOpen) return undefined;
@@ -402,7 +412,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
       </div>
 
       <section className="data-panel overflow-visible [background:transparent] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] ms-calendar p-0 mb-[18px] later:hover:border-line later:hover:[box-shadow:var(--shadow-sm)]">
-        {mode !== 'day' && <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] mb-[14px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] max-[641px]:later:p-[8px_10px]">
+        {mode === 'month' && <div className="flex flex-wrap items-center justify-between gap-[8px_14px] p-[9px_14px] mb-[14px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] max-[641px]:later:p-[8px_10px]">
           <div className="flex flex-wrap gap-[3px]" role="group" aria-label="Filter by status">
             <button type="button" className={`inline-flex items-center gap-[6px] min-h-[28px] p-[0_10px] border border-transparent rounded-[999px] [background:transparent] text-muted text-[11px] font-[600] [transition:color_.15s_ease,_background_.15s_ease,_border-color_.15s_ease] hover:text-text hover:[background:var(--hover)] [&.is-active]:text-text [&.is-active]:border-line-strong later:[&.is-active]:[background:var(--surface-strong)] [&_i]:w-[7px] [&_i]:h-[7px] [&_i]:rounded-[50%] ${filters.status ? '' : ' is-active'}`} aria-pressed={!filters.status} onClick={() => setFilters({ ...filters, status: '' })}>All</button>
             {SESSION_STATUSES.map((item) => (
@@ -423,22 +433,42 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             {feed.loading && <em> · loading…</em>}
           </span>
         </div>}
-        <div className="grid grid-cols-[minmax(0,_1fr)_minmax(300px,_380px)] gap-[14px] max-[901px]:grid-cols-1">
-        <div className="min-w-0 p-0 overflow-hidden border border-line rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]">
+        <div className={`grid gap-[14px] max-[901px]:grid-cols-1 ${mode === 'week' ? 'grid-cols-[minmax(0,_1fr)_minmax(200px,_240px)]' : 'grid-cols-[minmax(0,_1fr)_minmax(300px,_380px)]'}`}>
+        <div className="min-w-0 p-0 overflow-hidden border border-[#3a4560] rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]">
         {mode !== 'day' && (
-        <div className="flex flex-wrap items-center justify-between gap-[8px] mb-[8px]">
-          <div className="flex items-center gap-[6px]">
-            <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-line rounded-[8px] [background:transparent]" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
-            <button type="button" className="inline-flex items-center justify-center h-[34px] p-[0_14px] text-muted hover:text-text border border-line rounded-[8px] [background:transparent] text-[12px] font-[650]" onClick={() => pickDay(manilaToday())}>Today</button>
-            <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-line rounded-[8px] [background:transparent]" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>
+        <div className={mode === 'week' ? 'grid grid-cols-[1fr_auto_1fr] items-center gap-[8px] p-[10px_14px] mb-[8px]' : 'flex flex-wrap items-center justify-between gap-[8px] mb-[8px]'}>
+          <div className={`flex items-center gap-[6px] ${mode === 'week' ? 'col-start-1 row-start-1 justify-self-start' : ''}`}>
+            
+            <div ref={customRef} className="relative">
+              <button type="button" aria-expanded={customOpen} className="inline-flex items-center justify-center h-[34px] p-[0_14px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors text-[12px] font-[650]" onClick={() => setCustomOpen((open) => !open)}>Custom</button>
+              {customOpen && (
+                <div className="absolute left-0 top-[40px] z-20 w-[300px] [zoom:0.85] [&_table]:table-fixed [&_td]:p-[3px_0] [&_th]:p-[4px_0]">
+                  <MiniCalendar
+                    month={miniMonth}
+                    selectedDate={dayDate}
+                    todayDate={todayDate}
+                    sessions={sessions}
+                    onMonth={setMiniMonth}
+                    plain
+                    onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); setCustomOpen(false); }}
+                  >
+                    <button type="button" className="w-full inline-flex items-center justify-center h-[30px] border-0 outline-none focus:outline-none [background:transparent] text-accent text-[12px] font-[650] hover:[background:rgba(255,_255,_255,_.06)]" onClick={() => { pickDay(todayDate); setMiniMonth(monthOf(todayDate)); setCustomOpen(false); }}>Today</button>
+                  </MiniCalendar>
+                </div>
+              )}
+            </div>
+            <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label={mode === 'week' ? 'Previous week' : 'Previous business day'} onClick={() => shiftView(-1)}>&lsaquo;</button>
+            {mode !== 'week' && <button type="button" className="inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label={mode === 'week' ? 'Next week' : 'Next business day'} onClick={() => shiftView(1)}>&rsaquo;</button>}
           </div>
-          <strong className="text-text text-[13px] font-[700]">
+          {mode === 'week' && <button type="button" className="col-start-3 row-start-1 justify-self-end inline-flex items-center justify-center w-[34px] h-[34px] text-muted hover:text-text border border-[#3a4560] rounded-[8px] [background:#070A13] hover:[background:#03050a] transition-colors" aria-label="Next week" onClick={() => shiftView(1)}>&rsaquo;</button>}
+          <strong className={`text-text font-[700] ${mode === 'week' ? 'col-start-2 row-start-1 justify-self-center text-[15px] uppercase tracking-[.04em]' : 'text-[13px]'}`}>
             {mode === 'week'
               ? `${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${weekStart}T12:00:00+08:00`))} - ${new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${addDays(weekStart, 4)}T12:00:00+08:00`))}`
               : new Intl.DateTimeFormat('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${dayDate}T12:00:00+08:00`))}
           </strong>
         </div>
         )}
+        <div key={`slide-${weekStart}`} className={mode === 'week' ? weekSlide : ''}>
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView={mode === 'month' ? 'dayGridMonth' : mode === 'week' ? 'timeGridWeek' : 'timeGridDay'}
@@ -491,6 +521,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           eventDrop={onDrop}
           eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
         />
+        </div>
         {outsideHours.length > 0 && (
           <p className="mt-[8px] p-[6px_10px] rounded-[9px] border border-line text-text-secondary text-[11px]">
             <strong>Outside business hours:</strong> {outsideHours.length} {outsideHours.length === 1 ? 'session' : 'sessions'} in this range (before 9 AM or after 5 PM). {outsideHours.slice(0, 3).map((s) => activityLabel(s.activity_type)).join(', ')}
@@ -498,6 +529,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
         )}
         </div>
         <aside className="flex flex-col gap-[12px] min-w-0 min-h-0 h-full" aria-label="Schedule side panels">
+          {mode === 'week' ? <WeekSidePanels activityCounts={activityCounts} statusCounts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} /> : (
           <MiniCalendar
             month={miniMonth}
             selectedDate={dayDate}
@@ -508,7 +540,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           >
             <StatusPanel counts={statusCounts} showCompleted={pinnedShown.completed} onToggleCompleted={() => togglePinned('completed')} />
           </MiniCalendar>
-          {mode === 'week' && <ActivitiesPanel counts={activityCounts} />}
+          )}
         </aside>
         </div>
       </section>

@@ -7,7 +7,7 @@ const MONTH_LABEL = new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'num
 const DAY_HEADINGS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
 /** Mon-Fri mini calendar. Clicking a day switches the chart; dots = scheduled applicants. */
-export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth, onPickDate, children }) {
+export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth, onPickDate, children, plain = false }) {
   const weeks = monthWeeks(month);
   const title = MONTH_LABEL.format(new Date(`${month}-01T00:00:00Z`));
   const [slide, setSlide] = useState('');
@@ -26,7 +26,7 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
         <strong className="text-text text-[14px] font-[700]">{title}</strong>
         <button type="button" aria-label="Next month" className="inline-flex items-center justify-center w-[32px] h-[32px] border border-line rounded-[8px] [background:transparent] text-muted hover:text-text" onClick={() => { setSlide('ms-cal-grid-next'); onMonth(shiftMonth(month, 1)); }}><FaChevronRight aria-hidden="true" /></button>
       </div>
-      {indicator && <span aria-hidden="true" className="ms-day-indicator absolute w-[32px] h-[32px] rounded-[50%] [background:#3b5b8f] pointer-events-none" style={{ left: indicator.left, top: indicator.top }} />}
+      {indicator && !plain && <span aria-hidden="true" className="ms-day-indicator absolute w-[32px] h-[32px] rounded-[50%] [background:#3b5b8f] pointer-events-none" style={{ left: indicator.left, top: indicator.top }} />}
       <table key={month} className={`w-full border-collapse text-center text-[13px] ${slide}`}>
         <thead>
           <tr>{DAY_HEADINGS.map((day) => <th key={day} className="text-muted text-[14px] font-[800] pb-[4px]">{day}</th>)}</tr>
@@ -36,7 +36,7 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
             <tr key={index}>
               {week.map((date, cell) => {
                 if (!date) return <td key={cell} />;
-                const { dots, more } = dayDots(sessions, date);
+                const { dots, more } = plain ? { dots: 0, more: 0 } : dayDots(sessions, date);
                 const selected = date === selectedDate;
                 const isToday = date === todayDate;
                 return (
@@ -66,15 +66,52 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
   );
 }
 
-/** Week ACTIVITIES panel: Orientation/Tasting and Training counts for the displayed week. */
-export function ActivitiesPanel({ counts }) {
+/** Minimalist Week side box: uppercase title with a rule, then label/value rows. */
+function WeekSideBox({ title, rows }) {
   return (
-    <div className="rounded-[14px] border border-line p-[10px] [background:color-mix(in_srgb,_var(--panel)_94%,_transparent)]">
-      <h3 className="text-muted text-[10px] font-[750] tracking-[.07em] uppercase mb-[8px]">Activities</h3>
-      <ul className="grid gap-[6px] list-none p-0 m-0">
-        <li className="flex items-center justify-between text-[12px] text-text-secondary">Orientation/Tasting <strong className="text-text">{counts?.orientation ?? 0}</strong></li>
-        <li className="flex items-center justify-between text-[12px] text-text-secondary">Training <strong className="text-text">{counts?.training ?? 0}</strong></li>
+    <div className="rounded-[4px] border border-[#3a4560] p-[18px] [background:#070b14]">
+      <h3 className="text-[#e5e7eb] text-[20px] font-[800] uppercase pb-[10px] mb-[16px] border-b border-[#3a4560]">{title}</h3>
+      <ul className="grid gap-[14px] list-none p-0 m-0">
+        {rows.map((row) => (
+          <li key={row.key} className="flex items-center justify-between">
+            {row.onClick ? (
+              <button type="button" aria-pressed={row.active} onClick={row.onClick} className={`w-full flex items-center justify-between [background:transparent] border-0 p-0 cursor-pointer text-[#9ca3af] hover:text-[#e5e7eb] ${row.active ? 'text-[#e5e7eb]' : ''}`}>
+                <span className="text-[16px] font-[600] uppercase">{row.label}:</span>
+                <strong className="text-[#e5e7eb] text-[22px] font-[800]">{row.value}</strong>
+              </button>
+            ) : (
+              <>
+                <span className="text-[16px] font-[600] uppercase text-[#9ca3af]">{row.label}:</span>
+                <strong className="text-[#e5e7eb] text-[22px] font-[800]">{row.value}</strong>
+              </>
+            )}
+          </li>
+        ))}
       </ul>
+    </div>
+  );
+}
+
+/** Week side panels: Activities counts, then Status counts (same data as the Day status list). */
+export function WeekSidePanels({ activityCounts, statusCounts, showCompleted = false, onToggleCompleted }) {
+  return (
+    <div className="flex flex-col gap-[16px]">
+      <WeekSideBox
+        title="Activities"
+        rows={[
+          { key: 'orientation', label: 'Orientation/Tasting', value: activityCounts?.orientation ?? 0 },
+          { key: 'training', label: 'Training', value: activityCounts?.training ?? 0 },
+        ]}
+      />
+      <WeekSideBox
+        title="Status"
+        rows={SESSION_STATUSES.map((item) => ({
+          key: item.value,
+          label: item.label,
+          value: statusCounts?.[item.value] ?? 0,
+          ...(item.value === 'completed' && onToggleCompleted ? { onClick: onToggleCompleted, active: showCompleted } : {}),
+        }))}
+      />
     </div>
   );
 }
