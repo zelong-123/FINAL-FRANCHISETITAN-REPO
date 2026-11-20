@@ -4,6 +4,7 @@ import {
   FaArrowUpWideShort,
   FaChartLine,
   FaCircleInfo,
+  FaGear,
   FaPlus,
   FaRotateLeft,
   FaTriangleExclamation,
@@ -11,12 +12,12 @@ import {
 } from 'react-icons/fa6';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Area,
   Bar,
   CartesianGrid,
   ComposedChart,
-  LabelList,
+  Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -31,36 +32,53 @@ import { useAuth } from '../context/AuthContext';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
 import ForecastingSections from '../components/analytics/ForecastingSections';
 
+// Estimated Requirement, daily model. Descriptive = what happened; Predictive = what to order. Estimates are
+// statistical and rule-based (WMA / SES / Croston on past usage), never AI, and never create an order.
+
 const NOTE = 'Estimates are based on past usage to support decisions. They are not guarantees.';
-
-const RISK_LABEL = {
-  runs_out_soon: 'Run out soon',
-  watch: 'Watch',
-  ok: 'OK',
-};
-
-const WEEK_STATUS_LABEL = {
-  included: 'Included',
-  partly_closed: 'Partly closed',
-  closed: 'Closed',
-  no_records: 'No records',
-  excluded: 'Manually excluded',
-  not_yet_open: 'Not yet open',
-  not_yet_stocked: 'Not yet stocked',
-  incomplete: 'Current week',
-};
-
-const RISK_ORDER = { runs_out_soon: 0, watch: 1, ok: 2 };
 const ALL_BRANCHES = '__all';
-const TREND_ORDER ={ rising: 0, stable: 1, falling: 2, insufficient: 3 };
+const HORIZONS = [{ value: 7, label: '1 week' }, { value: 14, label: '2 weeks' }, { value: 30, label: '1 month' }];
+
+const STATUS_LABEL = { low_cover: 'Low cover', normal: 'Normal', overstocked: 'Overstocked', no_estimate: 'No estimate' };
+const STATUS_CLASS = { low_cover: 'er-runs_out_soon', normal: 'er-ok', overstocked: 'er-watch', no_estimate: '' };
+const STATUS_ORDER = { low_cover: 0, normal: 1, overstocked: 2, no_estimate: 3 };
+const PATTERN_LABEL = { smooth: 'Smooth', erratic: 'Erratic', intermittent: 'Intermittent', lumpy: 'Lumpy' };
+const DAY_LABEL = {
+  open: 'Counted', closed: 'Branch closed', excluded: 'Week excluded', no_records: 'No records that day', not_yet_open: 'Before opening', not_yet_stocked: 'Not yet stocked',
+};
+
+const TABLE_WRAP = 'table-wrap overflow-x-auto';
+const TABLE = 'er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]';
+const TAG = 'er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px]';
+const METHOD_TAG = 'inline-flex items-center p-[2px_9px] rounded-[999px] text-[11px] font-[700] border border-[color:color-mix(in_srgb,_var(--accent)_45%,_transparent)] [background:color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent-text whitespace-nowrap';
+const CARD = 'flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11.5px]';
+const CARD_LABEL = 'text-muted text-[11.5px] tracking-[.03em] uppercase';
+const GHOST = 'ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]';
+const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] disabled:opacity-60';
+const SECTION = 'mt-[18px] [&_h3]:m-[0_0_8px] [&_h3]:text-[13px] [&_h3]:text-text';
 
 const precisionOf = (item) => Math.max(0, Math.min(3, Number(item?.unit_precision ?? 2)));
-
 function quantity(value, item) {
   if (value === null || value === undefined) return '—';
   return `${formatNumber(value, precisionOf(item))} ${item?.unit || ''}`.trim();
 }
-
+const plainNumber = (value, item) => (value === null || value === undefined ? '—' : formatNumber(value, precisionOf(item)));
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const shortDate = (iso) => (iso ? `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}` : '—');
+function addDays(isoDate, days) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+const mondayOf = (iso) => addDays(iso, -((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7));
+/** The current Monday–Sunday week and the 11 before it (oldest first), for the exclusions panel. */
+function recentWeeks(today) {
+  const current = mondayOf(today || new Date().toISOString().slice(0, 10));
+  return Array.from({ length: 12 }, (_, i) => {
+    const start = addDays(current, -7 * (11 - i));
+    return { week_start: start, week_end: addDays(start, 6) };
+  });
+}
 function shortWeek(week) {
   const start = week?.week_start || '';
   const end = week?.week_end || '';
@@ -68,7 +86,7 @@ function shortWeek(week) {
   return end ? `${start.slice(5)} – ${end.slice(5)}` : start.slice(5);
 }
 
-function SortHeader({ label, sortKey, sort, onSort, align = 'left' }) {
+function SortHeader({ label, sortKey, sort, onSort, align = 'left', sub }) {
   const active = sort.key === sortKey;
   const Icon = active && sort.dir === 'desc' ? FaArrowDownWideShort : FaArrowUpWideShort;
   return (
@@ -82,318 +100,128 @@ function SortHeader({ label, sortKey, sort, onSort, align = 'left' }) {
         {label}
         <Icon aria-hidden="true" />
       </button>
+      {sub && <small className="block text-muted text-[10.5px] font-[400]">{sub}</small>}
     </th>
   );
 }
 
-function EstimateCards({ summary, settings }) {
+function TrendText({ trend }) {
+  if (!trend || trend.direction === 'insufficient') return <span className="text-muted text-[11.5px]">Not enough history</span>;
+  if (trend.direction === 'flat') return <span>Flat</span>;
+  const pct = formatNumber(Math.abs(trend.change_percent ?? 0), 0);
+  return <span className={trend.direction === 'up' ? 'er-trend-rising font-[600]' : 'er-trend-falling font-[600]'}>{trend.direction === 'up' ? `Up ${pct}%` : `Down ${pct}%`}</span>;
+}
+
+function DescriptiveCards({ summary }) {
   if (!summary) return null;
+  const left = summary.days_excluded || {};
+  const split = [left.closed ? `${left.closed} closed` : null, left.excluded ? `${left.excluded} excluded` : null, left.no_records ? `${left.no_records} no records` : null].filter(Boolean).join(' · ');
   return (
     <div className="grid grid-cols-[repeat(auto-fit,_minmax(190px,_1fr))] gap-3 mb-4">
-      <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11.5px]">
-        <span className="text-muted text-[11.5px] tracking-[.03em] uppercase">Items tracked</span>
-        <strong>{formatNumber(summary.items_tracked)}</strong>
-        <small>Raw materials with production history</small>
-      </article>
-      <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11.5px] later:[&_strong]:text-danger-text">
-        <span className="text-muted text-[11.5px] tracking-[.03em] uppercase">Run out within {formatNumber(settings?.runs_out_days ?? 5)} days</span>
-        <strong>{formatNumber(summary.runs_out_soon)}</strong>
-        <small>Based on current on-hand stock</small>
-      </article>
-      <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11.5px] later-2:[&_strong]:text-[color:var(--warning-text)]">
-        <span className="text-muted text-[11.5px] tracking-[.03em] uppercase">Watch</span>
-        <strong>{formatNumber(summary.watch)}</strong>
-        <small>Under {formatNumber(settings?.watch_days ?? 10)} days of stock</small>
-      </article>
-      <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11.5px] later-3:[&_strong]:text-success-text">
-        <span className="text-muted text-[11.5px] tracking-[.03em] uppercase">Reorders suggested</span>
-        <strong>{formatNumber(summary.reorders_suggested)}</strong>
-        <small>Read-only hint — nothing is ordered</small>
-      </article>
-      <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11.5px]">
-        <span className="text-muted text-[11.5px] tracking-[.03em] uppercase">Weeks excluded</span>
-        <strong>{formatNumber(summary.weeks_excluded)}</strong>
-        <ul className="[list-style:none] m-[2px_0_0] p-0 grid gap-[2px] [&_li]:flex [&_li]:justify-between [&_li]:gap-2 [&_li]:text-muted [&_li]:text-[11.5px] [&_b]:text-text-secondary [&_b]:font-[600]">
-          {(summary.excluded_breakdown || []).map((row) => (
-            <li key={row.status}>
-              <span>{row.label}</span>
-              <b>{formatNumber(row.weeks)}</b>
-            </li>
-          ))}
-        </ul>
-      </article>
+      <article className={CARD}><span className={CARD_LABEL}>Items tracked</span><strong>{formatNumber(summary.items_tracked)}</strong><small>raw materials</small></article>
+      <article className={CARD}><span className={CARD_LABEL}>Stale counts</span><strong>{formatNumber(summary.stale_counts)}</strong><small>counted {formatNumber(summary.stale_count_days)}+ days ago, or never</small></article>
+      <article className={CARD}><span className={CARD_LABEL}>Avg zero-usage days</span><strong>{summary.avg_zero_days_percent === null ? '—' : `${formatNumber(summary.avg_zero_days_percent, 0)}%`}</strong><small>across items</small></article>
+      <article className={CARD}><span className={CARD_LABEL}>Days excluded</span><strong>{formatNumber(left.total ?? 0)}</strong><small>{split || 'none in the window'}</small></article>
     </div>
   );
 }
 
-const GAP_SHORT = {
-  closed: 'Closed',
-  no_records: 'No records',
-  excluded: 'Excluded',
-  not_yet_open: 'Not open',
-  not_yet_stocked: 'Not stocked',
-  incomplete: 'This week',
-};
-
-const TREND_TEXT = {
-  rising: { arrow: '↑', label: 'Up' },
-  falling: { arrow: '↓', label: 'Down' },
-  stable: { arrow: '→', label: 'Stable' },
-  insufficient: { arrow: '', label: 'Not enough history for trend' },
-};
-
-const REORDER_STATUS_LABEL = { normal: 'Normal', low: 'Low', critical: 'Critical' };
-
-function TrendCell({ trend }) {
-  const text = TREND_TEXT[trend?.direction] || TREND_TEXT.insufficient;
-  if (trend?.direction === 'insufficient' || !trend) {
-    return <span className="inline-flex items-center gap-1 [&_b]:text-[13px] text-muted later:font-[400] text-[11.5px] later:whitespace-normal">{text.label}</span>;
-  }
-  const pct = trend.change_percent === null || trend.change_percent === undefined
-    ? ''
-    : ` ${trend.change_percent > 0 ? '+' : ''}${formatNumber(trend.change_percent, 0)}%`;
+function PredictiveCards({ summary }) {
+  if (!summary) return null;
+  const mix = summary.method_mix || {};
   return (
-    <span className={`inline-flex items-center gap-1 whitespace-nowrap font-[600] [&_b]:text-[13px] er-trend-${trend.direction}`}>
-      <b aria-hidden="true">{text.arrow}</b> {text.label}{pct}
+    <div className="grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-3 mb-4">
+      <article className={CARD}><span className={CARD_LABEL}>Items tracked</span><strong>{formatNumber(summary.items_tracked)}</strong><small>raw materials</small></article>
+      <article className={`${CARD} later:[&_strong]:text-danger-text`}><span className={CARD_LABEL}>Low cover</span><strong>{formatNumber(summary.low_cover)}</strong><small>under {formatNumber(summary.low_cover_days)} days</small></article>
+      <article className={`${CARD} later-2:[&_strong]:text-[color:var(--warning-text)]`}><span className={CARD_LABEL}>Overstocked</span><strong>{formatNumber(summary.overstocked)}</strong><small>over {formatNumber(summary.overstock_days)} days</small></article>
+      <article className={`${CARD} later-3:[&_strong]:text-success-text`}><span className={CARD_LABEL}>Reorders suggested</span><strong>{formatNumber(summary.reorders_suggested)}</strong><small>covers {formatNumber(summary.cover_days)} days</small></article>
+      <article className={CARD}><span className={CARD_LABEL}>Method mix</span><strong>{`${mix.wma ?? 0} / ${mix.ses ?? 0} / ${mix.croston ?? 0}`}</strong><small>WMA / SES / Croston</small></article>
+    </div>
+  );
+}
+
+function MethodCell({ item }) {
+  if (!item.ready) return <span className="text-muted text-[11.5px]">{item.not_ready_reason || 'No estimate'}</span>;
+  return (
+    <span className="inline-flex flex-col items-end gap-[3px]">
+      <span className={METHOD_TAG}>{item.method_label}</span>
+      <small className="text-muted text-[11px]">{PATTERN_LABEL[item.pattern]}{item.low_confidence && <b className={`${TAG} er-watch ml-[4px] text-[10px]! p-[0_6px]!`}>Low confidence</b>}</small>
     </span>
   );
 }
 
-function addDays(isoDate, days) {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d + days));
-  return date.toISOString().slice(0, 10);
-}
-
-/**
- * Rows for the 12-week chart plus four weeks ahead. Weeks left out of the
- * estimate have no "actual" value (a gap, never a zero) and carry a grey
- * labelled bar instead.
- */
-function buildChartRows(item) {
-  const weeks = item?.weeks || [];
-  const range = item?.normal_range;
-  const band = range ? [range.low, range.high] : null;
-  const average = item?.weighted_average;
-  const peak = Math.max(
-    1,
-    ...weeks.map((week) => Number(week.usage) || 0),
-    range?.high ?? 0,
-    average ?? 0,
-  );
-  const top = peak * 1.15;
-
-  const rows = weeks.map((week) => ({
-    key: week.week_start,
-    label: week.week_start.slice(5),
-    week,
-    actual: week.is_included ? week.usage : null,
-    gap: week.is_included ? null : top,
-    gapLabel: week.is_included ? '' : (GAP_SHORT[week.status] || week.status),
-    band,
-    projection: null,
+// ---- Chart ----
+function chartRows(detail, predictive) {
+  const item = detail?.item;
+  if (!item) return [];
+  const rows = (item.days || []).map((d) => ({
+    offset: d.offset,
+    date: d.date,
+    status: d.status,
+    usage: d.status === 'open' ? d.usage : null,
+    gap: d.status !== 'open' && d.status !== 'not_yet_open' && d.status !== 'not_yet_stocked' ? 1 : null,
+    avg7: d.avg7,
+    reason: d.reason,
   }));
-
-  if (average !== null && average !== undefined && rows.length > 0) {
-    const last = rows[rows.length - 1];
-    // The dashed estimate starts at the current (incomplete) week and runs four weeks ahead.
-    if (last.week.status === 'incomplete') last.projection = average;
-    for (let i = 1; i <= 4; i += 1) {
-      const start = addDays(last.key, 7 * i);
-      rows.push({
-        key: start,
-        label: start.slice(5),
-        week: null,
-        future: true,
-        actual: null,
-        gap: null,
-        gapLabel: '',
-        band,
-        projection: average,
-      });
-    }
-  }
-
-  return { rows, top };
+  if (predictive && item.ready) {
+    for (const point of detail.forecast || []) rows.push({ offset: point.offset, forecast: point.rate, date: addDays(detail.today, point.offset), status: 'forecast' });
+  } else rows.push({ offset: 0, date: detail.today, status: 'today' });
+  return rows;
 }
 
-function UsageDot({ cx, cy, payload }) {
-  if (cx === undefined || cy === undefined || payload?.actual === null || payload?.actual === undefined) return null;
-  const flag = payload.week?.flagged;
-  const key = `dot-${payload.key}`;
-  if (flag === 'spike') {
-    return (
-      <g key={key}>
-        <path d={`M${cx},${cy - 7} L${cx + 6},${cy + 4} L${cx - 6},${cy + 4} Z`} fill="var(--danger)" stroke="var(--panel)" strokeWidth={1.5} />
-        <text x={cx} y={cy - 11} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--danger-text)">Spike</text>
-      </g>
-    );
-  }
-  if (flag === 'dip') {
-    return (
-      <g key={key}>
-        <path d={`M${cx},${cy + 7} L${cx + 6},${cy - 4} L${cx - 6},${cy - 4} Z`} fill="var(--warning)" stroke="var(--panel)" strokeWidth={1.5} />
-        <text x={cx} y={cy + 19} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--warning-text)">Dip</text>
-      </g>
-    );
-  }
-  if (payload.week?.status === 'partly_closed') {
-    return <circle key={key} cx={cx} cy={cy} r={4} fill="var(--panel)" stroke="var(--warning)" strokeWidth={2} />;
-  }
-  return <circle key={key} cx={cx} cy={cy} r={3} fill="var(--accent)" stroke="var(--panel)" strokeWidth={1.5} />;
-}
-
-function WeekTooltip({ active, payload, item }) {
+function DayTooltip({ active, payload, item }) {
   if (!active || !payload?.length) return null;
   const row = payload[0].payload;
-  if (row.future) {
-    return (
-      <div className="grid gap-[2px] p-[10px_12px] [background:var(--panel-3)] border border-line-strong rounded-[10px] text-[11.5px] text-text-secondary [box-shadow:var(--shadow-md)] later-4:[&_strong]:text-text later-2:[&_strong]:text-[12px]">
-        <strong>Week of {row.key.slice(5)}</strong>
-        <span>Estimated weekly use: {quantity(item?.weighted_average, item)}</span>
-        {item?.normal_range && <span>Normal range: {quantity(item.normal_range.low, item)} – {quantity(item.normal_range.high, item)}</span>}
-        <span>An estimate, not a guarantee.</span>
-      </div>
-    );
-  }
-  const week = row.week;
   return (
-    <div className="grid gap-[2px] p-[10px_12px] [background:var(--panel-3)] border border-line-strong rounded-[10px] text-[11.5px] text-text-secondary [box-shadow:var(--shadow-md)] later-4:[&_strong]:text-text later-2:[&_strong]:text-[12px]">
-      <strong>{shortWeek(week)}</strong>
-      <span>Status: {WEEK_STATUS_LABEL[week.status] || week.status}</span>
-      <span>Recorded usage: {quantity(week.usage, item)}</span>
-      {week.is_included && week.adjusted_usage !== week.usage && <span>Used in estimate: {quantity(week.adjusted_usage, item)}</span>}
-      {week.note && <span>{week.note}</span>}
-      {week.closed_days > 0 && <span>Closed days: {week.closed_days} of 7</span>}
-      {week.reason && <span>{week.reason}</span>}
+    <div className="p-[8px_10px] border border-line-strong rounded-[10px] [background:var(--panel)] text-[12px] text-text-secondary [box-shadow:var(--shadow-md)]">
+      <strong className="block text-text">{shortDate(row.date)} ({row.offset > 0 ? `+${row.offset}` : row.offset})</strong>
+      {row.status === 'forecast' ? <span>Forecast {quantity(row.forecast, item)} per day</span>
+        : row.status === 'open' ? <span>Used {quantity(row.usage, item)}{row.avg7 !== null && row.avg7 !== undefined ? ` · 7-day avg ${quantity(row.avg7, item)}` : ''}</span>
+          : row.status === 'today' ? <span>Today (left out: still running)</span>
+            : <span>{DAY_LABEL[row.status] || row.status}{row.reason ? `: ${row.reason}` : ''}</span>}
     </div>
   );
 }
 
-function ChartLegend({ hasBand, hasAverage }) {
+function UsageChart({ detail, predictive }) {
+  const item = detail.item;
+  const rows = chartRows(detail, predictive);
+  const max = Math.max(1, ...rows.map((r) => Math.max(r.usage ?? 0, r.avg7 ?? 0, r.forecast ?? 0)));
+  const data = rows.map((r) => ({ ...r, gap: r.gap ? max : null }));
+  const methodLabel = item.method_label ? `Forecast (${item.method_label})` : 'Forecast';
   return (
-    <ul className="flex flex-wrap gap-[6px_16px] [list-style:none] m-[4px_0_0] p-0 text-text-secondary text-[11.5px] later:[&_li]:inline-flex [&_li]:items-center later-2:[&_li]:gap-[6px]" aria-hidden="true">
-      <li><i className="inline-block flex-none w-[18px] h-0 border-t-[2.5px] border-t-accent" /> Recorded usage</li>
-      <li><i className="inline-block flex-none w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[10px] border-b-danger" /> Spike</li>
-      <li><i className="inline-block flex-none w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[10px] border-t-warning" /> Dip</li>
-      <li><i className="inline-block flex-none w-[9px] h-[9px] rounded-[50%] border-[2px] border-warning" /> Partly closed</li>
-      {hasBand && <li><i className="inline-block flex-none w-[16px] h-[10px] rounded-[3px] later:[background:color-mix(in_srgb,_var(--accent)_28%,_transparent)] border border-[color:color-mix(in_srgb,_var(--accent)_45%,_transparent)]" /> Normal range</li>}
-      {hasAverage && <li><i className="inline-block flex-none w-[18px] h-0 [border-top:2.5px_dashed_var(--accent-2)]" /> Estimated average (next 4 weeks)</li>}
-      <li><i className="inline-block flex-none w-[10px] h-[12px] rounded-[2px] [background:var(--panel-3)] border border-line-strong" /> Left out of the estimate</li>
-    </ul>
+    <div className="h-[300px] m-[10px_0_4px]" role="img" aria-label={`Daily usage of ${item.name}${predictive && item.ready ? ' with the forecast' : ''}`}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 18, left: 0 }} barCategoryGap="12%">
+          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="offset" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(v) => (v > 0 ? `+${v}` : String(v))} tick={{ fill: 'var(--muted)', fontSize: 11 }}
+            label={{ value: 'Days from today', position: 'insideBottom', offset: -10, fill: 'var(--muted)', fontSize: 11 }} allowDecimals={false} />
+          <YAxis tick={{ fill: 'var(--muted)', fontSize: 11 }} width={44} domain={[0, 'auto']} />
+          <Tooltip content={<DayTooltip item={item} />} />
+          <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, color: 'var(--text-secondary)' }} />
+          <Bar dataKey="gap" name="Left out (closed, excluded, no records)" fill="var(--surface-strong)" fillOpacity={0.55} isAnimationActive={false} legendType="square" />
+          <Bar dataKey="usage" name="Actual daily usage" fill="var(--muted)" fillOpacity={0.55} isAnimationActive={false} />
+          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+          {predictive && item.ready && <Line dataKey="forecast" name={methodLabel} stroke="var(--warning-text)" strokeWidth={2} strokeDasharray="6 4" dot={false} isAnimationActive={false} />}
+          <ReferenceLine x={0} stroke="var(--muted)" strokeDasharray="2 3" label={{ value: predictive && item.ready ? 'Today | Forecast' : 'Today', position: 'top', fill: 'var(--muted)', fontSize: 11 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
-/**
- * Keeps a drawing problem inside the chart box: the rest of the detail view
- * (facts, tables, the chart-as-table) still renders instead of a blank modal.
- */
-class ChartBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { error };
-  }
-
-  componentDidCatch(error, info) {
-    console.error('Estimated requirement chart error:', error, info);
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <Notice type="error">
-        The chart could not be drawn ({String(this.state.error?.message || this.state.error)}). The same weeks are listed in “Show the chart as a table” below.
-      </Notice>
-    );
-  }
-}
-
-function UsageChart({ item }) {
-  const { rows, top } = useMemo(() => buildChartRows(item), [item]);
-  if (rows.length === 0) return <EmptyState label="No weeks to chart yet." detail="Production history will appear here." />;
-
-  return (
-    <figure className="m-[6px_0_0]">
-      <ChartBoundary>
-      <div className="m-[14px_0_6px]" role="img" aria-label={`Weekly usage of ${item?.name} for the last 12 weeks with the estimate for the next 4 weeks. A table version follows.`}>
-        {/* initialDimension: draw at a sane size on the first frame, even while
-            the modal is still animating in and has not been measured yet. */}
-        <ResponsiveContainer width="100%" height={280} minWidth={0} initialDimension={{ width: 900, height: 280 }}>
-          <ComposedChart data={rows} margin={{ top: 18, right: 12, bottom: 0, left: -8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: 'var(--muted)', fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-            <YAxis domain={[0, top]} tick={{ fill: 'var(--muted)', fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(value) => formatNumber(value, 0)} />
-            <Tooltip content={<WeekTooltip item={item} />} cursor={{ fill: 'var(--hover)' }} />
-            <Bar dataKey="gap" fill="var(--panel-3)" fillOpacity={0.7} isAnimationActive={false} barSize={18}>
-              <LabelList dataKey="gapLabel" position="insideTop" angle={-90} offset={28} style={{ fill: 'var(--muted)', fontSize: 10, fontWeight: 600 }} />
-            </Bar>
-            {item?.normal_range && (
-              <Area dataKey="band" type="linear" stroke="var(--accent)" strokeOpacity={0.35} strokeWidth={1} fill="var(--accent)" fillOpacity={0.2} isAnimationActive={false} activeDot={false} />
-            )}
-            <Line dataKey="actual" type="linear" stroke="var(--accent)" strokeWidth={2.25} dot={<UsageDot />} activeDot={false} connectNulls={false} isAnimationActive={false} />
-            <Line dataKey="projection" type="linear" stroke="var(--accent-2)" strokeWidth={2} strokeDasharray="6 5" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      </ChartBoundary>
-      <ChartLegend hasBand={Boolean(item?.normal_range)} hasAverage={item?.weighted_average !== null && item?.weighted_average !== undefined} />
-
-      <details className="p-[12px_14px] [background:var(--surface-subtle)] border border-line rounded-[10px] [&_summary]:cursor-pointer [&_summary]:text-text [&_summary]:text-[12.5px] [&_summary]:font-[600] [&_ul]:m-[10px_0_0] [&_ul]:pl-[18px] [&_ul]:text-text-secondary [&_ul]:text-[11.5px] [&_ul]:grid [&_ul]:gap-[5px] later:mt-[10px] [&_.table-wrap]:mt-[10px] [&_.table-wrap]:max-h-[320px] [&_.table-wrap]:overflow-auto">
-        <summary>Show the chart as a table</summary>
-        <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-          <table className="er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]">
-            <thead>
-              <tr><th>Week</th><th>Status</th><th className="er-th-right">Recorded</th><th className="er-th-right">Used in estimate</th><th>Note</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.key}>
-                  <td>{row.future ? `Week of ${row.key.slice(5)}` : shortWeek(row.week)}</td>
-                  <td>{row.future ? 'Estimate' : (WEEK_STATUS_LABEL[row.week.status] || row.week.status)}</td>
-                  <td className="text-right">{row.future ? '—' : quantity(row.week.usage, item)}</td>
-                  <td className="text-right">
-                    {row.future ? quantity(row.projection, item) : row.week.is_included ? quantity(row.week.adjusted_usage, item) : 'Left out'}
-                  </td>
-                  <td>{row.future ? 'Average repeated, not a guarantee' : (row.week.note || row.week.reason || '')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    </figure>
-  );
-}
-
-function OneOffExclude({ locationId, item, week, onDone }) {
+function OneOffExclude({ locationId, item, day, onDone }) {
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState(`One-off event (${week.note || week.flagged})`);
+  const [reason, setReason] = useState(`One-off event (${day.flag === 'spike' ? 'spike' : 'dip'} on ${shortDate(day.date)})`);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  if (!open) {
-    return (
-      <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" onClick={() => setOpen(true)}>
-        Exclude (one-off event)
-      </button>
-    );
-  }
-
+  if (!open) return <button type="button" className={GHOST} onClick={() => setOpen(true)}>Exclude its week</button>;
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
     setError('');
     try {
-      await api.post('/estimated-requirement/exclusions', {
-        location_id: locationId,
-        material_id: item.material_id,
-        week_start: week.week_start,
-        reason: reason.trim(),
-      });
+      await api.post('/estimated-requirement/exclusions', { location_id: locationId, material_id: item.material_id, week_start: mondayOf(day.date), reason: reason.trim() });
       setOpen(false);
       onDone();
     } catch (requestError) {
@@ -402,108 +230,83 @@ function OneOffExclude({ locationId, item, week, onDone }) {
       setBusy(false);
     }
   };
-
   return (
     <form className="flex flex-wrap gap-[6px] items-center min-w-[240px] [&_input]:flex-[1_1_160px] [&_input]:min-w-0" onSubmit={submit}>
       <input type="text" value={reason} required minLength={3} maxLength={500} aria-label="Reason for excluding this week" onChange={(event) => setReason(event.target.value)} />
-      <button type="submit" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={busy}>Exclude</button>
-      <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      <button type="submit" className={PRIMARY} disabled={busy}>Exclude</button>
+      <button type="button" className={GHOST} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
       {error && <small className="block mt-[6px] text-danger-text">{error}</small>}
     </form>
   );
 }
 
-function EstimateDetail({ locationId, materialId, horizon, dips, canExclude, onClose, onChanged }) {
+function EstimateDetail({ locationId, materialId, horizon, dips, view, canExclude, onClose, onChanged }) {
   const remote = useRemote(
-    () => api.get('/estimated-requirement/detail', {
-      location_id: locationId || undefined,
-      material_id: materialId,
-      horizon,
-      dips,
-    }),
+    () => api.get('/estimated-requirement/detail', { location_id: locationId || undefined, material_id: materialId, horizon, dips }),
     [locationId, materialId, horizon, dips],
   );
-
   const detail = remote.data?.data;
   const item = detail?.item;
+  const predictive = view === 'predictive';
   const resolvedLocation = detail?.location?.id ?? locationId;
-
-  const afterExclude = () => {
-    void remote.reload({ silent: true });
-    onChanged?.();
-  };
+  const afterExclude = () => { void remote.reload({ silent: true }); onChanged?.(); };
+  const title = item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Estimated requirement';
 
   return (
-    <Modal
-      title={item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Estimated requirement'}
-      onClose={onClose}
-      size="wide"
-    >
-      {remote.loading ? <LoadingState label="Loading the 12-week history…" /> : remote.error ? (
-        <Notice type="error">{remote.error}</Notice>
-      ) : (
+    <Modal title={title} onClose={onClose} size="wide">
+      {remote.loading ? <LoadingState label="Loading the daily history…" /> : remote.error ? <Notice type="error">{remote.error}</Notice> : (
         <>
-          <p className="er-note-inline flex items-center gap-2 m-[0_0_14px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {detail?.note || NOTE}</p>
+          <p className="er-note-inline flex items-center gap-2 m-[0_0_6px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {detail?.note || NOTE}</p>
+          <p className="m-[0_0_12px] text-muted text-[12px]">{detail?.freshness}</p>
 
-          <div className="grid grid-cols-[repeat(auto-fit,_minmax(150px,_1fr))] gap-[10px] m-[14px_0] [&>div]:p-[10px_12px] [&>div]:[background:var(--surface-subtle)] [&>div]:border [&>div]:border-line [&>div]:rounded-[10px] [&_span]:block [&_span]:text-muted [&_span]:text-[11px] later-4:[&_strong]:text-text later-3:[&_strong]:text-[13.5px]">
-            <div><span>Average weekly usage</span><strong>{quantity(item?.weighted_average, item)}</strong></div>
-            <div><span>Normal range</span><strong>{item?.normal_range ? `${quantity(item.normal_range.low, item)} – ${quantity(item.normal_range.high, item)}` : '—'}</strong></div>
-            <div><span>Trend</span><strong><TrendCell trend={item?.trend} /></strong></div>
-            <div><span>Included weeks</span><strong>{formatNumber(item?.included_weeks)}</strong></div>
-            <div><span>Days left</span><strong>{item?.days_left === null || item?.days_left === undefined ? (item?.ready ? 'No recent usage' : '—') : formatNumber(item.days_left, 1)}</strong></div>
-            <div><span>Estimated need ({horizon} wk)</span><strong>{quantity(item?.estimated_need, item)}</strong></div>
-            <div><span>Suggested reorder</span><strong>{quantity(item?.suggested_reorder, item)}</strong></div>
-            <div><span>On hand / on order</span><strong>{quantity(item?.on_hand, item)} / {quantity(item?.on_order, item)}</strong></div>
+          <div className="flex flex-wrap items-center gap-[10px] m-[0_0_8px] text-[13px] text-text-secondary">
+            {predictive && item?.ready && <span className={METHOD_TAG}>{item.method_label}</span>}
+            <span>On hand <strong className="text-text">{quantity(item?.on_hand, item)}</strong> · On order <strong className="text-text">{quantity(item?.on_order, item)}</strong></span>
+            {predictive && item?.ready && item.days_of_cover !== null && (
+              <span>· Days of cover {formatNumber(item.days_of_cover, 1)} (incl. on order) · {formatNumber(item.days_on_hand, 1)} on hand only</span>
+            )}
           </div>
-
           {item?.on_order_note && <Notice type="info">{item.on_order_note}.{item?.warehouse_product?.note ? ` ${item.warehouse_product.note}` : ''}</Notice>}
 
-          {item?.ready ? <UsageChart item={item} /> : (
-            <div className="m-[14px_0_4px] p-[6px] border border-dashed border-line-strong rounded-[12px]">
-              <EmptyState
-                label="Not enough data yet"
-                detail={`This item has ${formatNumber(item?.included_weeks ?? 0)} included week${item?.included_weeks === 1 ? '' : 's'} so far. The chart and estimate appear after ${formatNumber(item?.needed_weeks ?? 0)} more week${item?.needed_weeks === 1 ? '' : 's'} of recorded usage — nothing is guessed until then.`}
-              />
-            </div>
+          <UsageChart detail={detail} predictive={predictive} />
+
+          {!predictive ? (
+            <section className={SECTION}>
+              <h3>How usage was summarized</h3>
+              <p className="m-0 text-text-secondary text-[13px] leading-[1.6]">{detail?.explanation?.descriptive}</p>
+            </section>
+          ) : (
+            <section className={SECTION}>
+              <h3>How this was worked out</h3>
+              {!item?.ready ? (
+                <p className="m-0 text-text-secondary text-[13px]">{item?.not_ready_reason}. No numbers are estimated until then; nothing is guessed.</p>
+              ) : (
+                <ol className="m-0 pl-[20px] grid gap-[6px] text-text-secondary text-[13px] leading-[1.55] [&_b]:text-text">
+                  {(detail?.explanation?.steps || []).map((step) => <li key={step.title}><b>{step.title}.</b> {step.text}</li>)}
+                </ol>
+              )}
+              {item?.ready && <p className="m-[8px_0_0] text-muted text-[12px]">Forecast error (one-step-ahead RMSE over {formatNumber(item.error_points)} days): {plainNumber(item.forecast_error, item)} {item.unit}.</p>}
+            </section>
           )}
 
-          <section className="mt-[18px] [&_h3]:m-[0_0_8px] [&_h3]:text-[13px] [&_h3]:text-text">
+          <section className={SECTION}>
             <h3>Dips and spikes</h3>
-            {item?.outliers?.status === 'insufficient_history' && <p className="text-muted text-[12px] m-[10px_0_0]">Dips and spikes are checked once there are {formatNumber(detail?.settings?.detection_weeks ?? 8)} included weeks.</p>}
-            {item?.outliers?.status === 'skipped_sparse' && <p className="text-muted text-[12px] m-[10px_0_0]">Not checked: more than half of the included weeks had no usage of this item.</p>}
-            {(detail?.dips_and_spikes || []).length === 0 ? (
-              item?.outliers?.status === 'ok' && <p className="text-muted text-[12px] m-[10px_0_0]">No week was flagged in this window.</p>
-            ) : (
-              <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-                <table className="er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]">
-                  <thead>
-                    <tr>
-                      <th>Week</th>
-                      <th className="er-th-right">Actual</th>
-                      <th className="er-th-right">Typical</th>
-                      <th className="er-th-right">Difference</th>
-                      <th>Note</th>
-                      {canExclude && <th><span className="absolute w-[1px] h-[1px] p-0 -m-[1px] overflow-hidden [clip:rect(0_0_0_0)] whitespace-nowrap border-0">Action</span></th>}
-                    </tr>
-                  </thead>
+            {item?.outliers?.status === 'insufficient_history' && <p className="text-muted text-[12px] m-0">Checked once there are {formatNumber(detail?.settings?.minimum_open_days ?? 14)} open days.</p>}
+            {item?.outliers?.status === 'skipped_sparse' && <p className="text-muted text-[12px] m-0">Not checked: more than half of the open days had no usage of this item.</p>}
+            {(detail?.dips_and_spikes || []).length === 0 ? (item?.outliers?.status === 'ok' && <p className="text-muted text-[12px] m-0">No day was flagged in this window.</p>) : (
+              <div className={TABLE_WRAP}>
+                <table className={TABLE}>
+                  <thead><tr><th>Day</th><th className="er-th-right">Recorded</th><th>Note</th>{canExclude && <th><span className="sr-only">Action</span></th>}</tr></thead>
                   <tbody>
-                    {(detail?.dips_and_spikes || []).map((week) => (
-                      <tr key={week.week_start}>
-                        <td>{shortWeek(week)}</td>
-                        <td className="text-right">{quantity(week.usage, item)}</td>
-                        <td className="text-right">{quantity(week.typical, item)}</td>
-                        <td className="text-right">{week.difference > 0 ? '+' : ''}{quantity(week.difference, item)}</td>
+                    {detail.dips_and_spikes.map((day) => (
+                      <tr key={day.date}>
+                        <td>{shortDate(day.date)}</td>
+                        <td className="text-right">{quantity(day.usage, item)}</td>
                         <td>
-                          <b className={`er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px] er-tag-${week.flagged}`}>{week.note || (week.flagged === 'spike' ? 'Spike' : 'Dip')}</b>
-                          <small className="block text-muted text-[11px]">
-                            {item?.outliers?.capped
-                              ? `Counted as ${quantity(week.adjusted_usage, item)} (capped)`
-                              : 'Counted as recorded'}
-                          </small>
+                          <b className={`${TAG} er-tag-${day.flag}`}>{day.flag === 'spike' ? 'Spike' : 'Dip'}</b>
+                          <small className="block text-muted text-[11px]">{item?.outliers?.capped ? `Counted as ${quantity(day.adjusted_usage, item)} (capped)` : 'Counted as recorded'}</small>
                         </td>
-                        {canExclude && (
-                          <td><OneOffExclude locationId={resolvedLocation} item={item} week={week} onDone={afterExclude} /></td>
-                        )}
+                        {canExclude && <td><OneOffExclude locationId={resolvedLocation} item={item} day={day} onDone={afterExclude} /></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -512,20 +315,18 @@ function EstimateDetail({ locationId, materialId, horizon, dips, canExclude, onC
             )}
           </section>
 
-          <section className="mt-[18px] [&_h3]:m-[0_0_8px] [&_h3]:text-[13px] [&_h3]:text-text">
-            <h3>Weeks left out of the estimate</h3>
-            {(detail?.excluded_weeks || []).length === 0 ? (
-              <p className="text-muted text-[12px] m-[10px_0_0]">Every week in this window is counted.</p>
-            ) : (
-              <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-                <table className="er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]">
-                  <thead><tr><th>Week</th><th>Why</th><th>Detail</th></tr></thead>
+          <section className={SECTION}>
+            <h3>Days left out of the estimate</h3>
+            {(detail?.left_out || []).length === 0 ? <p className="text-muted text-[12px] m-0">Every day in this window is counted.</p> : (
+              <div className={TABLE_WRAP}>
+                <table className={TABLE}>
+                  <thead><tr><th>Days</th><th>Why</th><th>Detail</th></tr></thead>
                   <tbody>
-                    {(detail?.excluded_weeks || []).map((week) => (
-                      <tr key={week.week_start}>
-                        <td>{shortWeek(week)}</td>
-                        <td><b className={`er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px] er-tag-${week.status}`}>{WEEK_STATUS_LABEL[week.status] || week.status}</b></td>
-                        <td>{week.reason || (week.status === 'no_records' ? 'Open, but nothing was recorded this week' : '')}</td>
+                    {detail.left_out.map((range) => (
+                      <tr key={`${range.status}-${range.from}`}>
+                        <td className="whitespace-nowrap">{range.from === range.to ? shortDate(range.from) : `${shortDate(range.from)} – ${shortDate(range.to)}`} <small className="text-muted">({range.days} day{range.days === 1 ? '' : 's'})</small></td>
+                        <td><b className={`${TAG} er-tag-${range.status}`}>{range.label}</b></td>
+                        <td>{range.reason}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -533,23 +334,71 @@ function EstimateDetail({ locationId, materialId, horizon, dips, canExclude, onC
               </div>
             )}
           </section>
-
-          <details className="mt-4 p-[12px_14px] [background:var(--surface-subtle)] border border-line rounded-[10px] [&_summary]:cursor-pointer [&_summary]:text-text [&_summary]:text-[12.5px] [&_summary]:font-[600] [&_ul]:m-[10px_0_0] [&_ul]:pl-[18px] [&_ul]:text-text-secondary [&_ul]:text-[11.5px] [&_ul]:grid [&_ul]:gap-[5px]">
-            <summary>How this is calculated</summary>
-            <ul>
-              <li>Weekly usage = raw materials used by production (voided production is left out, so refunded materials never count){detail?.settings?.include_manual_deductions === false ? '.' : ', plus manual deductions (spoilage, damage, corrections).'} Deliveries and stock increases are never usage. Weeks run Monday–Sunday in {detail?.timezone || 'Asia/Manila'}.</li>
-              <li>Weeks are left out (never counted as zero) when the branch was not yet open, the item was not yet stocked (before its first delivery or first use at this branch{item?.first_stocked_on ? `, ${item.first_stocked_on}` : ''}), the branch was closed for {formatNumber(detail?.settings?.closed_days_threshold ?? 4)}+ days, recorded nothing at all, a week was manually excluded, or it is the current week. After the item is first stocked, a week where the branch was open but used none of it is a real zero.</li>
-              <li>Average weekly usage weights the last 4 included weeks 1, 2, 3, 4 (oldest to newest).</li>
-              <li>Normal range = average ± one standard deviation of the last 8 included weeks (never below 0).</li>
-              <li>Trend compares the simple average of the last 4 included weeks with the 4 before: more than +{formatNumber(detail?.settings?.trend_threshold_percent ?? 10)}% is Up, more than −{formatNumber(detail?.settings?.trend_threshold_percent ?? 10)}% is Down.</li>
-              <li>Dips and spikes are weeks outside Q1 − 1.5×IQR / Q3 + 1.5×IQR (needs 8 included weeks, at most half of them zero). {detail?.dips_mode === 'raw' ? 'They are currently used as recorded.' : 'They are currently capped to the nearest bound for the maths only — the recorded figure is never changed.'}</li>
-              <li>Days left = on hand ÷ (average ÷ 7). Estimated need = average × {horizon} week{horizon === 1 ? '' : 's'}.</li>
-              <li>Suggested reorder = need + safety stock (1 standard deviation) − on hand − on order, rounded up to {item?.pack_size ? `packs of ${formatNumber(item.pack_size, 3)} ${item.unit}` : 'whole units'}. It is a hint only; nothing is ordered automatically.</li>
-              <li>Fewer than {formatNumber(detail?.settings?.minimum_included_weeks ?? 4)} included weeks: no estimate is shown.</li>
-            </ul>
-            <p className="text-muted text-[12px] m-[10px_0_0]">{NOTE}</p>
-          </details>
+          <p className="text-muted text-[12px] m-[14px_0_0]">Statistical, rule-based estimate from recorded usage (no AI). {NOTE}</p>
         </>
+      )}
+    </Modal>
+  );
+}
+
+const SETTING_FIELDS = [
+  { key: 'lookback_open_days', label: 'History window (open days)', min: 14, max: 90, step: 1 },
+  { key: 'minimum_open_days', label: 'Minimum open days for an estimate', min: 7, max: 60, step: 1 },
+  { key: 'low_cover_days', label: 'Low cover under (days)', min: 0, max: 60, step: 0.5 },
+  { key: 'overstock_days', label: 'Overstocked over (days)', min: 1, max: 365, step: 0.5 },
+  { key: 'stale_count_days', label: 'Stale count after (days)', min: 1, max: 30, step: 1 },
+  { key: 'lead_time_days', label: 'Lead time (days)', min: 0, max: 365, step: 1 },
+  { key: 'z_score', label: 'Safety factor (z)', min: 0, max: 3.5, step: 0.05 },
+  { key: 'adi_cutoff', label: 'ADI cutoff', min: 1, max: 3, step: 0.01 },
+  { key: 'cv2_cutoff', label: 'CV² cutoff', min: 0.1, max: 2, step: 0.01 },
+  { key: 'ses_alpha', label: 'SES alpha', min: 0.05, max: 0.9, step: 0.05 },
+  { key: 'croston_alpha', label: 'Croston alpha', min: 0.05, max: 0.9, step: 0.05 },
+  { key: 'method_switch_days', label: 'Method switch after (days)', min: 1, max: 14, step: 1 },
+  { key: 'trend_threshold_percent', label: 'Trend threshold (%)', min: 0, max: 100, step: 1 },
+];
+
+/** Admin edits the forecast settings; Logistics sees them read-only. */
+function SettingsDialog({ editable, onClose, onSaved }) {
+  const remote = useRemote(() => api.get('/estimated-requirement/settings'), []);
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const settings = remote.data?.data?.settings;
+  const form = draft ?? settings;
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const body = Object.fromEntries(SETTING_FIELDS.map((f) => [f.key, Number(form[f.key])]));
+      await api.patch('/estimated-requirement/settings', { ...body, include_manual_deductions: Boolean(form.include_manual_deductions), cap_spikes_and_dips: Boolean(form.cap_spikes_and_dips) });
+      onSaved();
+    } catch (requestError) {
+      setError(firstValidationMessage(requestError));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="Forecast settings" onClose={onClose} size="wide" footer={editable ? (
+      <>
+        <button type="button" className={GHOST} onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="submit" form="forecast-settings-form" className={PRIMARY} disabled={busy || !form}>{busy ? 'Saving…' : 'Save settings'}</button>
+      </>
+    ) : <button type="button" className={GHOST} onClick={onClose}>Close</button>}>
+      {!form ? <LoadingState label="Loading settings…" /> : (
+        <form id="forecast-settings-form" onSubmit={save} className="grid gap-3">
+          {!editable && <Notice type="info" inline>Only an administrator can change these settings.</Notice>}
+          <div className="grid grid-cols-[repeat(auto-fit,_minmax(220px,_1fr))] gap-3">
+            {SETTING_FIELDS.map((f) => (
+              <Field key={f.key} label={f.label}>
+                <input type="number" min={f.min} max={f.max} step={f.step} value={form[f.key]} disabled={!editable} required onChange={(event) => setDraft({ ...form, [f.key]: event.target.value })} />
+              </Field>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-[13px] text-text-secondary"><input type="checkbox" checked={Boolean(form.include_manual_deductions)} disabled={!editable} onChange={(event) => setDraft({ ...form, include_manual_deductions: event.target.checked })} /> Count negative physical-count corrections (spoilage, damage) as usage</label>
+          <label className="flex items-center gap-2 text-[13px] text-text-secondary"><input type="checkbox" checked={Boolean(form.cap_spikes_and_dips)} disabled={!editable} onChange={(event) => setDraft({ ...form, cap_spikes_and_dips: event.target.checked })} /> Cap dips and spikes by default</label>
+          {error && <Notice type="error" inline>{error}</Notice>}
+        </form>
       )}
     </Modal>
   );
@@ -768,14 +617,16 @@ export default function EstimatedRequirement({ embedded = false }) {
   const canCreateClosure = isAdmin || role === 'logistics';
   const navigate = useNavigate();
 
+  const [view, setView] = useState('descriptive');
   const [locationId, setLocationId] = useState('');
   const [brandId, setBrandId] = useState('');
-  const [horizon, setHorizon] = useState(1);
+  const [horizon, setHorizon] = useState(7);
   const [dips, setDips] = useState('cap');
   const [search, setSearch] = useState('');
   const [branchQuery, setBranchQuery] = useState('');
-  const [sort, setSort] = useState({ key: 'risk', dir: 'asc' });
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const [detailId, setDetailId] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [openingDraft, setOpeningDraft] = useState('');
   const [openingBusy, setOpeningBusy] = useState(false);
   const [openingError, setOpeningError] = useState('');
@@ -810,10 +661,7 @@ export default function EstimatedRequirement({ embedded = false }) {
 
   const closuresRemote = useRemote(
     () => (location?.id && canCreateClosure
-      ? api.get('/estimated-requirement/closures', {
-        location_id: location.id,
-        include_undone: 1,
-      })
+      ? api.get('/estimated-requirement/closures', { location_id: location.id, include_undone: 1 })
       : Promise.resolve({ data: { closures: [] } })),
     [location?.id, canCreateClosure],
   );
@@ -826,17 +674,21 @@ export default function EstimatedRequirement({ embedded = false }) {
   );
 
   const items = useMemo(() => payload?.items || [], [payload]);
+  const predictive = view === 'predictive';
 
   const sortedItems = useMemo(() => {
     const value = (item) => {
       switch (sort.key) {
         case 'name': return item.name?.toLowerCase() || '';
-        case 'risk': return item.ready ? (RISK_ORDER[item.status] ?? 9) : 8;
         case 'onhand': return item.on_hand ?? -1;
-        case 'trend': return item.ready ? (TREND_ORDER[item.trend?.direction] ?? 9) : 9;
-        case 'weeks': return item.included_weeks;
-        case 'average': return item.weighted_average ?? -1;
-        case 'days': return item.days_left ?? Number.MAX_SAFE_INTEGER;
+        case 'avg': return item.avg_daily_use ?? -1;
+        case 'last7': return item.last_7_days ?? -1;
+        case 'zero': return item.zero_days_percent ?? -1;
+        case 'trend': return item.trend?.change_percent ?? Number.NEGATIVE_INFINITY;
+        case 'counted': return item.days_since_count ?? Number.MAX_SAFE_INTEGER;
+        case 'status': return STATUS_ORDER[item.status] ?? 9;
+        case 'cover': return item.days_of_cover ?? Number.MAX_SAFE_INTEGER;
+        case 'method': return item.method_label || 'zz';
         case 'need': return item.estimated_need ?? -1;
         case 'reorder': return item.suggested_reorder ?? -1;
         default: return 0;
@@ -851,10 +703,15 @@ export default function EstimatedRequirement({ embedded = false }) {
     });
   }, [items, sort]);
 
+  const switchView = (next) => {
+    setView(next);
+    // Descriptive: by name; Predictive: worst status first (Low cover, Normal, Overstocked, No estimate).
+    setSort(next === 'predictive' ? { key: 'status', dir: 'asc' } : { key: 'name', dir: 'asc' });
+  };
   const toggleSort = (key) => {
     setSort((current) => (current.key === key
       ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
-      : { key, dir: key === 'risk' || key === 'days' ? 'asc' : 'desc' }));
+      : { key, dir: ['name', 'status', 'cover', 'counted', 'method'].includes(key) ? 'asc' : 'desc' }));
   };
 
   const saveOpeningDate = async (event) => {
@@ -862,10 +719,7 @@ export default function EstimatedRequirement({ embedded = false }) {
     setOpeningBusy(true);
     setOpeningError('');
     try {
-      await api.patch('/estimated-requirement/opening-date', {
-        location_id: location?.id,
-        opening_date: openingDraft || null,
-      });
+      await api.patch('/estimated-requirement/opening-date', { location_id: location?.id, opening_date: openingDraft || null });
       setOpeningDraft('');
       await remote.reload({ silent: true });
     } catch (requestError) {
@@ -880,26 +734,41 @@ export default function EstimatedRequirement({ embedded = false }) {
     void exclusionsRemote.reload({ silent: true });
   };
 
-  // New usage, voids, closures or exclusions elsewhere: re-read in place.
+  // New usage, voids, closures, exclusions, settings or classes elsewhere: re-read in place.
   useForecastLiveRefresh(() => {
     reloadSide();
     void remote.reload({ silent: true });
   });
 
+  const summary = payload?.summary;
+  const openRow = (item) => setDetailId(item.material_id);
+  const rowProps = (item) => ({
+    key: item.material_id,
+    onClick: () => openRow(item),
+    onKeyDown: (event) => {
+      if (event.target !== event.currentTarget) return;
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRow(item); }
+    },
+    tabIndex: 0,
+    className: 'cursor-pointer [&:hover_td]:[background:var(--hover)] [&:focus-visible_td]:[background:var(--hover)] [&:focus-visible_td]:[outline:none] [&:focus-visible_td:first-child]:[box-shadow:inset_3px_0_0_var(--accent)]',
+  });
+  const nameCell = (item) => (
+    <td>
+      <strong>{item.name}</strong>
+      <small className="block text-muted text-[11px]">{[item.variant, item.brand_name].filter(Boolean).join(' · ')}</small>
+    </td>
+  );
+
   const body = (
     <>
-      {!embedded && (
-        <PageHeader
-          title="Analytics and Forecasting"
-          subtitle="Usage-based demand and supply estimates"
-        />
-      )}
+      {!embedded && <PageHeader title="Analytics and Forecasting" subtitle="Usage-based demand and supply estimates" />}
 
       <p className="er-note-inline flex items-center gap-2 m-[0_0_14px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>
 
       {canExclude && !embedded && (
-        <p className="m-[-4px_0_14px] [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:p-[7px_12px] [&_a]:border [&_a]:border-line-strong [&_a]:rounded-[10px] [&_a]:text-accent-text [&_a]:text-[12.5px] [&_a]:font-[600] [&_a]:[text-decoration:none] [&_a:hover]:[background:var(--hover)]">
+        <p className="m-[-4px_0_14px] flex flex-wrap gap-2 [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:p-[7px_12px] [&_a]:border [&_a]:border-line-strong [&_a]:rounded-[10px] [&_a]:text-accent-text [&_a]:text-[12.5px] [&_a]:font-[600] [&_a]:[text-decoration:none] [&_a:hover]:[background:var(--hover)]">
           <Link to="/estimated-requirement/network">Open network view: all branches vs warehouse stock →</Link>
+          <button type="button" className={GHOST} onClick={() => setSettingsOpen(true)}><FaGear aria-hidden="true" /> Forecast settings</button>
         </p>
       )}
 
@@ -909,64 +778,50 @@ export default function EstimatedRequirement({ embedded = false }) {
         {!isFranchisee && (
           <>
             <Field label="Search branch / franchisee">
-              <input
-                type="search"
-                value={branchQuery}
-                placeholder="Type a branch name…"
-                onChange={(event) => setBranchQuery(event.target.value)}
-              />
+              <input type="search" value={branchQuery} placeholder="Type a branch name…" onChange={(event) => setBranchQuery(event.target.value)} />
             </Field>
             <Field label="Branch">
               <select
                 value={locationId}
                 onChange={(event) => {
-                  if (event.target.value === ALL_BRANCHES) {
-                    navigate('/estimated-requirement/network');
-                    return;
-                  }
+                  if (event.target.value === ALL_BRANCHES) { navigate('/estimated-requirement/network'); return; }
                   setLocationId(event.target.value);
                 }}
               >
                 {canExclude && <option value={ALL_BRANCHES}>All branches — network view</option>}
                 {visibleBranches.length === 0 && <option value="">No branch matches</option>}
                 {visibleBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}{branch.franchisee?.business_name ? ` · ${branch.franchisee.business_name}` : ''}
-                  </option>
+                  <option key={branch.id} value={branch.id}>{branch.name}{branch.franchisee?.business_name ? ` · ${branch.franchisee.business_name}` : ''}</option>
                 ))}
               </select>
             </Field>
             <Field label="Brand">
               <select value={brandId} onChange={(event) => setBrandId(event.target.value)}>
                 <option value="">All brands</option>
-                {(payload?.brands || []).map((brand) => (
-                  <option key={brand.id} value={brand.id}>{brand.name}</option>
-                ))}
+                {(payload?.brands || []).map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
               </select>
             </Field>
           </>
         )}
         <Field label="Horizon">
           <select value={horizon} onChange={(event) => setHorizon(Number(event.target.value))}>
-            <option value={1}>1 week</option>
-            <option value={2}>2 weeks</option>
-            <option value={4}>4 weeks</option>
+            {HORIZONS.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
           </select>
         </Field>
-        <Field label="Dips and spikes in calculations" hint="Your recorded usage is never changed.">
+        <Field label="Dips and spikes" hint="Your recorded usage is never changed.">
           <select value={dips} onChange={(event) => setDips(event.target.value)}>
             <option value="cap">Cap them (default)</option>
-            <option value="raw">Use raw values</option>
+            <option value="raw">Include them</option>
           </select>
         </Field>
         <Field label="Find an item">
-          <input
-            type="search"
-            value={search}
-            placeholder="Material or variant…"
-            onChange={(event) => setSearch(event.target.value)}
-          />
+          <input type="search" value={search} placeholder="Material or variant…" onChange={(event) => setSearch(event.target.value)} />
         </Field>
+        <div className="flex items-end gap-2" role="tablist" aria-label="View">
+          {[['descriptive', 'Descriptive'], ['predictive', 'Predictive']].map(([key, label]) => (
+            <button key={key} type="button" role="tab" aria-selected={view === key} className={`${GHOST} flex-1 ${view === key ? 'later:border-accent! later:text-text! later:[background:var(--hover)]!' : ''}`} onClick={() => switchView(key)}>{label}</button>
+          ))}
+        </div>
       </div>
 
       {location?.opening_date_needed && (
@@ -975,13 +830,13 @@ export default function EstimatedRequirement({ embedded = false }) {
           <div>
             <strong>Opening date needed</strong>
             <p>
-              This branch has not recorded any activity yet, so its past weeks are not counted as zero usage.
+              This branch has not recorded any activity yet, so its past days are not counted as zero usage.
               {isAdmin ? ' Set the date it started operating, or wait for its first production record.' : ' An administrator can set the opening date.'}
             </p>
             {isAdmin && (
               <form className="flex gap-2 mt-[10px] flex-wrap" onSubmit={saveOpeningDate}>
                 <input type="date" value={openingDraft} required onChange={(event) => setOpeningDraft(event.target.value)} />
-                <button type="submit" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={openingBusy}>Save opening date</button>
+                <button type="submit" className={PRIMARY} disabled={openingBusy}>Save opening date</button>
               </form>
             )}
             {openingError && <small className="block mt-[6px] text-danger-text">{openingError}</small>}
@@ -993,122 +848,81 @@ export default function EstimatedRequirement({ embedded = false }) {
         <EmptyState label="Choose a branch to see its estimated requirement." detail="Franchise accounts are pinned to their own branch." />
       ) : (
         <>
-          <EstimateCards summary={payload?.summary} settings={payload?.settings} />
+          {predictive ? <PredictiveCards summary={summary} /> : <DescriptiveCards summary={summary} />}
 
-          <section className="p-4 mb-4 [background:var(--panel)] border border-line rounded-[14px] [&>header]:mb-3 [&_h2]:m-0 [&_h2]:text-[15px] [&_h2]:text-text [&_header_p]:m-[4px_0_0] [&_header_p]:text-muted [&_header_p]:text-[12px] later:[&_.table-wrap]:overflow-x-auto">
+          <section className="p-4 mb-4 [background:var(--panel)] border border-line rounded-[14px] [&>header]:mb-3 [&_h2]:m-0 [&_h2]:text-[15px] [&_h2]:text-text [&_header_p]:m-[4px_0_0] [&_header_p]:text-muted [&_header_p]:text-[12px]">
             <header className="flex justify-between gap-3 items-start">
               <div>
                 <h2>{location.name}</h2>
                 <p>
-                  Weekly usage is Monday–Sunday in {payload?.timezone || 'Asia/Manila'}.
+                  Daily usage in {payload?.timezone || 'Asia/Manila'}, last {formatNumber(payload?.settings?.lookback_open_days ?? 28)} open days.
                   {location.effective_opening_date ? ` Counting from ${location.effective_opening_date}${location.opening_date_source === 'first_activity' ? ' (first recorded activity)' : ''}.` : ''}
+                  {' '}<b className="text-text-secondary font-[600]">{summary?.freshness}</b>
                 </p>
               </div>
             </header>
 
-            {sortedItems.length > 0 && (
-              <p className="flex items-center gap-[10px] later:m-[0_0_12px] p-[10px_14px] border border-[color:color-mix(in_srgb,_var(--accent)_40%,_transparent)] border-l-[4px] border-l-accent rounded-[10px] [background:color-mix(in_srgb,_var(--accent)_10%,_transparent)] later:text-text later:text-[13px] later-2:[&_svg]:text-accent-text [&_svg]:flex-none later:[&_b]:text-accent-text" role="note">
-                <FaChartLine aria-hidden="true" />
-                <span>Click <b>View chart</b> to see the 12-week usage history and how the estimate was worked out.</span>
-              </p>
-            )}
-
             {sortedItems.length === 0 ? (
               <EmptyState label="No tracked raw material yet." detail="Add materials and record production for this branch." />
             ) : (
-              <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-                <table className="er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]">
+              <div className={TABLE_WRAP}>
+                <table className={TABLE}>
                   <thead>
-                    <tr>
-                      <SortHeader label="Raw material" sortKey="name" sort={sort} onSort={toggleSort} />
-                      <SortHeader label="On hand" sortKey="onhand" sort={sort} onSort={toggleSort} align="right" />
-                      <SortHeader label="Avg weekly usage" sortKey="average" sort={sort} onSort={toggleSort} align="right" />
-                      <SortHeader label="Trend" sortKey="trend" sort={sort} onSort={toggleSort} />
-                      <SortHeader label="Days left" sortKey="days" sort={sort} onSort={toggleSort} align="right" />
-                      <SortHeader label="Status" sortKey="risk" sort={sort} onSort={toggleSort} />
-                      <SortHeader label={`Est. need (${horizon} wk)`} sortKey="need" sort={sort} onSort={toggleSort} align="right" />
-                      <SortHeader label="Suggested reorder" sortKey="reorder" sort={sort} onSort={toggleSort} align="right" />
-                    </tr>
+                    {predictive ? (
+                      <tr>
+                        <SortHeader label="Raw material" sortKey="name" sort={sort} onSort={toggleSort} />
+                        <SortHeader label="On hand / on order" sortKey="onhand" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Days of cover" sub="incl. on order" sortKey="cover" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+                        <SortHeader label="Method" sortKey="method" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label={`Est. need (${horizon} d)`} sortKey="need" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Suggested reorder" sub={`covers ${formatNumber(summary?.cover_days ?? horizon)} days`} sortKey="reorder" sort={sort} onSort={toggleSort} align="right" />
+                      </tr>
+                    ) : (
+                      <tr>
+                        <SortHeader label="Raw material" sortKey="name" sort={sort} onSort={toggleSort} />
+                        <SortHeader label="On hand" sortKey="onhand" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Avg daily use" sortKey="avg" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Last 7 days" sortKey="last7" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Zero days" sortKey="zero" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Trend" sortKey="trend" sort={sort} onSort={toggleSort} align="right" />
+                        <SortHeader label="Last counted" sortKey="counted" sort={sort} onSort={toggleSort} align="right" />
+                      </tr>
+                    )}
                   </thead>
                   <tbody>
-                    {sortedItems.map((item) => (
-                      <tr
-                        key={item.material_id}
-                        onClick={() => setDetailId(item.material_id)}
-                        onKeyDown={(event) => {
-                          // Keys pressed on the View chart button are handled by the button itself.
-                          if (event.target !== event.currentTarget) return;
-                          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setDetailId(item.material_id); }
-                        }}
-                        tabIndex={0}
-                        className="cursor-pointer [&:hover_td]:[background:var(--hover)] [&:focus-visible_td]:[background:var(--hover)] [&:focus-visible_td]:[outline:none] [&:focus-visible_td:first-child]:[box-shadow:inset_3px_0_0_var(--accent)]"
-                      >
-                        <td>
-                          <strong>{item.name}</strong>
-                          <small className="block text-muted text-[11px]">
-                            {[item.variant, item.brand_name].filter(Boolean).join(' · ')}
-                          </small>
+                    {sortedItems.map((item) => (predictive ? (
+                      <tr {...rowProps(item)}>
+                        {nameCell(item)}
+                        <td className="text-right whitespace-nowrap">
+                          {plainNumber(item.on_hand, item)} / {item.on_order === null ? '—' : plainNumber(item.on_order, item)} {item.unit}
+                          {item.on_order_note && <small className="block mt-[2px] text-[color:var(--warning-text)] text-[10.5px]">{item.on_order_note}</small>}
                         </td>
-                        <td className="text-right">{quantity(item.on_hand, item)}</td>
+                        <td className="text-right">{item.days_of_cover === null ? '—' : `${formatNumber(item.days_of_cover, 1)} d`}</td>
+                        <td><span className={`${TAG} ${STATUS_CLASS[item.status] || 'later:text-muted'}`}>{STATUS_LABEL[item.status] || item.status}</span></td>
+                        <td className="text-right"><MethodCell item={item} /></td>
+                        <td className="text-right">{item.ready ? quantity(item.estimated_need, item) : '—'}</td>
                         <td className="text-right">
-                          {item.ready ? (
-                            <>
-                              {quantity(item.weighted_average, item)}
-                              {item.normal_range && (
-                                <small className="block text-muted text-[11px]">{formatNumber(item.normal_range.low, precisionOf(item))}–{formatNumber(item.normal_range.high, precisionOf(item))}</small>
-                              )}
-                            </>
-                          ) : (
-                            <span className="text-muted text-[11.5px]">
-                              Not enough data yet
-                              <small className="block text-muted text-[11px]">{formatNumber(item.needed_weeks)} more week{item.needed_weeks === 1 ? '' : 's'} needed</small>
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="flex flex-wrap items-center gap-[6px_10px]">
-                            {item.ready ? <TrendCell trend={item.trend} /> : <span className="text-muted text-[11.5px]">—</span>}
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-[6px] min-h-[28px] p-[0_10px] border border-[color:color-mix(in_srgb,_var(--accent)_45%,_transparent)] rounded-[999px] [background:color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent-text text-[11.5px] font-[650] whitespace-nowrap [transition:background_.15s_ease,_border-color_.15s_ease] later:[&_svg]:text-[11px] hover:[background:color-mix(in_srgb,_var(--accent)_22%,_transparent)] hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
-                              aria-label={`View 12-week chart for ${item.name}`}
-                              onClick={(event) => {
-                                event.stopPropagation(); // the row would open it too
-                                setDetailId(item.material_id);
-                              }}
-                            >
-                              <FaChartLine aria-hidden="true" /> View chart
-                            </button>
-                          </div>
-                        </td>
-                        <td className="text-right">
-                          {!item.ready ? '—' : item.days_left === null || item.days_left === undefined ? <span className="text-muted text-[11.5px]">No recent usage</span> : formatNumber(item.days_left, 1)}
-                        </td>
-                        <td>
-                          {item.ready
-                            ? <span className={`er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px] er-${item.status}`}>{RISK_LABEL[item.status] || item.status}</span>
-                            : <span className="er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px] later:text-muted">No estimate</span>}
-                          {item.reorder_status && (
-                            <span className={`er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px] er-stock-${item.reorder_status}`} title="Existing reorder status of the branch inventory">
-                              {REORDER_STATUS_LABEL[item.reorder_status]}
-                            </span>
-                          )}
-                        </td>
-                        <td className="text-right">{quantity(item.estimated_need, item)}</td>
-                        <td className="text-right">
-                          {item.suggested_reorder ? <strong className="text-accent-text [.er-table_td_&]:font-[700]">{quantity(item.suggested_reorder, item)}</strong> : (item.ready ? '0' : '—')}
-                          {item.on_order !== null && item.on_order !== undefined && item.on_order > 0 && (
-                            <small className="block text-muted text-[11px]">on order {quantity(item.on_order, item)}</small>
-                          )}
-                          {item.on_order_note && <small className="block mt-[2px] text-[color:var(--warning-text)] text-[10.5px] whitespace-nowrap">{item.on_order_note}</small>}
+                          {!item.ready ? '—' : item.suggested_reorder ? <strong className="text-accent-text [.er-table_td_&]:font-[700]">{quantity(item.suggested_reorder, item)}</strong> : quantity(0, item)}
+                          {item.ready && item.cover_capped && <small className="block text-muted text-[10.5px]">Capped at {formatNumber(item.cover_days)} days</small>}
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      <tr {...rowProps(item)}>
+                        {nameCell(item)}
+                        <td className="text-right">{quantity(item.on_hand, item)}</td>
+                        <td className="text-right">{item.open_days ? plainNumber(item.avg_daily_use, item) : <span className="text-muted text-[11.5px]">{item.not_ready_reason}</span>}</td>
+                        <td className="text-right">{plainNumber(item.last_7_days, item)}</td>
+                        <td className="text-right">{item.zero_days_percent === null ? '—' : `${formatNumber(item.zero_days_percent, 0)}%`}</td>
+                        <td className="text-right"><TrendText trend={item.trend} /></td>
+                        <td className={`text-right whitespace-nowrap ${item.count_stale ? 'text-[color:var(--warning-text)]!' : ''}`}>{item.days_since_count === null ? 'Never' : `${item.days_since_count} d ago`}</td>
+                      </tr>
+                    )))}
                   </tbody>
                 </table>
               </div>
             )}
-            <p className="text-muted text-[12px] m-[10px_0_0]">You can also click anywhere on a row to open the same chart.</p>
+            <p className="text-muted text-[12px] m-[10px_0_0]"><FaChartLine aria-hidden="true" className="inline mr-1 text-accent-text" />Click a row to open its daily chart{predictive ? ', the forecast and how the estimate was worked out' : ' and how usage was summarized'}.</p>
           </section>
 
           {canCreateClosure && (
@@ -1117,22 +931,16 @@ export default function EstimatedRequirement({ embedded = false }) {
               canCreate={canCreateClosure}
               canUndo={canCreateClosure}
               closures={closuresRemote.data?.data?.closures || []}
-              onChanged={() => {
-                reloadSide();
-                void remote.reload({ silent: true });
-              }}
+              onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
             />
           )}
 
           {canExclude && (
             <ExclusionsPanel
               locationId={location.id}
-              weeks={payload?.weeks || []}
+              weeks={recentWeeks(payload?.today)}
               exclusions={exclusionsRemote.data?.data?.exclusions || []}
-              onChanged={() => {
-                reloadSide();
-                void remote.reload({ silent: true });
-              }}
+              onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
             />
           )}
         </>
@@ -1144,20 +952,24 @@ export default function EstimatedRequirement({ embedded = false }) {
           materialId={detailId}
           horizon={horizon}
           dips={dips}
+          view={view}
           canExclude={canExclude}
           onClose={() => setDetailId(null)}
-          onChanged={() => {
-            reloadSide();
-            void remote.reload({ silent: true });
-          }}
+          onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsDialog
+          editable={isAdmin}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => { setSettingsOpen(false); void remote.reload({ silent: true }); }}
         />
       )}
     </>
   );
 
-  // The franchisee's Branch Portal tab uses the embedded form: it gets no
-  // header and no Admin/Logistics sections, so that view is unchanged.
   return embedded
     ? <div className="block [&_.er-note-inline]:mt-0">{body}</div>
-    : <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">{body}<ForecastingSections role={role} /></div>;
+    : <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px]">{body}<ForecastingSections role={role} /></div>;
 }

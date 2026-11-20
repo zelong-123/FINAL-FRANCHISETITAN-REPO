@@ -650,6 +650,9 @@ function BranchActionModal({ action, onClose, onDone }) {
 function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
   const [low, setLow] = useState(String(material.low_level ?? ''));
   const [critical, setCritical] = useState(String(material.critical_level ?? ''));
+  // Estimated Requirement: optional perishable cap on the cover period (1–60 days, empty = no cap).
+  const initialCover = material.max_cover_days === null || material.max_cover_days === undefined ? '' : String(material.max_cover_days);
+  const [maxCover, setMaxCover] = useState(initialCover);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const unit = material.unit || '';
@@ -672,10 +675,18 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
       setError(`${unit} is counted in whole units: enter whole numbers for both levels.`);
       return;
     }
+    const coverValue = maxCover.trim() === '' ? null : Number(maxCover);
+    if (coverValue !== null && (!Number.isInteger(coverValue) || coverValue < 1 || coverValue > 60)) {
+      setError('Max cover days must be a whole number from 1 to 60, or empty for no cap.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
       await api.patch(`/branches/${branchId}/materials/${material.id}/levels`, { low_level: lowValue, critical_level: criticalValue });
+      if (maxCover.trim() !== initialCover) {
+        await api.patch(`/branches/${branchId}/materials/${material.id}/levels`, { max_cover_days: coverValue });
+      }
       await onSaved(`Stock levels for ${material.name} saved.`);
     } catch (caught) {
       setError(firstValidationMessage(caught));
@@ -727,6 +738,9 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
         </Field>
         <Field label={`Critical level (${unit})`} required hint={critical !== '' ? `= ${formatQuantity(critical, unit, reference)}` : 'Critical at or below this amount.'}>
           <input required type="number" min="0" step={wholeOnly ? '1' : '0.001'} value={critical} onChange={(event) => setCritical(event.target.value)} />
+        </Field>
+        <Field label="Max cover days (optional)" hint="Perishables: the suggested reorder never covers more than this many days. Empty = no cap.">
+          <input type="number" min="1" max="60" step="1" value={maxCover} placeholder="No cap" onChange={(event) => setMaxCover(event.target.value)} />
         </Field>
       </form>
       {wholeOnly && <p className="muted-note text-muted text-[8px] leading-[1.6]">{unit} is counted in whole units: use whole numbers.</p>}

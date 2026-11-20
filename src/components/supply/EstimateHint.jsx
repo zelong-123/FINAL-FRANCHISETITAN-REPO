@@ -43,14 +43,15 @@ export default function EstimateHint({ locationId, productId }) {
 
   const unit = data.unit || '';
   const counted = (data.materials || []).filter((row) => row.counted);
-  const needed = Math.max(0, ...counted.map((row) => Number(row.needed_weeks || 0)));
+  // Days of recorded usage still needed (the API also sends needed_weeks for older clients).
+  const needed = Math.max(0, ...counted.map((row) => Number(row.needed_days ?? (Number(row.needed_weeks || 0) * 7))));
   const onOrder = counted.reduce((sum, row) => sum + Number(row.on_order || 0), 0);
 
   let text;
   if (counted.length === 0) {
     text = 'No estimate: the linked raw material uses a different unit.';
   } else if (data.suggested_quantity === null || data.suggested_quantity === undefined) {
-    text = `Not enough usage history yet${needed > 0 ? ` (${needed} more week${needed === 1 ? '' : 's'} needed)` : ''}.`;
+    text = `Not enough usage history yet${needed > 0 ? ` (${needed} more day${needed === 1 ? '' : 's'} needed)` : ''}.`;
   } else if (Number(data.suggested_quantity) <= 0) {
     text = `Estimated need for 1 week is already covered${onOrder > 0 ? ` (incl. ${formatNumber(onOrder)} ${unit} on order)` : ''}.`;
   } else {

@@ -9,14 +9,12 @@ import { EmptyState, Field, LoadingState, Notice, PageHeader } from '../componen
 
 const NOTE = 'Estimates are based on past usage to support decisions. They are not guarantees.';
 
-const RISK_LABEL = {
-  runs_out_soon: 'Run out soon',
-  watch: 'Watch',
-  ok: 'Covered',
-  unknown: 'Unknown',
-};
-
-const RISK_ORDER = { runs_out_soon: 0, watch: 1, unknown: 2, ok: 3 };
+// Daily model: per warehouse product, the branches' estimated need and suggested reorder for the horizon,
+// the warehouse stock, how many branches have Low cover, and which method (WMA / SES / Croston) each uses.
+const STATUS_LABEL = { low_cover: 'Low cover', normal: 'Normal', overstocked: 'Overstocked', no_estimate: 'No estimate' };
+const STATUS_CLASS = { low_cover: 'er-runs_out_soon', normal: 'er-ok', overstocked: 'er-watch', no_estimate: '' };
+const HORIZONS = [{ value: 7, label: '1 week' }, { value: 14, label: '2 weeks' }, { value: 30, label: '1 month' }];
+const mixText = (mix) => `${mix?.wma ?? 0} / ${mix?.ses ?? 0} / ${mix?.croston ?? 0}`;
 
 function qty(value, unit) {
   if (value === null || value === undefined) return '—';
@@ -30,7 +28,7 @@ function days(value) {
 
 export default function ForecastNetwork() {
   const [brandId, setBrandId] = useState('');
-  const [horizon, setHorizon] = useState(1);
+  const [horizon, setHorizon] = useState(7);
   const [dips, setDips] = useState('cap');
   const [open, setOpen] = useState([]);
 
@@ -50,8 +48,8 @@ export default function ForecastNetwork() {
   const unmapped = payload?.unmapped || [];
 
   const totals = useMemo(() => ({
-    atRisk: products.filter((row) => row.risk === 'runs_out_soon').length,
-    watch: products.filter((row) => row.risk === 'watch').length,
+    lowCover: products.filter((row) => row.low_cover_branches > 0).length,
+    mix: products.reduce((sum, row) => ({ wma: sum.wma + (row.method_mix?.wma ?? 0), ses: sum.ses + (row.method_mix?.ses ?? 0), croston: sum.croston + (row.method_mix?.croston ?? 0) }), { wma: 0, ses: 0, croston: 0 }),
     need: products.reduce((sum, row) => sum + Number(row.estimated_need || 0), 0),
   }), [products]);
 
@@ -82,15 +80,13 @@ export default function ForecastNetwork() {
         </Field>
         <Field label="Horizon">
           <select value={horizon} onChange={(event) => setHorizon(Number(event.target.value))}>
-            <option value={1}>1 week</option>
-            <option value={2}>2 weeks</option>
-            <option value={4}>4 weeks</option>
+            {HORIZONS.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
           </select>
         </Field>
-        <Field label="Dips and spikes in calculations" hint="Recorded usage is never changed.">
+        <Field label="Dips and spikes" hint="Recorded usage is never changed.">
           <select value={dips} onChange={(event) => setDips(event.target.value)}>
             <option value="cap">Cap them (default)</option>
-            <option value="raw">Use raw values</option>
+            <option value="raw">Include them</option>
           </select>
         </Field>
       </div>
@@ -100,8 +96,8 @@ export default function ForecastNetwork() {
           <div className="grid grid-cols-[repeat(auto-fit,_minmax(180px,_1fr))] gap-3 mb-4">
             <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Branches counted</span><strong>{formatNumber(payload?.branch_count ?? 0)}</strong></article>
             <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Warehouse items covered</span><strong>{formatNumber(products.length)}</strong></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] later:[&_strong]:text-danger-text"><span>Run out within {formatNumber(payload?.settings?.runs_out_days ?? 5)} days</span><strong>{formatNumber(totals.atRisk)}</strong></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] later-2:[&_strong]:text-[color:var(--warning-text)]"><span>Watch</span><strong>{formatNumber(totals.watch)}</strong></article>
+            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] later:[&_strong]:text-danger-text"><span>Items with a Low cover branch</span><strong>{formatNumber(totals.lowCover)}</strong><small>under {formatNumber(payload?.settings?.low_cover_days ?? 4)} days of cover</small></article>
+            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] [&_strong]:text-text"><span>Method mix</span><strong>{mixText(totals.mix)}</strong><small>WMA / SES / Croston</small></article>
             <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Total estimated need</span><strong>{formatNumber(totals.need, 2)}</strong><small>Across every unit shown below — read per row, not as one sum</small></article>
           </div>
 
@@ -119,12 +115,12 @@ export default function ForecastNetwork() {
                   <thead>
                     <tr>
                       <th>Warehouse item</th>
-                      <th>Weekly usage</th>
+                      <th>Daily usage</th>
                       <th className="fn-right text-right">Warehouse stock</th>
-                      <th className="fn-right text-right">Estimated need ({horizon}w)</th>
-                      <th className="fn-right text-right">Suggested transfer</th>
-                      <th className="fn-right text-right">Days of cover</th>
-                      <th>Risk</th>
+                      <th className="fn-right text-right">Estimated need ({horizon} d)</th>
+                      <th className="fn-right text-right">Suggested reorder</th>
+                      <th className="fn-right text-right">Warehouse days of cover</th>
+                      <th>Branches low / methods</th>
                       <th />
                     </tr>
                   </thead>
@@ -136,12 +132,15 @@ export default function ForecastNetwork() {
                             <strong>{row.name}</strong>
                             <small>{row.sku || '—'} · {formatNumber(row.materials)} material{row.materials === 1 ? '' : 's'}</small>
                           </td>
-                          <td>{qty(row.weekly_usage, row.unit)}</td>
+                          <td>{qty(row.daily_usage, row.unit)}</td>
                           <td className="fn-right text-right">{qty(row.warehouse_stock, row.unit)}</td>
                           <td className="fn-right text-right">{qty(row.estimated_need, row.unit)}</td>
                           <td className="fn-right text-right">{row.suggested_reorder ? <strong>{qty(row.suggested_reorder, row.unit)}</strong> : '—'}</td>
-                          <td className="fn-right text-right">{days(row.days_of_cover)}</td>
-                          <td><span className={`inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap fn-${row.risk}`}>{RISK_LABEL[row.risk] || row.risk}</span></td>
+                          <td className="fn-right text-right">{days(row.warehouse_days_of_cover)}</td>
+                          <td>
+                            <span className={`inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap ${row.low_cover_branches > 0 ? 'er-runs_out_soon' : ''}`}>{formatNumber(row.low_cover_branches)} low cover</span>
+                            <small>{mixText(row.method_mix)} (WMA / SES / Croston)</small>
+                          </td>
                           <td className="fn-right text-right">
                             <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => toggle(row.product_id)} aria-expanded={open.includes(row.product_id)}>
                               {open.includes(row.product_id) ? 'Hide branches' : 'Branches'}
@@ -153,7 +152,7 @@ export default function ForecastNetwork() {
                             <td colSpan={8}>
                               <table className="w-full [border-collapse:collapse] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_thead_th.fn-right]:text-right later:text-[11.5px] later:[&_tbody_td]:p-[7px_10px]">
                                 <thead>
-                                  <tr><th>Branch</th><th>Raw material</th><th className="fn-right text-right">On hand</th><th className="fn-right text-right">On order</th><th className="fn-right text-right">Estimated need</th><th className="fn-right text-right">Suggested transfer</th><th className="fn-right text-right">Days left</th><th>Branch status</th></tr>
+                                  <tr><th>Branch</th><th>Raw material</th><th className="fn-right text-right">On hand</th><th className="fn-right text-right">On order</th><th className="fn-right text-right">Estimated need</th><th className="fn-right text-right">Suggested reorder</th><th className="fn-right text-right">Days of cover</th><th>Method</th><th>Status</th></tr>
                                 </thead>
                                 <tbody>
                                   {row.branches.map((branch) => (
@@ -162,10 +161,11 @@ export default function ForecastNetwork() {
                                       <td>{branch.material}</td>
                                       <td className="fn-right text-right">{qty(branch.on_hand, row.unit)}</td>
                                       <td className="fn-right text-right">{qty(branch.on_order, row.unit)}</td>
-                                      <td className="fn-right text-right">{branch.ready ? qty(branch.estimated_need, row.unit) : 'Not ready'}</td>
+                                      <td className="fn-right text-right">{branch.ready ? qty(branch.estimated_need, row.unit) : (branch.not_ready_reason || 'Not ready')}</td>
                                       <td className="fn-right text-right">{qty(branch.suggested_reorder, row.unit)}</td>
-                                      <td className="fn-right text-right">{days(branch.days_left)}</td>
-                                      <td><span className={`inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap fn-${branch.status}`}>{RISK_LABEL[branch.status] || branch.status}</span></td>
+                                      <td className="fn-right text-right">{days(branch.days_of_cover)}</td>
+                                      <td>{branch.method_label || '—'}</td>
+                                      <td><span className={`inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap ${STATUS_CLASS[branch.status] || ''}`}>{STATUS_LABEL[branch.status] || branch.status}</span></td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -209,7 +209,7 @@ export default function ForecastNetwork() {
             )}
           </section>
 
-          <p className="text-muted text-[12px] m-[10px_0_0]">{NOTE} Rows are ordered by risk, then name. Nothing here creates, changes or approves a supply request.</p>
+          <p className="text-muted text-[12px] m-[10px_0_0]">{NOTE} Rows are ordered by the number of branches with Low cover, then name. Statistical estimates from recorded usage (no AI). Nothing here creates, changes or approves a supply request.</p>
         </>
       )}
     </div>
