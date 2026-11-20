@@ -93,7 +93,7 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   app.route('/', activityRoutes);
   app.route('/', sessionRoutes);
 
-  for (const path of ['/inventories', '/inventories/*', '/warehouse/*', '/inventory-audit-logs', '/inventory-transactions', '/forecasts', '/forecasts/*', '/supply-requests', '/supply-requests/*', '/supply-settings', '/brand-products', '/brand-products/*']) {
+  for (const path of ['/inventories', '/inventories/*', '/warehouse/*', '/inventory-audit-logs', '/inventory-transactions', '/supply-requests', '/supply-requests/*', '/supply-settings', '/brand-products', '/brand-products/*']) {
     app.use(path, authenticate);
   }
   app.route('/', inventoryRoutes);

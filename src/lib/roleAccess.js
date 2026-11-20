@@ -190,9 +190,6 @@ export const PERMISSIONS = {
 
   // Analytics / dashboards
   'analytics.view': [],
-  // Forecast history + [Generate forecasts] on Analytics and Forecasting.
-  'forecasts.view': ['admin', 'logistics'],
-  'forecasts.generate': ['admin', 'logistics'],
   'analytics.include_archived': ['admin', 'marketing'],
   'analytics.franchising': ['admin', 'sales'],
 

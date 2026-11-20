@@ -1,4 +1,4 @@
-// InventoryController and ForecastController.
+// InventoryController. (The monthly ForecastController was retired: the Estimated Requirement is the forecast.)
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../lib/env.ts';
@@ -9,12 +9,11 @@ import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
 import { sqlList, TERMINAL } from '../services/supplyStatus.ts';
 import {
-  adjustStock, csvApply, csvExport, csvPreview, csvTemplate, generateForecast, inventoryJson, setStock, stockAudit, stockStatus, warehouse,
+  adjustStock, csvApply, csvExport, csvPreview, csvTemplate, inventoryJson, setStock, stockAudit, stockStatus, warehouse,
 } from '../services/inventory.ts';
 
 export const inventoryRoutes = new Hono<AppEnv>();
 const MODEL = 'App\\Models\\Inventory';
-const FORECAST = 'App\\Models\\Forecast';
 const central = role('admin', 'logistics');
 const logistics = role('logistics');
 const allRoles = role('admin', 'logistics', 'franchisee');
@@ -395,48 +394,4 @@ inventoryRoutes.post('/inventories/:inventory/adjust', allRoles, async (c) => {
   }
   await audit(c, db, 'inventory.adjusted', { type: MODEL, id: i.id }, null, { transaction_id: transaction.id, balance_after: transaction.balance_after });
   return ok(c, { ...transaction, inventory: await withParts(db, i.id) }, 'Inventory updated.');
-});
-
-// ---- Monthly forecasts ----
-const DEFAULT_PERIODS = 3;
-const forecastJson = (db: Db, id: number) => db.query(
-  `select f.*, (select to_jsonb(i) || jsonb_build_object('product', ${PRODUCT('i')}, 'location', ${LOCATION('i')}) from inventories i where i.id = f.inventory_id) as inventory from forecasts f where f.id = $1`, [id],
-).then((r) => r[0]);
-
-inventoryRoutes.get('/forecasts', central, async (c) => {
-  const { db } = c.get('deps');
-  const q = c.req.query();
-  const f = new Filter();
-  if (q.inventory_id) f.add('fc.inventory_id = ?', intParam(q.inventory_id));
-  if (q.location_id) f.add('exists (select 1 from inventories i where i.id = fc.inventory_id and i.location_id = ?)', intParam(q.location_id));
-  return paginate(c, db, {
-    columns: `fc.*, ${NAME('fc.generated_by_user_id')} as generated_by,
-      (select to_jsonb(i) || jsonb_build_object('product', ${PRODUCT_FULL('i')}, 'location', ${LOCATION('i')}) from inventories i where i.id = fc.inventory_id) as inventory`,
-    from: 'forecasts fc', where: f.clauses, params: f.params, orderBy: 'fc.generated_at desc', perPage: perPage(c, 30),
-  });
-});
-
-inventoryRoutes.post('/inventories/:inventory/forecast', central, async (c) => {
-  const { db } = c.get('deps');
-  const i = await load(c);
-  const v = await validate(db, await readInput(c), { periods: ['nullable', 'integer', 'min:2', 'max:24'] });
-  const forecast = await generateForecast(db, i, v.periods ?? DEFAULT_PERIODS, c.get('user'));
-  await audit(c, db, 'forecast.generated', { type: FORECAST, id: forecast.id }, null, forecast);
-  return ok(c, await forecastJson(db, forecast.id), 'Forecast generated.', 201);
-});
-
-inventoryRoutes.post('/forecasts/generate', central, async (c) => {
-  const { db } = c.get('deps');
-  const v = await validate(db, await readInput(c), {
-    location_id: ['nullable', 'exists:franchise_locations,id'], brand_id: ['nullable', 'exists:brands,id'], periods: ['nullable', 'integer', 'min:2', 'max:24'],
-  });
-  const periods = v.periods ?? DEFAULT_PERIODS;
-  const f = new Filter();
-  if (v.location_id) f.add('i.location_id = ?', v.location_id);
-  if (v.brand_id) f.add('exists (select 1 from products p where p.id = i.product_id and p.brand_id = ?)', v.brand_id);
-  const inventories = await db.query(`select i.* from inventories i ${f.where} order by i.id`, f.params);
-  const forecasts = [];
-  for (const i of inventories) forecasts.push(await forecastJson(db, (await generateForecast(db, i, periods, c.get('user'))).id));
-  await audit(c, db, 'forecast.bulk_generated', null, null, { count: forecasts.length, periods });
-  return ok(c, forecasts, 'Forecasts generated.', 201);
 });

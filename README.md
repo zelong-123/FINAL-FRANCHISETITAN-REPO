@@ -304,7 +304,7 @@ the schema does not have is reported as `NOT IN THE TARGET SCHEMA`.
 | 3 | Activities, Master Schedule | done |
 | 4 | Warehouse, brand products, Supply Requests | done |
 | 5 | Branch workspace and portal, ProfitTrack, Branches panel | done |
-| 6 | Estimated Requirement, forecasts, analytics | done |
+| 6 | Estimated Requirement, analytics | done |
 
 To run a suite through the production `postgres.js` driver on a single connection, set `TEST_DB_ADAPTER=postgres`.
 A route that reaches past its open transaction hangs there instead of passing.

@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
-import { FaArrowTrendUp, FaClock, FaRotate, FaTruckFast } from 'react-icons/fa6';
-import { api, firstValidationMessage } from '../../lib/api';
+import React from 'react';
+import { FaClock, FaTruckFast } from 'react-icons/fa6';
+import { api } from '../../lib/api';
 import useRemote from '../../lib/useRemote';
-import { formatDate, formatNumber, titleCase } from '../../lib/format';
-import { can } from '../../lib/roleAccess';
+import { formatNumber } from '../../lib/format';
 import { FORECASTING_SECTION_ROLES } from '../../lib/navigation';
-import { EmptyState, LoadingState, Notice, Pagination, StatusBadge } from '../ApiUi';
+import { EmptyState, LoadingState, Notice, StatusBadge } from '../ApiUi';
 
 /*
  * Moved from the retired Analytics page onto "Analytics and Forecasting"
@@ -19,16 +18,12 @@ import { EmptyState, LoadingState, Notice, Pagination, StatusBadge } from '../Ap
  *   Logistics (dashboard already has the supply workflow per stage):
  *             Fulfillment %, Average fulfillment hours, Recent inquiry trend.
  *
- * Plus the Forecast history (paginated) and [Generate forecasts]. Counts and
- * quantities only — no cost or financial figures.
+ * Counts and quantities only — no cost or financial figures. The old monthly "Forecast history" was
+ * retired: the Estimated Requirement (daily, Descriptive / Predictive) above is the one forecast.
  */
 const MOVED_OVERVIEW = {
   admin: ['average_fulfillment_hours', 'supply_statuses', 'inquiry_trend'],
   logistics: ['fulfillment_rate_percent', 'average_fulfillment_hours', 'inquiry_trend'],
-};
-
-const METHOD_LABELS = {
-  simple_moving_average: 'Simple moving average',
 };
 
 function Metric({ label, value, suffix = '', Icon, tone = '', caption }) {
@@ -102,92 +97,12 @@ function OverviewSection({ role }) {
   );
 }
 
-function ForecastHistorySection({ role }) {
-  const canView = can(role, 'forecasts.view');
-  const canGenerate = can(role, 'forecasts.generate');
-  const [page, setPage] = useState(1);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const remote = useRemote(async () => {
-    if (!canView) return { rows: [], meta: null };
-    const response = await api.get('/forecasts', { page, per_page: 30 });
-    return { rows: response.data || [], meta: response.meta || null };
-  }, [canView, page]);
-  if (!canView) return null;
-
-  const generate = async () => {
-    setGenerating(true);
-    setError('');
-    setSuccess('');
-    try {
-      await api.post('/forecasts/generate', { periods: 3 });
-      setSuccess('Forecasts generated from the latest recorded usage.');
-      setPage(1);
-      await remote.reload();
-    } catch (caught) {
-      setError(firstValidationMessage(caught));
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  return (
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] [&_.panel-title]:gap-3 [&_.panel-title]:flex-wrap" aria-labelledby="af-forecast-title">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
-        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
-          <h2 id="af-forecast-title">Forecast history</h2>
-          <span>
-            Simple moving average of the last months of recorded usage per product and location;
-            the recommended reorder adds the configured safety stock. Rule-based and statistical — no AI.
-          </span>
-        </div>
-        {canGenerate && (
-          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => void generate()} disabled={generating}>
-            <FaRotate className={generating ? '[animation:spin_.8s_linear_infinite]' : ''} aria-hidden="true" /> {generating ? 'Generating…' : 'Generate forecasts'}
-          </button>
-        )}
-      </div>
-      <Notice type="success">{success}</Notice>
-      <Notice type="error">{error || remote.error}</Notice>
-      {remote.loading && !remote.data ? <LoadingState label="Loading forecasts…" /> : !(remote.data?.rows || []).length ? (
-        <EmptyState label="No forecasts generated yet." detail="Generate forecasts after inventory history is available." />
-      ) : (
-        <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
-          <table>
-            <thead>
-              <tr>
-                <th>Product</th><th>Location</th><th>Method</th><th>Months used</th><th>Predicted demand</th><th>Recommended reorder</th><th>Generated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {remote.data.rows.map((forecast) => (
-                <tr key={forecast.id}>
-                  <td><strong>{forecast.inventory?.product?.name || '—'}</strong></td>
-                  <td>{forecast.inventory?.location?.name || '—'}</td>
-                  <td>{METHOD_LABELS[forecast.method] || titleCase(forecast.method || '—')}</td>
-                  <td>{forecast.periods_used ?? '—'}</td>
-                  <td>{formatNumber(forecast.predicted_quantity, 2)}</td>
-                  <td><strong>{formatNumber(forecast.recommended_reorder_quantity, 2)}</strong></td>
-                  <td>{formatDate(forecast.generated_at, true)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <Pagination meta={remote.data?.meta} onPage={setPage} />
-    </section>
-  );
-}
-
 /** Admin + Logistics sections of the standalone Analytics and Forecasting page. */
 export default function ForecastingSections({ role }) {
   if (!FORECASTING_SECTION_ROLES.includes(role)) return null;
   return (
     <div className="grid gap-[18px] mt-[22px]">
       <OverviewSection role={role} />
-      <ForecastHistorySection role={role} />
     </div>
   );
 }
