@@ -8,7 +8,8 @@ import { readInput, validate } from '../lib/validate.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
 import {
-  addDays, firstActivityDates, FORECAST_DEFAULTS, forecastAudit, type ForecastSettings, forLocation, isMonday, phpRound, resolveForecastLocation, settingsFrom, settingsRow, visibleLocations, weekEnd, weekLabel, weekStart,
+  addDays, DAY_STATUS_LABELS, firstActivityDates, FORECAST_DEFAULTS, forecastAudit, type ForecastSettings, forLocation, horizonDays, isMonday, longDate, phpRound, resolveForecastLocation, settingsFrom, settingsRow,
+  visibleLocations, weekEnd, weekLabel, weekStart,
 } from '../services/forecast.ts';
 
 export const forecastRoutes = new Hono<AppEnv>();
@@ -18,7 +19,7 @@ const admin = role('admin');
 const NOTE = 'Estimates are based on past usage to support decisions. They are not guarantees.';
 const TZ = 'Asia/Manila';
 const base = '/estimated-requirement';
-const FILTERS = { location_id: ['nullable', 'integer'], horizon: ['nullable', 'integer', 'in:1,2,4'], dips: ['nullable', 'in:cap,raw'] };
+const FILTERS = { location_id: ['nullable', 'integer'], horizon: ['nullable', 'integer', 'in:7,14,30,1,2,4'], dips: ['nullable', 'in:cap,raw'] };
 
 /** The dips and spikes option on the page header; the saved setting is the default. */
 async function settingsFor(db: Db, dips: string | null | undefined): Promise<ForecastSettings> {
@@ -37,18 +38,30 @@ function locationSummary(location: Row, firstActivity: string | null): Row {
   };
 }
 const brandsOf = (locations: Row[]) => [...new Map(locations.filter((l) => l.brand).map((l) => [l.brand_id, { id: l.brand_id, name: String(l.brand.name) }])).values()];
+const freshness = (last: string | null) => (last ? `Last recorded activity: ${longDate(last)}` : 'No recorded activity yet');
 
-function summary(items: Row[], weeks: Row[]) {
-  const excluded = new Map<string, string>();
+/** The cards of both views. Days left out are counted once per day across the branch's materials. */
+function summary(items: Row[], settings: ForecastSettings, horizon: number, lastActivity: string | null) {
+  const leftOut = new Map<string, string>();
   for (const item of items) {
-    for (const week of item.weeks) if (['closed', 'no_records', 'excluded'].includes(week.status)) excluded.set(week.week_start, week.status);
+    for (const d of item.days as Row[]) {
+      if (item.window_from && d.date >= item.window_from && ['closed', 'excluded', 'no_records'].includes(d.status) && !leftOut.has(d.date)) leftOut.set(d.date, d.status);
+    }
   }
-  const labels: Record<string, string> = { closed: 'Branch closed', no_records: 'No records', excluded: 'Manually excluded' };
+  const count = (status: string) => [...leftOut.values()].filter((s) => s === status).length;
+  const ready = items.filter((i) => i.ready);
+  const zero = ready.map((i) => Number(i.zero_days_percent ?? 0));
+  const mix = { wma: 0, ses: 0, croston: 0 } as Record<string, number>;
+  for (const item of ready) if (item.method) mix[item.method] += 1;
   return {
-    items_tracked: items.length, runs_out_soon: items.filter((i) => i.status === 'runs_out_soon').length, watch: items.filter((i) => i.status === 'watch').length,
-    reorders_suggested: items.filter((i) => (i.suggested_reorder ?? 0) > 0).length, weeks_excluded: excluded.size,
-    excluded_breakdown: Object.entries(labels).map(([status, label]) => ({ status, label, weeks: [...excluded.values()].filter((v) => v === status).length })),
-    chart_weeks: weeks.length,
+    items_tracked: items.length,
+    stale_counts: items.filter((i) => i.count_stale).length, stale_count_days: settings.stale_count_days,
+    avg_zero_days_percent: zero.length ? phpRound(zero.reduce((s, v) => s + v, 0) / zero.length, 1) : null,
+    days_excluded: { closed: count('closed'), excluded: count('excluded'), no_records: count('no_records'), total: leftOut.size },
+    low_cover: items.filter((i) => i.status === 'low_cover').length, overstocked: items.filter((i) => i.status === 'overstocked').length,
+    reorders_suggested: items.filter((i) => (i.suggested_reorder ?? 0) > 0).length, cover_days: settings.lead_time_days + horizon,
+    method_mix: mix, low_cover_days: settings.low_cover_days, overstock_days: settings.overstock_days,
+    last_activity_on: lastActivity, freshness: freshness(lastActivity),
   };
 }
 
@@ -60,65 +73,131 @@ forecastRoutes.get(base, anyRole, async (c) => {
   const locations = await visibleLocations(db, user, brandId);
   const location = await resolveForecastLocation(db, user, idOf(v.location_id), roleName(c) === 'franchisee');
   const firstDates = await firstActivityDates(db, locations.map((l) => l.id));
-  const horizon = Number(v.horizon ?? 1);
+  const horizon = horizonDays(v.horizon);
   const settings = await settingsFor(db, v.dips);
   const firstFor = async (row: Row) => firstDates[row.id] ?? (await firstActivityDates(db, [row.id]))[row.id] ?? null;
   const payload: Row = {
-    generated_at: new Date().toISOString(), timezone: TZ, horizon_weeks: horizon, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw',
+    generated_at: new Date().toISOString(), timezone: TZ, horizon_days: horizon, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw',
     locations: locations.map((row) => locationSummary(row, firstDates[row.id] ?? null)), location: location === null ? null : locationSummary(location, await firstFor(location)),
-    weeks: [], items: [], summary: null, brands: brandsOf(brandId !== null ? await visibleLocations(db, user) : locations), note: NOTE,
+    items: [], summary: null, brands: brandsOf(brandId !== null ? await visibleLocations(db, user) : locations), note: NOTE,
   };
   if (location === null) return ok(c, { ...payload, requires_location: true });
-  const result = await forLocation(db, location, horizon, settings);
+  const result = await forLocation(db, location, horizon, settings, user);
   const needle = String(v.search ?? '').trim().toLowerCase();
   const items = needle ? result.items.filter((item) => `${item.name} ${item.variant}`.toLowerCase().includes(needle)) : result.items;
   return ok(c, {
-    ...payload, weeks: result.weeks, items: items.map(({ weeks: _weeks, ...item }) => ({ ...item, brand_name: location.brand?.name ?? null })), summary: summary(result.items, result.weeks), requires_location: false,
+    ...payload, today: result.today, items: items.map(({ days: _days, ...item }) => ({ ...item, brand_name: location.brand?.name ?? null })),
+    summary: summary(result.items, settings, horizon, result.last_activity_on), requires_location: false,
   });
 });
+
+/** Consecutive left-out days with the same status and reason, as ranges. */
+function leftOutRanges(days: Row[]): Row[] {
+  const ranges: Row[] = [];
+  for (const d of days) {
+    if (d.status === 'open') continue;
+    const last = ranges[ranges.length - 1];
+    if (last && last.status === d.status && last.reason === d.reason && addDays(last.to, 1) === d.date) { last.to = d.date; last.days += 1; continue; }
+    ranges.push({ status: d.status, label: DAY_STATUS_LABELS[d.status] ?? d.status, reason: d.reason, from: d.date, to: d.date, days: 1 });
+  }
+  return ranges;
+}
+
+const amount = (value: number | null | undefined, unit: string, precision: number) => (value === null || value === undefined ? '—' : `${phpRound(value, Math.max(2, precision))} ${unit}`.trim());
+const PATTERN_TEXT: Record<string, string> = { smooth: 'smooth', erratic: 'erratic', intermittent: 'intermittent', lumpy: 'lumpy' };
+const METHOD_REASON: Record<string, string> = {
+  wma: 'WMA (7-day window, weights 7 down to 1). Steady daily use, so recent days get the most weight.',
+  ses: 'SES (alpha {alpha}). Daily use swings a lot, so the rate is smoothed instead of following every swing.',
+  croston: 'Croston (alpha {alpha}). Usage comes on some days only, so the size of a use and the gap between uses are smoothed separately.',
+};
+
+/** "How usage was summarized" (Descriptive) and "How this was worked out" (Predictive), with the item's numbers. */
+function explanation(item: Row, settings: ForecastSettings, horizon: number): Row {
+  const u = item.unit;
+  const p = item.unit_precision;
+  const leftOut = item.days_left_out;
+  const skipped = [leftOut.closed ? `${leftOut.closed} closed day${leftOut.closed === 1 ? '' : 's'}` : null, leftOut.excluded ? `${leftOut.excluded} excluded` : null,
+    leftOut.no_records ? `${leftOut.no_records} with no records` : null].filter(Boolean).join(', ');
+  const openText = `${item.open_days} open day${item.open_days === 1 ? '' : 's'}`;
+  const skippedText = skipped ? `, ${skipped} skipped` : '';
+  const descriptive = !item.open_days ? 'No open days with records yet, so there is nothing to summarize.'
+    : `Last ${openText}${skippedText}. Average ${amount(item.avg_daily_use, u, p)} per day, ${item.zero_days_percent}% zero-usage days${item.last_7_days !== null ? `, last 7 days ${amount(item.last_7_days, u, p)}` : ''}. Switch to Predictive to see the method and forecast.`;
+  if (!item.ready) return { descriptive, steps: [], not_ready: item.not_ready_reason };
+  const alpha = item.method === 'ses' ? settings.ses_alpha : settings.croston_alpha;
+  const pending = item.pending_pattern
+    ? ` Pattern looks ${PATTERN_TEXT[item.pending_pattern.pattern]} for ${item.pending_pattern.days} of ${item.pending_pattern.needed} days; method stays ${item.method_label} for now.` : '';
+  const coverText = item.cover_capped
+    ? `Lead time ${settings.lead_time_days} day${settings.lead_time_days === 1 ? '' : 's'} + horizon ${horizon} days = ${item.cover_days_full} days, capped at ${item.cover_days} days (max cover for this item).`
+    : `Lead time ${settings.lead_time_days} day${settings.lead_time_days === 1 ? '' : 's'} + horizon ${horizon} days = ${item.cover_days} days to cover.`;
+  const onOrderText = item.on_order === null ? 'on order not counted' : `on order ${phpRound(item.on_order, 3)}`;
+  const steps = [
+    { title: 'History used', text: `${openText} used${skippedText}. Dips and spikes: ${settings.cap_spikes_and_dips ? 'capped' : 'included'}.` },
+    { title: 'Demand pattern', text: `ADI ${item.adi?.toFixed(2)}, CV² ${item.cv2?.toFixed(2)} → ${PATTERN_TEXT[item.latest_pattern]} demand.${item.low_confidence ? ' Lumpy demand: low confidence.' : ''}${pending}` },
+    { title: 'Method chosen', text: METHOD_REASON[item.method].replace('{alpha}', String(alpha)) },
+    { title: 'Daily rate', text: `About ${amount(item.daily_rate, u, p)} per day × ${horizon} days = ${amount(item.estimated_need, u, p)} estimated need.` },
+    { title: 'Cover period', text: coverText },
+    { title: 'Safety stock', text: `${settings.z_score} × forecast error ${phpRound(item.forecast_error, 2)} × √${item.cover_days} days = ${amount(item.safety_stock, u, p)}.` },
+    {
+      title: 'Suggested reorder',
+      text: `Target ${phpRound(item.target, 1)} (rate × ${item.cover_days} days + safety stock) − on hand ${phpRound(item.on_hand, 3)} − ${onOrderText} = ${phpRound(item.suggested_reorder_raw, 1)}, rounded up ${item.pack_size ? `to packs of ${phpRound(item.pack_size, 2).toFixed(2)}` : 'to whole units'} → ${amount(item.suggested_reorder, u, 1)}.`,
+    },
+  ];
+  return { descriptive, steps, not_ready: null };
+}
 
 forecastRoutes.get(`${base}/detail`, anyRole, async (c) => {
   const { db } = c.get('deps');
   const v = await validate(db, await readInput(c), { ...FILTERS, material_id: ['required', 'integer'] });
   const location = (await resolveForecastLocation(db, c.get('user'), idOf(v.location_id), true))!;
   const settings = await settingsFor(db, v.dips);
-  const result = await forLocation(db, location, Number(v.horizon ?? 1), settings);
+  const horizon = horizonDays(v.horizon);
+  const result = await forLocation(db, location, horizon, settings, c.get('user'));
   const item = result.items.find((row) => row.material_id === v.material_id);
   if (!item) abort(404, 'That raw material is not tracked for this branch.');
+  const days = item!.days as Row[];
+  // The forecast line: a flat daily rate from today to +horizon days.
+  const forecast = item!.ready ? Array.from({ length: horizon + 1 }, (_, i) => ({ offset: i, rate: item!.daily_rate })) : [];
   return ok(c, {
-    generated_at: result.generated_at, timezone: result.timezone, horizon_weeks: result.horizon_weeks, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw',
-    location: locationSummary(location, (await firstActivityDates(db, [location.id]))[location.id] ?? null), chart_weeks: result.weeks, item,
-    excluded_weeks: item!.weeks.filter((w: Row) => !w.is_included && w.status !== 'incomplete'), dips_and_spikes: item!.weeks.filter((w: Row) => w.flagged !== null), note: NOTE,
+    generated_at: result.generated_at, timezone: result.timezone, today: result.today, horizon_days: horizon, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw',
+    location: locationSummary(location, (await firstActivityDates(db, [location.id]))[location.id] ?? null),
+    last_activity_on: result.last_activity_on, freshness: freshness(result.last_activity_on),
+    item, forecast, explanation: explanation(item!, settings, horizon),
+    left_out: leftOutRanges(days.filter((d) => d.status !== 'incomplete')),
+    dips_and_spikes: days.filter((d) => d.flagged).map((d) => ({ date: d.date, flag: d.flagged, usage: d.usage, adjusted_usage: d.adjusted_usage })),
+    note: NOTE,
   });
 });
-
-const riskOf = (days: number | null, settings: ForecastSettings) => (days === null ? 'unknown' : days < settings.runs_out_days ? 'runs_out_soon' : days < settings.watch_days ? 'watch' : 'ok');
 
 forecastRoutes.get(`${base}/network`, central, async (c) => {
   const { db } = c.get('deps');
   const user = c.get('user');
   const v = await validate(db, await readInput(c), { brand_id: ['nullable', 'integer'], horizon: FILTERS.horizon, dips: FILTERS.dips });
-  const horizon = Number(v.horizon ?? 1);
+  const horizon = horizonDays(v.horizon);
   const settings = await settingsFor(db, v.dips);
   const locations = await visibleLocations(db, user, idOf(v.brand_id));
   const rows = new Map<number, Row>();
   const unmapped: Row[] = [];
   for (const location of locations) {
-    const result = await forLocation(db, location, horizon, settings);
+    const result = await forLocation(db, location, horizon, settings, user);
     for (const item of result.items) {
       const mapping = item.warehouse_product;
       if (mapping.product_id === null || !mapping.unit_match) {
         unmapped.push({ location_id: location.id, branch: String(location.name), material_id: item.material_id, material: item.name, unit: item.unit, reason: mapping.note ?? 'No warehouse product linked.' });
         continue;
       }
-      const row = rows.get(mapping.product_id) ?? { product_id: mapping.product_id, unit: mapping.unit, warehouse_stock: item.warehouse_stock, materials: 0, estimated_need: 0, suggested_reorder: 0, weekly_usage: 0, branches: [] };
+      const row = rows.get(mapping.product_id) ?? {
+        product_id: mapping.product_id, unit: mapping.unit, warehouse_stock: item.warehouse_stock, materials: 0, estimated_need: 0, suggested_reorder: 0, daily_usage: 0, low_cover_branches: 0,
+        method_mix: { wma: 0, ses: 0, croston: 0 } as Record<string, number>, branches: [],
+      };
       row.materials += 1;
       row.estimated_need += item.estimated_need ?? 0;
       row.suggested_reorder += item.suggested_reorder ?? 0;
-      row.weekly_usage += item.weighted_average ?? 0;
+      row.daily_usage += item.daily_rate ?? 0;
+      if (item.status === 'low_cover') row.low_cover_branches += 1;
+      if (item.method) row.method_mix[item.method] += 1;
       row.branches.push({
-        location_id: location.id, branch: String(location.name), material: item.name, ready: item.ready, on_hand: item.on_hand, on_order: item.on_order, estimated_need: item.estimated_need,
-        suggested_reorder: item.suggested_reorder, days_left: item.days_left, status: item.status,
+        location_id: location.id, branch: String(location.name), material: item.name, ready: item.ready, not_ready_reason: item.not_ready_reason, on_hand: item.on_hand, on_order: item.on_order,
+        estimated_need: item.estimated_need, suggested_reorder: item.suggested_reorder, days_of_cover: item.days_of_cover, status: item.status, method_label: item.method_label,
       });
       rows.set(mapping.product_id, row);
     }
@@ -127,27 +206,26 @@ forecastRoutes.get(`${base}/network`, central, async (c) => {
   const products = [...rows.entries()].map(([productId, row]) => {
     const product = catalogue.find((p) => p.id === productId);
     const stock = row.warehouse_stock === null ? null : Number(row.warehouse_stock);
-    const daily = row.weekly_usage / 7;
-    const cover = stock !== null && daily > 0 ? phpRound(stock / daily, 1) : null;
+    const cover = stock !== null && row.daily_usage > 0 ? phpRound(stock / row.daily_usage, 1) : null;
     return {
-      product_id: productId, name: product?.name ?? `Product #${productId}`, sku: product?.sku ?? null, unit: row.unit, warehouse_stock: stock, materials: row.materials, estimated_need: phpRound(row.estimated_need, 3),
-      suggested_reorder: phpRound(row.suggested_reorder, 3), weekly_usage: phpRound(row.weekly_usage, 3), days_of_cover: cover, risk: riskOf(cover, settings), branches: row.branches,
+      product_id: productId, name: product?.name ?? `Product #${productId}`, sku: product?.sku ?? null, unit: row.unit, warehouse_stock: stock, materials: row.materials,
+      estimated_need: phpRound(row.estimated_need, 3), suggested_reorder: phpRound(row.suggested_reorder, 3), daily_usage: phpRound(row.daily_usage, 3), warehouse_days_of_cover: cover,
+      low_cover_branches: row.low_cover_branches, method_mix: row.method_mix, branches: row.branches,
     };
   });
-  const order: Record<string, number> = { runs_out_soon: 0, watch: 1, unknown: 2, ok: 3 };
-  products.sort((a, b) => (order[a.risk] ?? 9) - (order[b.risk] ?? 9) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  products.sort((a, b) => b.low_cover_branches - a.low_cover_branches || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return ok(c, {
-    generated_at: new Date().toISOString(), timezone: TZ, horizon_weeks: horizon, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw', branch_count: locations.length,
+    generated_at: new Date().toISOString(), timezone: TZ, horizon_days: horizon, settings, dips_mode: settings.cap_spikes_and_dips ? 'cap' : 'raw', branch_count: locations.length,
     brands: brandsOf(await visibleLocations(db, user)).sort((a, b) => (a.name < b.name ? -1 : 1)), products, unmapped, note: NOTE,
   });
 });
 
-// Read-only hint on the Supply Request panel. It never fills or creates a request.
+// Read-only hint on the Supply Request panel (horizon 1 week). It never fills or creates a request.
 forecastRoutes.get(`${base}/suggestion`, anyRole, async (c) => {
   const { db } = c.get('deps');
   const v = await validate(db, await readInput(c), { location_id: FILTERS.location_id, product_id: ['required', 'integer'] });
   const location = (await resolveForecastLocation(db, c.get('user'), idOf(v.location_id), true))!;
-  const result = await forLocation(db, location, 1, await settingsFor(db, null));
+  const result = await forLocation(db, location, 7, await settingsFor(db, null), c.get('user'));
   const materials: Row[] = [];
   let suggested = 0;
   let ready = false;
@@ -155,7 +233,8 @@ forecastRoutes.get(`${base}/suggestion`, anyRole, async (c) => {
     if (item.warehouse_product.product_id !== v.product_id) continue;
     const unitMatch = Boolean(item.warehouse_product.unit_match);
     materials.push({
-      material_id: item.material_id, name: item.name, unit: item.unit, suggested_reorder: item.suggested_reorder, ready: item.ready, needed_weeks: item.needed_weeks, on_order: item.on_order, counted: unitMatch, note: unitMatch ? null : item.on_order_note,
+      material_id: item.material_id, name: item.name, unit: item.unit, suggested_reorder: item.suggested_reorder, ready: item.ready, needed_days: item.needed_days, needed_weeks: item.needed_weeks,
+      not_ready_reason: item.not_ready_reason, on_order: item.on_order, counted: unitMatch, note: unitMatch ? null : item.on_order_note,
     });
     if (!unitMatch) continue; // a quantity in another unit cannot be added to the product's
     suggested += item.suggested_reorder ?? 0;
@@ -174,13 +253,20 @@ forecastRoutes.get(`${base}/settings`, anyRole, async (c) => ok(c, { settings: s
 forecastRoutes.patch(`${base}/settings`, admin, async (c) => {
   const { db } = c.get('deps');
   const v = await validate(db, await readInput(c), {
-    minimum_included_weeks: ['sometimes', 'integer', 'min:1', 'max:26'], detection_weeks: ['sometimes', 'integer', 'min:2', 'max:52'], closed_days_threshold: ['sometimes', 'integer', 'min:0', 'max:7'],
-    include_manual_deductions: ['sometimes', 'boolean'], cap_spikes_and_dips: ['sometimes', 'boolean'], trend_threshold_percent: ['sometimes', 'numeric', 'min:0', 'max:100'], runs_out_days: ['sometimes', 'numeric', 'min:0', 'max:365'],
-    watch_days: ['sometimes', 'numeric', 'min:0', 'max:365'], lead_time_days: ['sometimes', 'integer', 'min:0', 'max:365'], closure_backdate_weeks: ['sometimes', 'integer', 'min:1', 'max:52'],
+    include_manual_deductions: ['sometimes', 'boolean'], cap_spikes_and_dips: ['sometimes', 'boolean'], trend_threshold_percent: ['sometimes', 'numeric', 'min:0', 'max:100'],
+    lead_time_days: ['sometimes', 'integer', 'min:0', 'max:365'], closure_backdate_weeks: ['sometimes', 'integer', 'min:1', 'max:52'],
+    lookback_open_days: ['sometimes', 'integer', 'min:14', 'max:90'], minimum_open_days: ['sometimes', 'integer', 'min:7', 'max:60'],
+    adi_cutoff: ['sometimes', 'numeric', 'min:1', 'max:3'], cv2_cutoff: ['sometimes', 'numeric', 'min:0.1', 'max:2'],
+    ses_alpha: ['sometimes', 'numeric', 'min:0.05', 'max:0.9'], croston_alpha: ['sometimes', 'numeric', 'min:0.05', 'max:0.9'], z_score: ['sometimes', 'numeric', 'min:0', 'max:3.5'],
+    low_cover_days: ['sometimes', 'numeric', 'min:0', 'max:60'], overstock_days: ['sometimes', 'numeric', 'min:1', 'max:365'],
+    method_switch_days: ['sometimes', 'integer', 'min:1', 'max:14'], stale_count_days: ['sometimes', 'integer', 'min:1', 'max:30'],
   });
   const row = await settingsRow(db);
-  if ('watch_days' in v || 'runs_out_days' in v) {
-    if (Number(v.watch_days ?? row.watch_days) <= Number(v.runs_out_days ?? row.runs_out_days)) fail('watch_days', 'The watch threshold must be higher than the run-out threshold.');
+  if ('overstock_days' in v || 'low_cover_days' in v) {
+    if (Number(v.overstock_days ?? row.overstock_days) <= Number(v.low_cover_days ?? row.low_cover_days)) fail('overstock_days', 'Overstocked must be more days than Low cover.');
+  }
+  if ('minimum_open_days' in v || 'lookback_open_days' in v) {
+    if (Number(v.minimum_open_days ?? row.minimum_open_days) > Number(v.lookback_open_days ?? row.lookback_open_days)) fail('minimum_open_days', 'The minimum open days cannot be more than the history window.');
   }
   const saved = await updateRow(db, 'forecast_settings', row.id, { ...v, updated_by_user_id: c.get('user').id });
   const after = settingsFrom(saved!);

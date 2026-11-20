@@ -11,6 +11,7 @@ import {
 } from '../services/materialStock.ts';
 import { stockStatus } from '../services/inventory.ts';
 import { audit } from '../services/users.ts';
+import { forecastAudit } from '../services/forecast.ts';
 import { DELIVERED_ON, IN_TRANSIT, OPEN as OPEN_SUPPLY, sqlList, SUBMITTED_OPEN } from '../services/supplyStatus.ts';
 
 export const branchRoutes = new Hono<AppEnv>();
@@ -238,6 +239,18 @@ branchRoutes.patch('/branches/:location/materials/:material/levels', logistics, 
   requireFound(material);
   if (material.location_id !== locationId) abort(404, 'Record not found.');
   const input = await readInput(c);
+  // Max cover days (perishables) for the Estimated Requirement, set on its own: 1–60 days or empty.
+  if ('max_cover_days' in input && !('low_level' in input) && !('critical_level' in input) && !('reset' in input)) {
+    const raw = input.max_cover_days;
+    const next = raw === null || raw === '' ? null : Number(raw);
+    if (next !== null && (!Number.isInteger(next) || next < 1 || next > 60)) fail('max_cover_days', 'Max cover days must be a whole number from 1 to 60, or empty for no cap.');
+    const before = material.max_cover_days === null || material.max_cover_days === undefined ? null : Number(material.max_cover_days);
+    const row = await updateRow(db, 'profittrack_materials', material.id, { max_cover_days: next });
+    if (before !== next) {
+      await forecastAudit(db, c.get('user'), locationId, 'forecast.max_cover_days_changed', 'profittrack_material', material.id, null, { before, after: next, unit: material.unit });
+    }
+    return ok(c, pick(row!, ['id', 'name', 'unit', 'low_level', 'critical_level', 'max_cover_days']), next === null ? 'Max cover days cleared.' : 'Max cover days saved.');
+  }
   const reset = boolParam(input.reset);
   let low: number;
   let critical: number;

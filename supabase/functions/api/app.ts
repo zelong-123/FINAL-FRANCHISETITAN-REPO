@@ -136,7 +136,8 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
         coalesce((select max(updated_at)::text from forecast_closure_periods), ''), (select count(*) from forecast_closure_periods),
         coalesce((select max(updated_at)::text from forecast_week_exclusions), ''), (select count(*) from forecast_week_exclusions),
         coalesce((select max(updated_at)::text from forecast_settings), ''), (select coalesce(max(id), 0) from supply_requests),
-        coalesce((select max(updated_at)::text from supply_requests), '')) as forecast_version`);
+        coalesce((select max(updated_at)::text from supply_requests), ''),
+        coalesce((select max(updated_at)::text from forecast_material_classes), ''), coalesce((select max(updated_at)::text from profittrack_materials), '')) as forecast_version`);
     return ok(c, { ...v, server_time: new Date().toISOString() });
   });
 
