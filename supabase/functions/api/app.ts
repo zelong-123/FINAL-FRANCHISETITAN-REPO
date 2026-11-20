@@ -27,6 +27,7 @@ import { forecastRoutes } from './routes/estimatedRequirement.ts';
 import { analyticsRoutes } from './routes/analytics.ts';
 import { locationReference } from './services/psgc.ts';
 import { BUILD } from './build-info.ts';
+import { loadScheduleLimits } from './services/schedule/settings.ts';
 
 export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   const app = new Hono<AppEnv>().basePath('/api/v1');
@@ -85,6 +86,11 @@ export function createApp(deps: Deps, allowedOrigins: string[] = ['*']) {
   // Registered before the applicant routes' siblings: /applicants/:id/activities/set-again lives here.
   for (const path of ['/activities', '/activities/*', '/schedule-sessions', '/schedule-sessions/*']) {
     app.use(path, authenticate);
+  }
+  // The Admin scheduling limits (capacity per session, sessions at the same time) are read once per
+  // scheduling request, so every rule helper in that request uses the saved values.
+  for (const path of ['/activities', '/activities/*', '/schedule-sessions', '/schedule-sessions/*', '/applicants/:applicant/activities/*']) {
+    app.use(path, async (_c, next) => { await loadScheduleLimits(deps.db); await next(); });
   }
   app.route('/', requirementRoutes);
   app.route('/', paymentRecordRoutes);

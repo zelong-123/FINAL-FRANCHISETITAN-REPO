@@ -170,7 +170,7 @@ test('Brand Confirmation is retired; Training waits for Orientation/Tasting veri
   assert.equal(Number(locked.brand_locked_by_user_id), adminUser.id);
   assert.match((await call('PUT', path, { token: admin, body: { preferred_brand_id: brandB.id } })).json.errors.preferred_brand_id[0], /locked/);
   const otherBrandTraining = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'training', brand_id: brandB.id, start_at: nextSlot('10:00'), end_at: nextSlot('11:00').replace(/T\d{2}/, 'T11'), applicant_ids: [id] } });
-  assert.match(otherBrandTraining.json.data.reasons.join(), /hindi tugma sa brand/, 'a session for another brand is refused');
+  assert.match(otherBrandTraining.json.data.reasons.join(), /This Training session is for [^;]+; the applicant selected /, 'a session for another brand is refused');
 
   const training = await call('POST', '/activities', { token: admin, body: trainingBody() });
   assert.equal(training.status, 201, JSON.stringify(training.json));

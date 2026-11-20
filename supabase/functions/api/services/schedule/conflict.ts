@@ -1,21 +1,28 @@
 // App\Services\Scheduling\ScheduleConflictService: plain if-then rules that never change data.
 // Overlap: new_start < end AND new_end > start. Only pending and confirmed sessions count.
-//  HARD  H1 applicant twice, H2 the same Sales user (handler) needs a 1-hour gap between sessions on a day
-//        (overlap included), H4 trainings never overlap, H5 capacity (Orientation/Tasting 5), H6 brand match
-//        (Training), H7 the handler must be every applicant's assigned Sales user
-//  MERGE M1 Orientation/Tasting of the SAME Sales user with seats (Admin only, never automatic)
-//  Different Sales users may run Orientation/Tasting sessions at the same time.
+//  HARD  H1 applicant twice
+//        H2 handler availability: the same Sales user (handler) never has two overlapping sessions of ANY
+//           activity and keeps a 1-hour gap between sessions on the same day
+//        H4 facility limit: at most N sessions of an activity at the same time across all Sales users
+//           (Admin settings; Orientation/Tasting 5, Training 2)
+//        H5 capacity per session (Admin settings; Orientation/Tasting 5, Training 1)
+//        H6 brand match (Training; Orientation/Tasting is any brand)
+//        H7 the handler must be every applicant's assigned Sales user
+//  JOIN  an overlapping session of the SAME Sales user and activity with a free seat is offered as a
+//        join target (merge_targets); the overlap itself is still refused.
+//  Different Sales users may run sessions at the same time, up to the facility limit.
 import type { Db, Row } from '../../lib/db.ts';
 import { fail, ValidationError } from '../../lib/http.ts';
 import { activityLabel, isSchedulable, NOT_SCHEDULABLE } from '../pipeline.ts';
 import {
   addMinutes, assertNoOtherActiveSchedule, assertNotPreviouslyCompleted, assertPrerequisiteDone, assertSlotFree, atLocal, capacityOf, DEFAULT_DURATION, formatRange,
   HANDLER_BUFFER_MINUTES, iso8601, isoDay, occupancyLabel, localDay, localMinutes, MINUTE, monthDay, parseLocal, resolveWindow, scheduleWindow, sessionCapacity, TRACKED_TYPES, weekdayMonthDay,
+  windowLabel,
 } from './rules.ts';
+import { facilityLimit, loadScheduleLimits } from './settings.ts';
 
 export const BRANDED_TYPES = ['training'];
 export const LIVE_STATUSES = ['pending', 'confirmed'];
-const NO_BRAND_PREFERENCE = 'Itakda muna ang brand preference ng applicant.';
 const SUGGESTION_LIMIT = 3;
 const SUGGESTION_STEP = 30;
 const SUGGESTION_DAYS = 14;
@@ -46,22 +53,67 @@ export const overlaps = (start: Date, end: Date, s: Row) => start < endOf(s) && 
 export const timeRange = (s: Row) => `${monthDay(startOf(s))} ${formatRange(startOf(s), endOf(s))}`;
 export const describe = (s: Row) => `${activityLabel(s.activity_type)}${s.brand?.name ? ` (${s.brand.name})` : ''} at ${timeRange(s)}`;
 
-/** "the next allowed start is 1:00 PM" — one hour after the session ends. */
-export function nextAllowed(session: Row): string {
-  const next = addMinutes(endOf(session), HANDLER_BUFFER_MINUTES);
-  const minutes = localMinutes(next);
-  const h = Math.trunc(minutes / 60);
-  return `the next allowed start after it is ${h % 12 === 0 ? 12 : h % 12}:${String(minutes % 60).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}.`;
+/** True when two windows on the same day are closer than the handler gap (an overlap included). */
+function tooClose(start: Date, end: Date, session: Row): boolean {
+  if (localDay(startOf(session)) !== localDay(start)) return false;
+  return start.getTime() < endOf(session).getTime() + HANDLER_BUFFER_MINUTES * MINUTE
+    && end.getTime() > startOf(session).getTime() - HANDLER_BUFFER_MINUTES * MINUTE;
 }
 
-/** H2: the same Sales user, the same day, less than the buffer apart (not overlapping). */
-function bufferReason(p: Row, session: Row): string | null {
-  if (p.handler_id === null || Number(session.handler_id ?? 0) !== p.handler_id) return null;
-  if (localDay(startOf(session)) !== localDay(p.start_at)) return null;
-  const gap = endOf(session) <= p.start_at ? (p.start_at.getTime() - endOf(session).getTime()) / MINUTE : (startOf(session).getTime() - p.end_at.getTime()) / MINUTE;
-  if (gap >= HANDLER_BUFFER_MINUTES) return null;
-  const before = endOf(session) <= p.start_at;
-  return `${session.handler?.full_name ?? 'This Sales user'} has ${describe(session)} — only ${Math.trunc(gap)} min apart. The same Sales user needs ${HANDLER_BUFFER_MINUTES / 60} hour between sessions${before ? `: ${nextAllowed(session)}` : ', so this session must end at least 1 hour before that one starts.'}`;
+const roundUpToStep = (minutes: number) => Math.ceil(minutes / 30) * 30;
+
+/**
+ * The handler's earliest start on `day`, at or after `fromMinutes`, that keeps the 1-hour gap from
+ * every one of the handler's sessions and still ends by closing time. null = nothing left that day.
+ */
+export function nextFreeStart(handlerSessions: Row[], day: string, fromMinutes: number, duration: number): number | null {
+  let t = roundUpToStep(Math.max(fromMinutes, scheduleWindow.opens));
+  for (let guard = 0; guard < 48; guard += 1) {
+    if (t + duration > scheduleWindow.closes) return null;
+    const start = atLocal(day, t);
+    const blocker = handlerSessions.find((s) => tooClose(start, addMinutes(start, duration), s));
+    if (!blocker) return t;
+    t = roundUpToStep(Math.max(t + 30, localMinutes(endOf(blocker)) + HANDLER_BUFFER_MINUTES));
+  }
+  return null;
+}
+
+/**
+ * H2 handler availability, one reason per clashing session:
+ * "Ana Cruz already has Orientation/Tasting 9:00–11:00 AM on Nov 21. Next free start: 12:00 PM (1-hour gap)."
+ */
+export function handlerAvailabilityReasons(p: { handler_id: number | null; start_at: Date; end_at: Date; activity_type: string }, sessions: Row[], ignore: number[] = []): string[] {
+  if (p.handler_id === null) return [];
+  const mine = sessions.filter((s) => !ignore.includes(s.id) && isLive(s) && Number(s.handler_id ?? 0) === p.handler_id);
+  const clashes = mine.filter((s) => tooClose(p.start_at, p.end_at, s));
+  if (!clashes.length) return [];
+  const day = localDay(p.start_at);
+  const duration = Math.round((p.end_at.getTime() - p.start_at.getTime()) / MINUTE);
+  const next = nextFreeStart(mine, day, localMinutes(p.start_at), duration);
+  const tail = next !== null
+    ? `Next free start: ${windowLabel(next)} (${HANDLER_BUFFER_MINUTES / 60}-hour gap).`
+    : `No later start is free that day for a ${duration / 60}-hour ${activityLabel(p.activity_type)} (${HANDLER_BUFFER_MINUTES / 60}-hour gap between sessions).`;
+  return clashes.map((s) => `${s.handler?.full_name ?? 'This Sales user'} already has ${activityLabel(s.activity_type)} ${formatRange(startOf(s), endOf(s))} on ${monthDay(startOf(s))}. ${tail}`);
+}
+
+/**
+ * H4 facility limit: "All 2 Training facilities are in use 2:00–3:00 PM on Nov 21." Counts the live
+ * sessions of the same activity at every moment of the proposal (different Sales users included).
+ */
+export function facilityReason(type: string, start: Date, end: Date, sessions: Row[], ignore: number[] = []): string | null {
+  const limit = facilityLimit(type);
+  if (!Number.isFinite(limit)) return null;
+  const same = sessions.filter((s) => s.activity_type === type && isLive(s) && !ignore.includes(s.id) && overlaps(start, end, s));
+  if (same.length < limit) return null;
+  const moments = [start, ...same.map(startOf).filter((t) => t > start && t < end)].sort((a, b) => a.getTime() - b.getTime());
+  for (const t of moments) {
+    const active = same.filter((s) => startOf(s) <= t && endOf(s) > t);
+    if (active.length < limit) continue;
+    const until = new Date(Math.min(end.getTime(), ...active.map((s) => endOf(s).getTime())));
+    const what = limit === 1 ? `The only ${activityLabel(type)} facility is` : `All ${limit} ${activityLabel(type)} facilities are`;
+    return `${what} in use ${formatRange(t, until)} on ${monthDay(t)}.`;
+  }
+  return null;
 }
 
 /** The one assigned Sales user shared by every applicant (null when any is unassigned or they differ). */
@@ -91,17 +143,29 @@ export function handlerReasons(type: string, handlerId: number | null, applicant
   return reasons;
 }
 
-export function brandReasons(type: string, brandId: number | null, applicants: Row[]): string[] {
+/** H6: a Training session has one brand and takes only applicants who selected that brand. */
+export function brandReasons(type: string, brandId: number | null, applicants: Row[], brandName: string | null = null): string[] {
   if (!BRANDED_TYPES.includes(type)) return [];
   const reasons: string[] = [];
   if (brandId === null) reasons.push(`Brand is required for ${activityLabel(type)}.`);
   for (const a of applicants) {
-    if (a.preferred_brand_id === null || a.preferred_brand_id === undefined) reasons.push(`${a.full_name}: ${NO_BRAND_PREFERENCE}`);
-    else if (brandId !== null && Number(a.preferred_brand_id) !== brandId) {
-      reasons.push(`${a.full_name}: brand preference is ${a.preferred_brand?.name ?? 'another brand'} — hindi tugma sa brand ng session.`);
+    const who = applicants.length > 1 ? a.full_name : 'the applicant';
+    if (a.preferred_brand_id === null || a.preferred_brand_id === undefined) {
+      reasons.push(`${a.full_name} has no selected brand yet. Set the applicant's brand before scheduling ${activityLabel(type)}.`);
+    } else if (brandId !== null && Number(a.preferred_brand_id) !== brandId) {
+      reasons.push(`This ${activityLabel(type)} session is for ${brandName ?? 'another brand'}; ${who} selected ${a.preferred_brand?.name ?? 'another brand'}.`);
     }
   }
   return reasons;
+}
+
+/** H5: "This session is full (5/5)." for a join, or the per-session limit for a new session. */
+export function capacityReason(type: string, existing: number, adding: number, capacity: number): string | null {
+  if (capacity < 1) return 'Capacity must be at least 1.';
+  if (existing + adding <= capacity) return null;
+  if (existing >= capacity) return `This session is full (${existing}/${capacity}).`;
+  if (existing > 0) return `This session has ${capacity - existing} seat(s) left (${existing}/${capacity}); ${adding} applicants were selected.`;
+  return `${activityLabel(type)} takes ${capacity} applicant${capacity === 1 ? '' : 's'} per session (${existing + adding} selected).`;
 }
 
 function normalize(p: Row) {
@@ -124,13 +188,16 @@ function normalize(p: Row) {
     detach: p.detach ?? null,
     check_applicant_gates: Boolean(p.check_applicant_gates),
     check_window: p.check_window === undefined ? true : Boolean(p.check_window),
+    // Joining an existing session uses no extra facility, so the facility limit is not re-checked.
+    check_facility: p.check_facility === undefined ? true : Boolean(p.check_facility),
+    brand_name: (p.brand_name ?? null) as string | null,
   };
 }
 type Proposal = ReturnType<typeof normalize>;
 
 function windowReasons(p: Proposal): string[] {
   try {
-    resolveWindow(p.start_at, null, p.end_at);
+    resolveWindow(p.start_at, null, p.end_at, p.activity_type);
     return [];
   } catch (error) {
     if (error instanceof ValidationError) return Object.values(error.errors).flat();
@@ -159,11 +226,12 @@ async function gateReasons(db: Db, p: Proposal, applicants: Row[]): Promise<stri
   return reasons;
 }
 
-function isMergeCandidate(p: Proposal, session: Row, participants: Row[], applicants: Row[]): boolean {
+/** An overlapping session these applicants could join instead: same Sales user and activity, a seat, the brand. */
+function isJoinCandidate(p: Proposal, session: Row, participants: Row[], applicants: Row[]): boolean {
   if (session.activity_type !== p.activity_type || !p.applicant_ids.length) return false;
-  if (p.activity_type === 'training') return false;
   if (p.handler_id !== null && Number(session.handler_id ?? 0) !== p.handler_id) return false;
   if (applicants.some((a) => Number(a.assigned_sales_user_id ?? 0) !== Number(session.handler_id ?? -1))) return false;
+  if (BRANDED_TYPES.includes(session.activity_type) && applicants.some((a) => Number(a.preferred_brand_id ?? 0) !== Number(session.brand_id ?? -1))) return false;
   return capacityOf(session) - participants.length >= p.applicant_ids.length;
 }
 
@@ -171,44 +239,30 @@ function checkAgainst(p: Proposal, applicants: Row[], sessions: Row[]) {
   const hard: string[] = [];
   const warnings: string[] = [];
   const targets: Row[] = [];
-  const separateBlockers: string[] = [];
   for (const session of sessions) {
-    if (p.ignore_session_ids.includes(session.id)) continue;
+    if (p.ignore_session_ids.includes(session.id) || !overlaps(p.start_at, p.end_at, session)) continue;
     let participants: Row[] = session.active_participants;
     if (p.detach && p.detach.session_id === session.id) participants = participants.filter((r) => r.applicant_id !== p.detach.applicant_id);
-
-    if (!overlaps(p.start_at, p.end_at, session)) {
-      const gapHard = bufferReason(p, session);
-      if (gapHard) hard.push(gapHard);
-      continue;
-    }
-    const sessionHard: string[] = [];
-    for (const clash of participants.filter((r) => p.applicant_ids.includes(r.applicant_id))) {
-      sessionHard.push(`${clash.applicant?.full_name ?? 'Applicant'} already has ${describe(session)}.`);
-    }
-    if (p.activity_type === 'training' && session.activity_type === 'training') {
-      sessionHard.push(`Overlaps with ${describe(session)} — Training sessions cannot overlap.`);
-    }
-    const mergeable = !sessionHard.length && isMergeCandidate(p, session, participants, applicants);
-    const sameHandler = p.handler_id !== null && session.handler_id === p.handler_id;
-    const handlerMessage = `${session.handler?.full_name ?? `Sales user #${session.handler_id}`} already has ${describe(session)}. The same Sales user needs ${HANDLER_BUFFER_MINUTES / 60} hour between sessions: ${nextAllowed(session)}`;
-    if (mergeable) {
+    const clashes = participants.filter((r) => p.applicant_ids.includes(r.applicant_id));
+    for (const clash of clashes) hard.push(`${clash.applicant?.full_name ?? 'Applicant'} already has ${describe(session)}.`);
+    if (!clashes.length && isJoinCandidate(p, session, participants, applicants)) {
       targets.push({
         session_id: session.id, activity_type: session.activity_type, start_at: iso8601(session.start_at), end_at: iso8601(session.end_at), time: timeRange(session),
         brand: session.brand?.name ?? null, handler: session.handler?.full_name ?? null, venue: session.venue, status: session.status,
         occupancy: occupancyLabel(participants.length, capacityOf(session)),
         why: `Same Sales user, ${capacityOf(session) - participants.length} seat(s) left`,
       });
-      if (sameHandler) separateBlockers.push(`${handlerMessage} Merge into that session or pick another handler.`);
-      else if (session.handler_id === p.handler_id && String(session.venue ?? '') === String(p.venue ?? '')) {
-        separateBlockers.push(`A separate session at the same time needs another handler or venue than ${describe(session)}.`);
-      }
-      continue;
     }
-    if (sameHandler) sessionHard.push(handlerMessage);
-    hard.push(...sessionHard);
   }
-  return { hard, merge_targets: targets, separate_blockers: separateBlockers, warnings };
+  // H2: any session of this Sales user (any activity) that overlaps or is less than 1 hour away.
+  hard.push(...handlerAvailabilityReasons(p, sessions, p.ignore_session_ids));
+  // H4: the facility limit for this activity at the same time.
+  if (p.check_facility) {
+    const facility = facilityReason(p.activity_type, p.start_at, p.end_at, sessions, p.ignore_session_ids);
+    if (facility) hard.push(facility);
+  }
+  // A separate session is never allowed while the same Sales user is busy: join instead.
+  return { hard, merge_targets: targets, separate_blockers: [] as string[], warnings };
 }
 
 async function suggestTimes(db: Db, p: Proposal, applicants: Row[]) {
@@ -243,22 +297,30 @@ export const applicantsWithBrand = async (db: Db, ids: number[]): Promise<Row[]>
   [`{${ids.join(',')}}`],
 ) : []);
 
+/** Every live session of the proposal's day (the handler gap, the next free start and the facility count need the whole day). */
+export const daySessions = (db: Db, start: Date) => {
+  const dayStart = atLocal(localDay(start), 0);
+  return liveSessions(db, dayStart, addMinutes(dayStart, 1440));
+};
+
 export async function evaluate(db: Db, proposal: Row, actor: Row | null, withSuggestions = true) {
+  // The Admin limits are read first: the capacity below and the facility rule use them.
+  await loadScheduleLimits(db);
   const p = normalize(proposal);
   const applicants = await applicantsWithBrand(db, p.applicant_ids);
   // No handler given: the applicants' assigned Sales user is the handler, so the capacity, the
   // 1-hour buffer and the handler rules always apply (and the write saves this handler).
   if (p.handler_id === null) p.handler_id = commonSalesUser(p.activity_type, applicants);
+  if (p.brand_id !== null && p.brand_name === null) p.brand_name = (await db.query(`select name from brands where id = $1`, [p.brand_id]))[0]?.name ?? null;
   const fixed: string[] = [];
   if (p.check_window) fixed.push(...windowReasons(p));
-  fixed.push(...brandReasons(p.activity_type, p.brand_id, applicants));
+  fixed.push(...brandReasons(p.activity_type, p.brand_id, applicants, p.brand_name));
   fixed.push(...handlerReasons(p.activity_type, p.handler_id, applicants));
-  const total = p.existing_count + p.applicant_ids.length;
-  if (p.max_capacity < 1) fixed.push('Capacity must be at least 1.');
-  else if (total > p.max_capacity) fixed.push(`Session full: ${activityLabel(p.activity_type)} allows ${p.max_capacity} applicants (${total}/${p.max_capacity}).`);
+  const full = capacityReason(p.activity_type, p.existing_count, p.applicant_ids.length, p.max_capacity);
+  if (full) fixed.push(full);
   if (p.check_applicant_gates) fixed.push(...(await gateReasons(db, p, applicants)));
 
-  const sessions = await liveSessions(db, addMinutes(p.start_at, -HANDLER_BUFFER_MINUTES), addMinutes(p.end_at, HANDLER_BUFFER_MINUTES));
+  const sessions = await daySessions(db, p.start_at);
   const timed = checkAgainst(p, applicants, sessions);
   const hard = [...fixed, ...timed.hard];
   const status = hard.length ? 'blocked' : timed.merge_targets.length ? 'mergeable' : timed.warnings.length ? 'warning' : 'ok';
@@ -280,18 +342,18 @@ export async function evaluate(db: Db, proposal: Row, actor: Row | null, withSug
 
 /** Every reason the source may NOT merge into the target (empty = mergeable). */
 export async function mergeReasons(db: Db, source: Row, target: Row, context?: Row[]): Promise<string[]> {
-  if (!isLive(target) || !isLive(source)) return ['Pending o Confirmed na session lang ang puwedeng pagsamahin.'];
-  if (source.activity_type !== target.activity_type) return [`Ibang activity (${activityLabel(source.activity_type)} vs ${activityLabel(target.activity_type)}) — hindi puwedeng pagsamahin.`];
+  if (!isLive(target) || !isLive(source)) return ['Only Pending or Confirmed sessions can be merged.'];
+  if (source.activity_type !== target.activity_type) return [`Different activities (${activityLabel(source.activity_type)} and ${activityLabel(target.activity_type)}) cannot be merged.`];
   if (target.activity_type === 'training') return ['Training sessions are never merged.'];
   // Only a future session can merge (business time): a source that is today or past cannot merge.
-  if (localDay(startOf(source)) <= localDay(new Date())) return ['Hindi na puwedeng pagsamahin ang session na ngayong araw o nakaraan na.'];
+  if (localDay(startOf(source)) <= localDay(new Date())) return ['A session that is today or already past cannot be merged.'];
   const reasons: string[] = [];
   const moving: Row[] = source.active_participants.map((r: Row) => r.applicant).filter(Boolean);
   if (Number(source.handler_id ?? 0) !== Number(target.handler_id ?? -1)) reasons.push('Different Sales users: a session belongs to one Sales user. Reassign the applicants first.');
   reasons.push(...handlerReasons(target.activity_type, target.handler_id === null || target.handler_id === undefined ? null : Number(target.handler_id), moving));
   const taken = target.active_participants.length;
   const capacity = capacityOf(target);
-  if (moving.length > capacity - taken) reasons.push(`Session full (${taken}/${capacity} applicants) — ${moving.length} applicant(s) would move.`);
+  if (moving.length > capacity - taken) reasons.push(`Merging would put ${taken + moving.length} applicants in a session of ${capacity} (now ${taken}/${capacity}).`);
   const movingIds = moving.map((a) => a.id);
   for (const r of target.active_participants.filter((x: Row) => movingIds.includes(x.applicant_id))) {
     reasons.push(`${moving.find((a) => a.id === r.applicant_id)?.full_name ?? 'Applicant'} is already in this session.`);

@@ -90,20 +90,22 @@ test('H1 applicant twice and H2 the same Sales user needs a 1-hour gap, with sug
   const start = slot(12, '10:00');
   await call('POST', '/schedule-sessions', { token: admin, body: session([a], start, { handler_id: salesUser.id, venue: 'Virtual' }) });
   const same = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([b], start, { handler_id: salesUser.id }) });
-  assert.equal(same.json.data.status, 'mergeable', 'an Orientation/Tasting of the same Sales user with seats is a merge candidate');
+  assert.equal(same.json.data.status, 'blocked', 'the same Sales user never has two overlapping sessions');
+  assert.match(same.json.data.reasons.join(), /already has Orientation\/Tasting 10:00–11:00 AM on [A-Z][a-z]{2} \d{1,2}\. Next free start: 12:00 PM \(1-hour gap\)\./);
+  assert.equal(same.json.data.merge_targets.length, 1, 'the overlapping session is offered to join instead');
   assert.equal(same.json.data.separate_allowed, false, 'the same Sales user cannot run a separate session at the same time');
   assert.equal(same.json.data.suggested_times.length, 3);
 
-  const refused = await call('POST', '/schedule-sessions', { token: admin, body: session([b], start, { handler_id: salesUser.id }) });
+  const refused = await call('POST', '/schedule-sessions', { token: admin, body: session([b], start, { handler_id: salesUser.id, create_separate: true }) });
   assert.equal(refused.status, 422);
   assert.ok(refused.json.evaluation, 'the refusal carries the evaluation');
-  assert.match(refused.json.message, /overlapping session can take these applicants/);
+  assert.match(JSON.stringify(refused.json.errors), /Next free start: 12:00 PM/);
 
-  // Right after the session (gap 0 min): a hard block that names the next allowed start, even for Admin.
+  // Right after the session (gap 0 min): a hard block that names the next free start, even for Admin.
   const near = session([b], slot(12, '11:00'), { handler_id: salesUser.id });
   const nearEval = (await call('POST', '/schedule-sessions/evaluate', { token: admin, body: near })).json.data;
   assert.equal(nearEval.status, 'blocked');
-  assert.match(nearEval.reasons.join(), /needs 1 hour between sessions: the next allowed start after it is 12:00 PM/);
+  assert.match(nearEval.reasons.join(), /Next free start: 12:00 PM \(1-hour gap\)/);
   assert.equal((await call('POST', '/schedule-sessions', { token: admin, body: { ...near, override_remarks: 'Handler agreed' } })).status, 422, 'the buffer cannot be overridden');
   // One hour after the end is allowed.
   const later = await call('POST', '/schedule-sessions', { token: admin, body: session([b], slot(12, '12:00'), { handler_id: salesUser.id }) });
@@ -146,15 +148,15 @@ test('H6 brand match and H5 capacity (Orientation/Tasting 5)', async () => {
   const a = await schedulable(brandA.id);
   const start = slot(13, '09:00');
   const wrong = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'training', brand_id: brandB.id, handler_id: salesUser.id }) });
-  assert.match(wrong.json.data.reasons.join(), /hindi tugma sa brand/);
+  assert.match(wrong.json.data.reasons.join(), /This Training session is for [^;]+; the applicant selected [^.]+\./);
   const none = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a], start, { activity_type: 'training', handler_id: salesUser.id }) });
   assert.match(none.json.data.reasons.join(), /Brand is required/);
   const cap = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session([a, await schedulable()], start, { max_capacity: 1, handler_id: salesUser.id }) });
-  assert.match(cap.json.data.reasons.join(), /Session full: Orientation\/Tasting allows 1 applicants \(2\/1\)/);
+  assert.match(cap.json.data.reasons.join(), /Orientation\/Tasting takes 1 applicant per session \(2 selected\)/);
   const six = [a];
   for (let i = 0; i < 5; i += 1) six.push(await schedulable());
   const tooMany = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: session(six, start, { max_capacity: 30, handler_id: salesUser.id }) });
-  assert.match(tooMany.json.data.reasons.join(), /Session full: Orientation\/Tasting allows 5 applicants \(6\/5\)/, 'a larger requested capacity is capped at 5');
+  assert.match(tooMany.json.data.reasons.join(), /Orientation\/Tasting takes 5 applicants per session \(6 selected\)/, 'a larger requested capacity is capped at 5');
   const five = await call('POST', '/schedule-sessions', { token: admin, body: session(six.slice(0, 5), start, { handler_id: salesUser.id }) });
   assert.equal(five.status, 201, JSON.stringify(five.json));
   assert.equal(five.json.data.session.occupancy, '5/5 · Full');

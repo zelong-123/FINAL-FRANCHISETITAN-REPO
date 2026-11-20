@@ -170,15 +170,15 @@ test('session rules on create and edit: 1-hour buffer for the same Sales user, T
   assert.equal(first.status, 201, JSON.stringify(first.json));
   const tooClose = await call('POST', '/activities', { token: admin, body: { applicant_id: b, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: at('11:30'), duration_minutes: 60, venue: 'Virtual', separate_session: true } });
   assert.equal(tooClose.status, 422);
-  assert.match(JSON.stringify(tooClose.json), /next allowed start after it is 12:00 PM/);
+  assert.match(JSON.stringify(tooClose.json), /Next free start: 12:00 PM \(1-hour gap\)/);
   const later = await call('POST', '/activities', { token: admin, body: { applicant_id: b, activity_type: 'orientation', title: 'Orientation/Tasting', starts_at: at('12:00'), duration_minutes: 60, venue: 'Virtual', separate_session: true } });
   assert.equal(later.status, 201, JSON.stringify(later.json));
   // Editing the later one back inside the buffer is refused too.
   const edit = await call('PUT', `/activities/${later.json.data.id}`, { token: admin, body: { starts_at: at('11:00'), duration_minutes: 60 } });
   assert.equal(edit.status, 422);
-  assert.match(JSON.stringify(edit.json), /1 hour between sessions/);
+  assert.match(JSON.stringify(edit.json), /Next free start: [0-9:]+ [AP]M \(1-hour gap\)/);
 
-  // Training: two Sales users may not overlap (H4 kept).
+  // Training: different Sales users may overlap up to the facility limit (2 at the same time).
   const t1 = await applicant('scheduled');
   const t2 = await applicant('scheduled');
   const [otherUser] = await q(`select id from users where email = 'tasting.sales2@example.test'`);
@@ -189,7 +189,10 @@ test('session rules on create and edit: 1-hour buffer for the same Sales user, T
   assert.ok(evalT.json.data, 'evaluated');
   await q(`insert into schedule_sessions (activity_type, start_at, end_at, status, max_capacity, handler_id, brand_id) values ('training', $1, $2, 'confirmed', 10, $3, $4)`, [tStart, tEnd, otherUser.id, brandA.id]);
   const overlap = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'training', brand_id: brandA.id, start_at: tStart, end_at: tEnd, applicant_ids: [t1], handler_id: salesUser.id } });
-  assert.match(overlap.json.data.reasons.join(' '), /Training sessions cannot overlap/, 'another Sales user overlapping Training is refused (H4 kept)');
+  assert.doesNotMatch(overlap.json.data.reasons.join(' '), /facilit|Training sessions cannot overlap/, 'one other Training at the same time is allowed');
+  await q(`insert into schedule_sessions (activity_type, start_at, end_at, status, max_capacity, handler_id, brand_id) values ('training', $1, $2, 'pending', 1, $3, $4)`, [tStart, tEnd, adminUser.id, brandA.id]);
+  const third = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'training', brand_id: brandA.id, start_at: tStart, end_at: tEnd, applicant_ids: [t1], handler_id: salesUser.id } });
+  assert.match(third.json.data.reasons.join(' '), /All 2 Training facilities are in use 10:00–11:00 AM on [A-Z][a-z]{2} \d{1,2}\./, 'a third Training at the same time is refused');
   void t2;
 });
 
@@ -275,7 +278,7 @@ test('a handler is always set: sessions and activities default to the assigned S
   assert.equal(Number(mirror.assigned_to_user_id), salesUser.id, 'the activity row carries the handler too');
   // Without a handler in the request the 1-hour buffer still applies.
   const near = await call('POST', '/schedule-sessions/evaluate', { token: admin, body: { activity_type: 'orientation', start_at: at('10:30'), end_at: at('11:30'), applicant_ids: [b] } });
-  assert.match(near.json.data.reasons.join(' '), /1 hour between sessions/);
+  assert.match(near.json.data.reasons.join(' '), /Next free start: [0-9:]+ [AP]M \(1-hour gap\)/);
   // An edit that clears the handler falls back to the assigned Sales user.
   const edited = await call('PUT', `/schedule-sessions/${created.json.data.session.id}`, { token: admin, body: { handler_id: null } });
   assert.equal(edited.status, 200, JSON.stringify(edited.json));

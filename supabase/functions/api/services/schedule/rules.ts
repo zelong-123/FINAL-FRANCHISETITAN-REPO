@@ -3,6 +3,7 @@
 import type { Db, Row } from '../../lib/db.ts';
 import { fail } from '../../lib/http.ts';
 import { activityLabel, assertPreviousActivityDone } from '../pipeline.ts';
+import { scheduleLimits } from './settings.ts';
 
 const OFFSET_MS = 8 * 3600_000;
 export const MINUTE = 60_000;
@@ -13,7 +14,9 @@ export const DEFAULT_DURATION: Record<string, number> = { orientation: 120, trai
 export const HANDLER_BUFFER_MINUTES = 60;
 export const NEAR_GAP_MINUTES = 30;
 const OPENS = 9 * 60;
-const CLOSES = 18 * 60;
+/** Every new or edited session starts at or after 9:00 AM and ends by 5:00 PM. */
+const CLOSES = 17 * 60;
+/** The latest start of the shortest (1-hour) session; a longer session's last start is earlier (lastStartFor). */
 const LAST_START = CLOSES - 60;
 const WORKING_DAYS = [1, 2, 3, 4, 5];
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -62,7 +65,7 @@ export function availableLabel(d: Date): string {
   const c = clock(d);
   return `${MONTHS[s.getUTCMonth()]} ${s.getUTCDate()}, ${s.getUTCFullYear()}, ${c.g}:${c.i} ${c.A}`;
 }
-const windowLabel = (minutes: number) => {
+export const windowLabel = (minutes: number) => {
   const h = Math.trunc(minutes / 60);
   return `${h % 12 === 0 ? 12 : h % 12}:${String(minutes % 60).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 };
@@ -79,8 +82,17 @@ export const scheduleWindow = {
   }),
 };
 
+/** The latest start (minutes after midnight) for a session of this length to end by closing time. */
+export const lastStartFor = (durationMinutes: number) => CLOSES - Math.max(60, durationMinutes);
+/** "Sessions must end by 5:00 PM: a 2-hour Orientation/Tasting can start at 3:00 PM at the latest." */
+export function endByReason(durationMinutes: number, type: string | null = null): string {
+  const what = `${durationMinutes / 60}-hour ${type ? activityLabel(type) : 'session'}`;
+  if (lastStartFor(durationMinutes) < OPENS) return `Sessions run between ${windowLabel(OPENS)} and ${windowLabel(CLOSES)} on one day: a ${what} does not fit.`;
+  return `Sessions must end by ${windowLabel(CLOSES)}: a ${what} can start at ${windowLabel(lastStartFor(durationMinutes))} at the latest.`;
+}
+
 /** The API is the authority on when an activity may run; the form only mirrors this. */
-export function resolveWindow(startsAt: Date, durationMinutes: number | null, endsAtValue: unknown) {
+export function resolveWindow(startsAt: Date, durationMinutes: number | null, endsAtValue: unknown, type: string | null = null) {
   let endsAt = endsAtValue ? parseLocal(endsAtValue) : null;
   if (durationMinutes !== null && durationMinutes > 0) {
     if (durationMinutes % 60 !== 0) fail('duration_minutes', 'Duration must be a whole number of hours (1 hr, 2 hrs, 3 hrs, …). Minutes are not allowed.');
@@ -98,14 +110,15 @@ export function resolveWindow(startsAt: Date, durationMinutes: number | null, en
   if (startsAt.getTime() < Date.now()) fail('starts_at', 'Activities cannot be scheduled in the past.');
   if (!WORKING_DAYS.includes(isoDay(startsAt)) || !WORKING_DAYS.includes(isoDay(end))) fail('starts_at', `Activities can only be scheduled ${DAYS_LABEL}.`);
   if (startMinutes < OPENS) fail('starts_at', `Activities must start between ${windowLabel(OPENS)} and ${lastLabel} local time.`);
-  if (end.getTime() > atLocal(localDay(startsAt), CLOSES).getTime()) fail('duration_minutes', `The activity must end by ${closeLabel}. Choose a shorter duration or an earlier start time.`);
   if (end.getTime() <= startsAt.getTime()) fail('duration_minutes', 'The activity duration must be at least 1 whole hour.');
   const minutes = Math.round((end.getTime() - startsAt.getTime()) / MINUTE);
+  if (end.getTime() > atLocal(localDay(startsAt), CLOSES).getTime()) fail('duration_minutes', endByReason(Math.ceil(minutes / 60) * 60, type));
   if (minutes % 60 !== 0) fail('duration_minutes', 'Duration must be a whole number of hours (1 hr, 2 hrs, 3 hrs, …). Minutes are not allowed.');
   return { starts_at: startsAt, ends_at: end, duration_minutes: minutes };
 }
 
-export const sessionCapacity = (type: string) => ({ orientation: 5, training: 10 } as Record<string, number>)[type] ?? 0;
+/** Applicants per session, from the Admin settings (Orientation/Tasting 5 and Training 1 by default). */
+export const sessionCapacity = (type: string) => ({ orientation: scheduleLimits().orientation_capacity, training: scheduleLimits().training_capacity } as Record<string, number>)[type] ?? 0;
 /** "2/5", or "5/5 · Full" when no seat is left. */
 export const occupancyLabel = (taken: number, capacity: number) => `${taken}/${capacity}${capacity > 0 && taken >= capacity ? ' · Full' : ''}`;
 /** An older session may carry a larger stored capacity: the current rule wins for new seats. */

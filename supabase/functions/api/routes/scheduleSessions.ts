@@ -11,6 +11,10 @@ import { activityLabel } from '../services/pipeline.ts';
 import { evaluate, evaluateDrag, isAdmin, loadSession, SESSION_RELATIONS } from '../services/schedule/conflict.ts';
 import { capacityOf, iso8601, occupancyLabel, parseLocal, scheduleWindow, TRACKED_TYPES, VENUE_OPTIONS } from '../services/schedule/rules.ts';
 import * as service from '../services/schedule/sessions.ts';
+import { availability, joinableSessions } from '../services/schedule/availability.ts';
+import { LIMIT_BOUNDS, LIMIT_KEYS, loadScheduleLimits, SCHEDULE_LIMIT_DEFAULTS } from '../services/schedule/settings.ts';
+import { audit } from '../services/users.ts';
+import { notifyRoles } from '../services/notifications.ts';
 
 export const sessionRoutes = new Hono<AppEnv>();
 const STATUSES = ['pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'merged'];
@@ -101,6 +105,10 @@ sessionRoutes.get('/schedule-sessions/summary', gate, async (c) => {
   const params: unknown[] = [parseLocal(v.to), parseLocal(v.from)];
   const where = ['s.start_at < $1', 's.end_at > $2'];
   const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
+  // The same filters as the calendar feed, so the panels count exactly what the chart can show.
+  const statuses = ([] as unknown[]).concat(c.req.queries('status[]') ?? c.req.queries('status') ?? []).map(String).filter((s) => STATUSES.includes(s));
+  if (statuses.length) add('s.status = any(?::text[])', `{${statuses.join(',')}}`);
+  if (boolParam(c.req.query('merge_suggested'))) where.push('s.merge_suggested');
   if (v.activity_type) add('s.activity_type = ?', v.activity_type);
   if (v.brand_id) add('s.brand_id = ?', v.brand_id);
   if (v.handler_id) add('s.handler_id = ?', v.handler_id);
@@ -118,9 +126,63 @@ sessionRoutes.get('/schedule-sessions/summary', gate, async (c) => {
   return ok(c, { status_counts, activity_counts });
 });
 
-sessionRoutes.get('/schedule-sessions/config', gate, (c) => {
+/** The window plus the Admin limits (capacity per session and sessions at the same time). */
+const configJson = async (c: Context<AppEnv>) => {
+  const limits = await loadScheduleLimits(c.get('deps').db);
+  return {
+    ...scheduleWindow.toArray(),
+    limits, limit_defaults: SCHEDULE_LIMIT_DEFAULTS, limit_bounds: LIMIT_BOUNDS,
+    capacity: { orientation: limits.orientation_capacity, training: limits.training_capacity },
+    facility_limit: { orientation: limits.orientation_facility_limit, training: limits.training_facility_limit },
+    editable: roleName(c) === 'admin',
+  };
+};
+
+sessionRoutes.get('/schedule-sessions/config', gate, async (c) => {
   can(c, 'activities.schedule');
-  return ok(c, scheduleWindow.toArray());
+  return ok(c, await configJson(c));
+});
+
+sessionRoutes.put('/schedule-sessions/config', role('admin'), async (c) => {
+  const { db } = c.get('deps');
+  const bounds = ['required', 'integer', `min:${LIMIT_BOUNDS.min}`, `max:${LIMIT_BOUNDS.max}`];
+  const v = await validate(db, await readInput(c), Object.fromEntries(LIMIT_KEYS.map((k) => [k, bounds])));
+  const before = await loadScheduleLimits(db);
+  const values = LIMIT_KEYS.map((k) => Number(v[k]));
+  const [existing] = await db.query(`select id from schedule_settings order by id desc limit 1`);
+  if (existing) {
+    await db.query(`update schedule_settings set ${LIMIT_KEYS.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_by_user_id = $${LIMIT_KEYS.length + 2}, updated_at = now() where id = $1`,
+      [existing.id, ...values, c.get('user').id]);
+  } else {
+    await db.query(`insert into schedule_settings (${LIMIT_KEYS.join(', ')}, updated_by_user_id) values (${LIMIT_KEYS.map((_k, i) => `$${i + 1}`).join(', ')}, $${LIMIT_KEYS.length + 1})`,
+      [...values, c.get('user').id]);
+  }
+  const after = await loadScheduleLimits(db);
+  await audit(c, db, 'settings.schedule_updated', null, { ...before }, { ...after });
+  return ok(c, await configJson(c), 'Scheduling limits saved. They apply to new and edited schedules.');
+});
+
+const pickerRules = { applicant_id: ['required', 'integer', 'exists:applicants,id'], activity_type: ['required', `in:${TRACKED_TYPES.join(',')}`] };
+
+/** Calendar picker: the applicant's Sales user only, the selected activity only. */
+sessionRoutes.get('/schedule-sessions/availability', gate, async (c) => {
+  can(c, 'activities.schedule');
+  const { db } = c.get('deps');
+  const v = await validate(db, c.req.query(), {
+    ...pickerRules, month: ['required', /^\d{4}-(0[1-9]|1[0-2])$/], duration_minutes: ['nullable', 'integer', 'min:60', 'max:600'],
+    ignore_session_id: ['nullable', 'integer'],
+  });
+  const [applicant] = await db.query(`select * from applicants where id = $1`, [v.applicant_id]);
+  return ok(c, await availability(db, applicant, v.activity_type, v.month, v.duration_minutes ? Number(v.duration_minutes) : null, v.ignore_session_id ? Number(v.ignore_session_id) : null));
+});
+
+/** Sessions panel: upcoming sessions of the activity by the applicant's Sales user, each joinable or with its reason. */
+sessionRoutes.get('/schedule-sessions/joinable', gate, async (c) => {
+  can(c, 'activities.schedule');
+  const { db } = c.get('deps');
+  const v = await validate(db, c.req.query(), pickerRules);
+  const [applicant] = await db.query(`select * from applicants where id = $1`, [v.applicant_id]);
+  return ok(c, await joinableSessions(db, applicant, v.activity_type, c.get('user')));
 });
 
 sessionRoutes.get('/schedule-sessions/handlers', gate, async (c) => {
@@ -228,7 +290,16 @@ sessionRoutes.post('/schedule-sessions/:session/participants', gate, async (c) =
   can(c, 'schedule_sessions.schedule');
   const { db } = c.get('deps');
   const v = await validate(db, await readInput(c), { applicant_id: ['required', 'integer', 'exists:applicants,id'] });
-  return ok(c, present(await service.addParticipant(db, await load(c), v.applicant_id, c.get('user'))), 'Participant added.');
+  const before = await load(c);
+  const session = await service.addParticipant(db, before, v.applicant_id, c.get('user'));
+  const [applicant] = await db.query(`select id, applicant_code, full_name from applicants where id = $1`, [v.applicant_id]);
+  await audit(c, db, 'schedule_session.participant_added', { type: 'App\\Models\\ScheduleSession', id: session.id }, { status: before.status }, { status: session.status, applicant_id: Number(v.applicant_id) });
+  if (session.status === 'pending') {
+    await notifyRoles(db, ['admin'], 'schedule_pending_approval', 'Session join awaiting approval',
+      `${applicant.applicant_code} (${applicant.full_name}) was added to ${activityLabel(session.activity_type)} session #${session.id}; it is awaiting approval.`,
+      { session_id: session.id, applicant_id: applicant.id }, c.get('user'));
+  }
+  return ok(c, present(session), session.status === 'pending' && before.status === 'confirmed' ? 'Participant added; the session is awaiting Admin approval.' : 'Participant added.');
 });
 
 sessionRoutes.delete('/schedule-sessions/:session/participants/:applicant', gate, async (c) => {

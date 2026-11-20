@@ -30,6 +30,8 @@ export async function assertActivityAllowed(db: Db, activity: Row, actor: Row | 
       applicant_ids: [applicant.id], existing_count: seated.length, max_capacity: target.max_capacity,
       ignore_session_ids: [target.id, ...(alone ? [previous!.id] : [])],
       detach: previous && !alone ? { session_id: previous.id, applicant_id: applicant.id } : null, check_window: false,
+      // Joining an existing session: it already holds its facility.
+      check_facility: false,
     }, actor, false);
     reasons.push(...evaluation.reasons);
   } else if (target && target.id === previous?.id && !alone) {
@@ -41,7 +43,6 @@ export async function assertActivityAllowed(db: Db, activity: Row, actor: Row | 
       detach: previous && !alone ? { session_id: previous.id, applicant_id: applicant.id } : null, check_window: false,
     }, actor, false);
     reasons = [...evaluation.reasons];
-    if (evaluation.status === 'mergeable' && !evaluation.separate_allowed) reasons.push(...evaluation.separate_blockers);
     for (const warning of evaluation.warnings) reasons.push(`${warning} Open the Master schedule to save it with Admin override remarks, or pick another time or handler.`);
   }
   if (reasons.length) throw new ValidationError({ starts_at: [...new Set(reasons)] });
