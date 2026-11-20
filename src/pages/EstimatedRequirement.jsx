@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowDownWideShort,
   FaArrowUpWideShort,
@@ -31,6 +31,7 @@ import { formatNumber } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
 import ForecastingSections from '../components/analytics/ForecastingSections';
+import BranchCombobox from '../components/BranchCombobox';
 
 // Estimated Requirement, daily model. Descriptive = what happened; Predictive = what to order. Estimates are
 // statistical and rule-based (WMA / SES / Croston on past usage), never AI, and never create an order.
@@ -240,35 +241,59 @@ function OneOffExclude({ locationId, item, day, onDone }) {
   );
 }
 
-function EstimateDetail({ locationId, materialId, horizon, dips, view, canExclude, onClose, onChanged }) {
+const PATTERN_TEXT = { smooth: 'smooth', erratic: 'erratic', intermittent: 'intermittent', lumpy: 'lumpy' };
+
+/**
+ * The selected item's detail, directly under the table (no modal). It keeps showing the last content while
+ * a new horizon or dips mode loads, and re-reads quietly when the page's live refresh fires.
+ */
+function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclude, liveTick, panelRef, onClose, onChanged }) {
   const remote = useRemote(
     () => api.get('/estimated-requirement/detail', { location_id: locationId || undefined, material_id: materialId, horizon, dips }),
     [locationId, materialId, horizon, dips],
   );
+  useEffect(() => {
+    if (liveTick) void remote.reload({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTick]);
   const detail = remote.data?.data;
   const item = detail?.item;
   const predictive = view === 'predictive';
   const resolvedLocation = detail?.location?.id ?? locationId;
   const afterExclude = () => { void remote.reload({ silent: true }); onChanged?.(); };
-  const title = item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Estimated requirement';
+  const title = item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Loading…';
 
   return (
-    <Modal title={title} onClose={onClose} size="wide">
-      {remote.loading ? <LoadingState label="Loading the daily history…" /> : remote.error ? <Notice type="error">{remote.error}</Notice> : (
+    <section
+      ref={panelRef}
+      tabIndex={-1}
+      aria-label={item ? `Detail for ${title}` : 'Item detail'}
+      className="p-4 mb-4 [background:var(--panel)] border border-line rounded-[14px] [scroll-margin-top:90px] focus:[outline:none]"
+    >
+      <header className="flex items-start justify-between gap-3 mb-[6px]">
+        <div className="flex flex-wrap items-center gap-[10px] min-w-0">
+          <h2 className="m-0 text-[17px] font-[700] text-text">{title}</h2>
+          {predictive && item?.ready && <span className={METHOD_TAG}>{item.method_label}</span>}
+          {item && <span className="text-[13px] text-text-secondary">On hand {quantity(item.on_hand, item)} · On order {quantity(item.on_order, item)}</span>}
+        </div>
+        <button type="button" className="inline-grid place-items-center w-[34px] h-[34px] flex-none border border-transparent rounded-[10px] [background:transparent] text-text-secondary cursor-pointer hover:text-text hover:[background:var(--hover)] hover:border-line focus-visible:[outline:2px_solid_var(--accent)]" aria-label="Close the item detail" onClick={onClose}>
+          <FaXmark aria-hidden="true" />
+        </button>
+      </header>
+      {remote.loading && !detail ? <LoadingState label="Loading the daily history…" /> : remote.error && !detail ? <Notice type="error" inline>{remote.error}</Notice> : (
         <>
-          <p className="er-note-inline flex items-center gap-2 m-[0_0_6px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {detail?.note || NOTE}</p>
-          <p className="m-[0_0_12px] text-muted text-[12px]">{detail?.freshness}</p>
-
-          <div className="flex flex-wrap items-center gap-[10px] m-[0_0_8px] text-[13px] text-text-secondary">
-            {predictive && item?.ready && <span className={METHOD_TAG}>{item.method_label}</span>}
-            <span>On hand <strong className="text-text">{quantity(item?.on_hand, item)}</strong> · On order <strong className="text-text">{quantity(item?.on_order, item)}</strong></span>
-            {predictive && item?.ready && item.days_of_cover !== null && (
-              <span>· Days of cover {formatNumber(item.days_of_cover, 1)} (incl. on order) · {formatNumber(item.days_on_hand, 1)} on hand only</span>
-            )}
-          </div>
-          {item?.on_order_note && <Notice type="info">{item.on_order_note}.{item?.warehouse_product?.note ? ` ${item.warehouse_product.note}` : ''}</Notice>}
+          <p className="m-[0_0_8px] text-muted text-[12px]">{detail?.freshness}</p>
+          {predictive && item?.ready && item.days_of_cover !== null && (
+            <p className="m-[0_0_8px] text-[13px] text-text-secondary">Days of cover {formatNumber(item.days_of_cover, 1)} (incl. on order) · {formatNumber(item.days_on_hand, 1)} on hand only (on order may not have arrived yet).</p>
+          )}
+          {item?.on_order_note && <Notice type="info" inline>{item.on_order_note}.{item?.warehouse_product?.note ? ` ${item.warehouse_product.note}` : ''}</Notice>}
 
           <UsageChart detail={detail} predictive={predictive} />
+          {predictive && item?.pending_pattern && (
+            <p className="m-[6px_0_0] p-[8px_12px] border border-line rounded-[10px] [background:var(--surface-subtle)] text-[12.5px] text-text-secondary" role="note">
+              Pattern looks {PATTERN_TEXT[item.pending_pattern.pattern]} for {item.pending_pattern.days} of {item.pending_pattern.needed} days; method stays {item.method_label} for now.
+            </p>
+          )}
 
           {!predictive ? (
             <section className={SECTION}>
@@ -337,7 +362,7 @@ function EstimateDetail({ locationId, materialId, horizon, dips, view, canExclud
           <p className="text-muted text-[12px] m-[14px_0_0]">Statistical, rule-based estimate from recorded usage (no AI). {NOTE}</p>
         </>
       )}
-    </Modal>
+    </section>
   );
 }
 
@@ -623,9 +648,11 @@ export default function EstimatedRequirement({ embedded = false }) {
   const [horizon, setHorizon] = useState(7);
   const [dips, setDips] = useState('cap');
   const [search, setSearch] = useState('');
-  const [branchQuery, setBranchQuery] = useState('');
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
-  const [detailId, setDetailId] = useState(null);
+  // The selected item (its detail panel sits under the table).
+  const [selectedId, setSelectedId] = useState(null);
+  const [liveTick, setLiveTick] = useState(0);
+  const panelRef = useRef(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openingDraft, setOpeningDraft] = useState('');
   const [openingBusy, setOpeningBusy] = useState(false);
@@ -648,11 +675,6 @@ export default function EstimatedRequirement({ embedded = false }) {
   const branches = useMemo(() => payload?.locations || [], [payload]);
   const location = payload?.location;
 
-  const visibleBranches = useMemo(() => {
-    const needle = branchQuery.trim().toLowerCase();
-    if (!needle) return branches;
-    return branches.filter((branch) => `${branch.name} ${branch.franchisee?.business_name || ''}`.toLowerCase().includes(needle));
-  }, [branches, branchQuery]);
 
   useEffect(() => {
     if (isFranchisee || locationId || branches.length === 0) return;
@@ -738,19 +760,30 @@ export default function EstimatedRequirement({ embedded = false }) {
   useForecastLiveRefresh(() => {
     reloadSide();
     void remote.reload({ silent: true });
+    setLiveTick((n) => n + 1);
   });
 
   const summary = payload?.summary;
-  const openRow = (item) => setDetailId(item.material_id);
+  // The selection survives view, horizon and dips changes; it is cleared when the item is no longer listed
+  // (another branch, a search that hides it).
+  const selected = selectedId !== null && items.some((i) => i.material_id === selectedId) ? selectedId : null;
+  const toggleRow = (item) => setSelectedId((current) => (current === item.material_id ? null : item.material_id));
+  useEffect(() => {
+    if (selected === null || !panelRef.current) return;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    panelRef.current.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+  }, [selected]);
   const rowProps = (item) => ({
     key: item.material_id,
-    onClick: () => openRow(item),
+    onClick: () => toggleRow(item),
     onKeyDown: (event) => {
       if (event.target !== event.currentTarget) return;
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRow(item); }
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRow(item); }
     },
     tabIndex: 0,
-    className: 'cursor-pointer [&:hover_td]:[background:var(--hover)] [&:focus-visible_td]:[background:var(--hover)] [&:focus-visible_td]:[outline:none] [&:focus-visible_td:first-child]:[box-shadow:inset_3px_0_0_var(--accent)]',
+    'aria-selected': selected === item.material_id,
+    'aria-expanded': selected === item.material_id,
+    className: `cursor-pointer [&:hover_td]:[background:var(--hover)] [&:focus-visible_td]:[background:var(--hover)] [&:focus-visible_td]:[outline:none] [&:focus-visible_td:first-child]:[box-shadow:inset_3px_0_0_var(--accent)] ${selected === item.material_id ? '[&_td]:[background:color-mix(in_srgb,_var(--accent)_10%,_transparent)]! [&_td:first-child]:[box-shadow:inset_3px_0_0_var(--accent)]' : ''}`,
   });
   const nameCell = (item) => (
     <td>
@@ -777,23 +810,17 @@ export default function EstimatedRequirement({ embedded = false }) {
       <div className="er-filters grid grid-cols-[repeat(auto-fit,_minmax(190px,_1fr))] gap-3 p-[14px] mb-4 [background:var(--panel)] border border-line rounded-[14px]">
         {!isFranchisee && (
           <>
-            <Field label="Search branch / franchisee">
-              <input type="search" value={branchQuery} placeholder="Type a branch name…" onChange={(event) => setBranchQuery(event.target.value)} />
-            </Field>
             <Field label="Branch">
-              <select
+              <BranchCombobox
+                branches={branches}
                 value={locationId}
-                onChange={(event) => {
-                  if (event.target.value === ALL_BRANCHES) { navigate('/estimated-requirement/network'); return; }
-                  setLocationId(event.target.value);
+                extra={canExclude ? [{ value: ALL_BRANCHES, label: 'All branches — network view' }] : []}
+                onChange={(next) => {
+                  if (next === ALL_BRANCHES) { navigate('/estimated-requirement/network'); return; }
+                  setSelectedId(null);
+                  setLocationId(next);
                 }}
-              >
-                {canExclude && <option value={ALL_BRANCHES}>All branches — network view</option>}
-                {visibleBranches.length === 0 && <option value="">No branch matches</option>}
-                {visibleBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>{branch.name}{branch.franchisee?.business_name ? ` · ${branch.franchisee.business_name}` : ''}</option>
-                ))}
-              </select>
+              />
             </Field>
             <Field label="Brand">
               <select value={brandId} onChange={(event) => setBrandId(event.target.value)}>
@@ -922,8 +949,25 @@ export default function EstimatedRequirement({ embedded = false }) {
                 </table>
               </div>
             )}
-            <p className="text-muted text-[12px] m-[10px_0_0]"><FaChartLine aria-hidden="true" className="inline mr-1 text-accent-text" />Click a row to open its daily chart{predictive ? ', the forecast and how the estimate was worked out' : ' and how usage was summarized'}.</p>
+            {selected === null && sortedItems.length > 0 && (
+              <p className="text-muted text-[12px] m-[10px_0_0]"><FaChartLine aria-hidden="true" className="inline mr-1 text-accent-text" />Select an item in the table to see its chart.</p>
+            )}
           </section>
+
+          {selected !== null && (
+            <ItemDetailPanel
+              locationId={locationId || location?.id}
+              materialId={selected}
+              horizon={horizon}
+              dips={dips}
+              view={view}
+              canExclude={canExclude}
+              liveTick={liveTick}
+              panelRef={panelRef}
+              onClose={() => setSelectedId(null)}
+              onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
+            />
+          )}
 
           {canCreateClosure && (
             <ClosuresPanel
@@ -944,19 +988,6 @@ export default function EstimatedRequirement({ embedded = false }) {
             />
           )}
         </>
-      )}
-
-      {detailId !== null && (
-        <EstimateDetail
-          locationId={locationId || location?.id}
-          materialId={detailId}
-          horizon={horizon}
-          dips={dips}
-          view={view}
-          canExclude={canExclude}
-          onClose={() => setDetailId(null)}
-          onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
-        />
       )}
 
       {settingsOpen && (
