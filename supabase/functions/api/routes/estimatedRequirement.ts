@@ -21,11 +21,23 @@ const TZ = 'Asia/Manila';
 const base = '/estimated-requirement';
 const FILTERS = { location_id: ['nullable', 'integer'], horizon: ['nullable', 'integer', 'in:7,14,30,1,2,4'], dips: ['nullable', 'in:cap,raw'] };
 
+/** Settings a view filter changed away from the saved ones: shown, never recorded. */
+const VIEW_ONLY = new WeakSet<ForecastSettings>();
+
 /** The dips and spikes option on the page header; the saved setting is the default. */
 async function settingsFor(db: Db, dips: string | null | undefined): Promise<ForecastSettings> {
   const settings = settingsFrom(await settingsRow(db));
-  return dips === 'cap' || dips === 'raw' ? { ...settings, cap_spikes_and_dips: dips === 'cap' } : settings;
+  if (dips !== 'cap' && dips !== 'raw') return settings;
+  const viewed = { ...settings, cap_spikes_and_dips: dips === 'cap' };
+  if (viewed.cap_spikes_and_dips !== settings.cap_spikes_and_dips) VIEW_ONLY.add(viewed);
+  return viewed;
 }
+/**
+ * Who a request records demand classes as. Only a request on the SAVED settings records (and audits) a
+ * class: a different "Dips and spikes" view may show another pattern, but must never write one, or two
+ * viewers with different filters would keep flipping the stored class and refreshing each other.
+ */
+const recorder = (user: Row, settings: ForecastSettings): Row | null => (VIEW_ONLY.has(settings) ? null : user);
 const idOf = (value: unknown) => (value === null || value === undefined ? null : Number(value));
 
 function locationSummary(location: Row, firstActivity: string | null): Row {
@@ -82,7 +94,7 @@ forecastRoutes.get(base, anyRole, async (c) => {
     items: [], summary: null, brands: brandsOf(brandId !== null ? await visibleLocations(db, user) : locations), note: NOTE,
   };
   if (location === null) return ok(c, { ...payload, requires_location: true });
-  const result = await forLocation(db, location, horizon, settings, user);
+  const result = await forLocation(db, location, horizon, settings, recorder(user, settings));
   const needle = String(v.search ?? '').trim().toLowerCase();
   const items = needle ? result.items.filter((item) => `${item.name} ${item.variant}`.toLowerCase().includes(needle)) : result.items;
   return ok(c, {
@@ -151,7 +163,7 @@ forecastRoutes.get(`${base}/detail`, anyRole, async (c) => {
   const location = (await resolveForecastLocation(db, c.get('user'), idOf(v.location_id), true))!;
   const settings = await settingsFor(db, v.dips);
   const horizon = horizonDays(v.horizon);
-  const result = await forLocation(db, location, horizon, settings, c.get('user'));
+  const result = await forLocation(db, location, horizon, settings, recorder(c.get('user'), settings));
   const item = result.items.find((row) => row.material_id === v.material_id);
   if (!item) abort(404, 'That raw material is not tracked for this branch.');
   const days = item!.days as Row[];
@@ -178,7 +190,7 @@ forecastRoutes.get(`${base}/network`, central, async (c) => {
   const rows = new Map<number, Row>();
   const unmapped: Row[] = [];
   for (const location of locations) {
-    const result = await forLocation(db, location, horizon, settings, user);
+    const result = await forLocation(db, location, horizon, settings, recorder(user, settings));
     for (const item of result.items) {
       const mapping = item.warehouse_product;
       if (mapping.product_id === null || !mapping.unit_match) {

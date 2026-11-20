@@ -459,3 +459,50 @@ test('analytics: inventory movement and the franchising dashboard', async () => 
   assert.equal(wide.json.data.bucket, 'year', 'wide ranges roll up to years');
   assert.match((await call('GET', '/analytics/franchising-dashboard?from=2024-01-01', { token: admin })).json.errors.to[0], /required when from/);
 });
+
+test('the Dips and spikes view filter never records or audits a class; only the saved setting does', async () => {
+  // 1 L a day with two 20 L spikes: capped it reads smooth, included it reads erratic.
+  const spiky = await material('Spiky syrup', 'L');
+  for (let n = 20; n >= 1; n -= 1) await use(spiky, n, n === 10 || n === 15 ? 20 : 1);
+  const classOf = async () => (await q(`select pattern, method, updated_at::text as at from forecast_material_classes where location_id = $1 and material_id = $2`, [branch.id, spiky]))[0];
+  const changes = async () => (await q(`select count(*)::int c from profittrack_audit_events where action = 'forecast.method_changed' and entity_id = $1`, [spiky]))[0].c;
+  const version = async () => (await call('GET', '/sync-status', { token: admin })).json.data.forecast_version;
+  const list = (dips = '') => call('GET', `${base}?location_id=${branch.id}${dips ? `&dips=${dips}` : ''}`, { token: admin });
+
+  await list(); // saved settings (cap): the class is recorded
+  const recorded = await classOf();
+  assert.equal(recorded.pattern, 'smooth');
+  const events = await changes();
+  const v0 = await version();
+
+  // View toggles: raw then cap, the reverse, the detail and the network view. Nothing is written.
+  const raw = (await list('raw')).json.data.items.find((i: any) => i.material_id === spiky);
+  assert.deepEqual([raw.pattern, raw.method], ['erratic', 'ses'], 'the page still shows the pattern for the chosen view');
+  await list('cap');
+  await list('raw');
+  await call('GET', `${base}/detail?material_id=${spiky}&location_id=${branch.id}&dips=raw`, { token: admin });
+  assert.equal((await call('GET', `${base}/network?dips=raw`, { token: logistics })).status, 200);
+  assert.deepEqual(await classOf(), recorded, 'no forecast_material_classes change');
+  assert.equal(await changes(), events, 'no forecast.method_changed event');
+  assert.equal(await version(), v0, 'forecast_version unchanged by view toggles');
+
+  // Changing the SAVED setting can change the recorded class, audited once.
+  assert.equal((await call('PATCH', `${base}/settings`, { token: admin, body: { cap_spikes_and_dips: false } })).status, 200);
+  try {
+    await list();
+    await list();
+    assert.equal((await classOf()).pattern, 'erratic');
+    assert.equal(await changes(), events + 1, 'audited once');
+    const [event] = await q(`select metadata from profittrack_audit_events where action = 'forecast.method_changed' and entity_id = $1 order by id desc limit 1`, [spiky]);
+    assert.deepEqual([event.metadata.before.pattern, event.metadata.after.pattern], ['smooth', 'erratic']);
+    // The reverse toggle (view cap while the saved setting is raw) records nothing either.
+    const v1 = await version();
+    await list('cap');
+    await call('GET', `${base}/network?dips=cap`, { token: logistics });
+    assert.equal((await classOf()).pattern, 'erratic');
+    assert.equal(await changes(), events + 1);
+    assert.equal(await version(), v1);
+  } finally {
+    await call('PATCH', `${base}/settings`, { token: admin, body: { cap_spikes_and_dips: true } });
+  }
+});

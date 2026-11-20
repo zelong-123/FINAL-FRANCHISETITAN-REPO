@@ -32,6 +32,7 @@ create table if not exists public."forecast_material_classes" (
   constraint "forecast_material_classes_pattern_check" check ("pattern" in ('smooth', 'erratic', 'intermittent', 'lumpy')),
   constraint "forecast_material_classes_method_check" check ("method" in ('wma', 'ses', 'croston'))
 );
+create index if not exists "forecast_material_classes_material_id_index" on public."forecast_material_classes" ("material_id");
 alter table public."forecast_material_classes" enable row level security;
 drop trigger if exists set_updated_at on public."forecast_material_classes";
 create trigger set_updated_at before update on public."forecast_material_classes" for each row execute function public.set_updated_at();
