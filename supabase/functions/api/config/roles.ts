@@ -54,8 +54,6 @@ export const PERMISSIONS: Record<string, string[]> = {
   'schedule_sessions.override_warning': ['admin'],
 
   'analytics.view': [],
-  'forecasts.view': ['admin', 'logistics'],
-  'forecasts.generate': ['admin', 'logistics'],
   'analytics.include_archived': ['admin', 'marketing'],
   'analytics.franchising': ['admin', 'sales'],
 

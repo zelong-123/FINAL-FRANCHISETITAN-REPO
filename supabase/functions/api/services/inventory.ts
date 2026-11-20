@@ -1,4 +1,4 @@
-// App\Services\InventoryService, InventoryAuditService, ForecastService and WarehouseCsvService.
+// App\Services\InventoryService, InventoryAuditService and WarehouseCsvService. (The monthly ForecastService was retired.)
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, manilaToday, updateRow, ValidationError } from '../lib/http.ts';
 
@@ -64,39 +64,6 @@ export function stockAudit(db: Db, actor: Row, action: string, source: string, o
   return insertRow(db, 'inventory_audit_logs', {
     actor_user_id: actor.id, actor_role: actor.role?.name ?? null, brand_id: fields.productBrandId ?? fields.inventory?.product?.brand_id ?? null,
     product_id: fields.inventory?.product_id ?? null, inventory_id: fields.inventory?.id ?? null, action, source, old_quantity: oldQuantity, new_quantity: newQuantity, note: fields.note ?? null,
-  });
-}
-
-// ---- Monthly forecast (ForecastService) ----
-const SAFETY_PERCENT = 15;
-const manilaMonth = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit' }).format(d);
-
-function monthsBack(periods: number) {
-  const [y, m] = manilaMonth().split('-').map(Number);
-  return Array.from({ length: periods }, (_, i) => {
-    const d = new Date(Date.UTC(y, m - 1 - (periods - 1 - i), 1));
-    return d.toISOString().slice(0, 7);
-  });
-}
-
-export async function generateForecast(db: Db, inventory: Row, periods: number, user: Row | null): Promise<Row> {
-  const months = monthsBack(periods);
-  const start = `${months[0]}-01`;
-  const [ey, em] = months[months.length - 1].split('-').map(Number);
-  const end = new Date(Date.UTC(ey, em, 0)).toISOString().slice(0, 10);
-  const rows = await db.query(
-    `select to_char(transaction_date at time zone 'Asia/Manila', 'YYYY-MM') as month, sum(abs(quantity)) as quantity from inventory_transactions
-     where inventory_id = $1 and type in ('consumption', 'fulfillment', 'adjustment_out')
-       and transaction_date >= $2::date::timestamp at time zone 'Asia/Manila' and transaction_date < ($3::date + 1)::timestamp at time zone 'Asia/Manila' group by 1`,
-    [inventory.id, start, end],
-  );
-  const series = months.map((period) => ({ period, quantity: round2(Number(rows.find((r) => r.month === period)?.quantity ?? 0)) }));
-  const values = series.slice(-periods).map((s) => s.quantity);
-  const prediction = values.length ? round2(values.reduce((a, b) => a + b, 0) / values.length) : 0;
-  const recommended = Math.max(0, Math.ceil(prediction * (1 + SAFETY_PERCENT / 100) - Number(inventory.current_stock)));
-  return insertRow(db, 'forecasts', {
-    inventory_id: inventory.id, method: 'simple_moving_average', period_start: start, period_end: end, periods_used: periods, predicted_quantity: prediction,
-    recommended_reorder_quantity: recommended, input_series: series, generated_by_user_id: user?.id ?? null, generated_at: new Date(),
   });
 }
 

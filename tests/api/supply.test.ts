@@ -83,7 +83,10 @@ test('warehouse CSV: preview finds problems, apply updates exactly what it previ
   assert.equal(same.json.data.unchanged, 1, 'matching quantity writes nothing');
   const exported = await call('GET', `/warehouse/export?brand_id=${brand.id}`, { token: logistics });
   assert.match(await exported.res.text(), /120,20,5,NORMAL/);
-  assert.equal((await call('POST', `/inventories/${inventoryId}/forecast`, { token: admin, body: {} })).json.data.method, 'simple_moving_average');
+  // The monthly forecast (System 2) is retired: its endpoints are gone; the forecasts table keeps its rows.
+  assert.equal((await call('POST', `/inventories/${inventoryId}/forecast`, { token: admin, body: {} })).status, 404);
+  assert.equal((await call('GET', '/forecasts', { token: admin })).status, 404);
+  assert.equal((await call('POST', '/forecasts/generate', { token: admin, body: {} })).status, 404);
 });
 
 const stockOf = async () => Number((await q(`select current_stock from inventories where id = $1`, [inventoryId]))[0].current_stock);

@@ -62,7 +62,4 @@ test('?view=master-schedule: Admin and Sales only; anyone else falls back to the
 
 test('Forecasting sections: Admin + Logistics only, never the franchisee tab', () => {
   assert.deepEqual(FORECASTING_SECTION_ROLES, ['admin', 'logistics']);
-  assert.equal(can('sales', 'forecasts.view'), false);
-  assert.equal(can('franchisee', 'forecasts.view'), false);
-  assert.equal(can('logistics', 'forecasts.generate'), true);
 });

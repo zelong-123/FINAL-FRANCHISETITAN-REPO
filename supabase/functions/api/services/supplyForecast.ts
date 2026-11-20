@@ -1,6 +1,7 @@
-// Read-only use of the existing estimated-requirement forecast for the supply workflow: the
-// suggested quantity (the same figure EstimateHint shows) and the days covered, per warehouse
-// product, for one branch. Nothing here changes how the forecast is calculated.
+// Read-only use of the estimated-requirement forecast for the supply workflow: the suggested
+// quantity for 1 week (the same figure EstimateHint shows) and the days covered, per warehouse
+// product, for one branch. Days covered counts ON HAND only: the request being reviewed is itself
+// "on order", so counting on order would let a request make itself look covered.
 import type { Db, Row } from '../lib/db.ts';
 import { forLocation, settingsFrom, settingsRow } from './forecast.ts';
 import { phpRound } from './forecast.ts';
@@ -12,7 +13,7 @@ export async function forecastFor(db: Db, location: Row, productIds: number[]): 
   if (!productIds.length) return out;
   let result: Row;
   try {
-    result = await forLocation(db, location, 1, settingsFrom(await settingsRow(db)));
+    result = await forLocation(db, location, 7, settingsFrom(await settingsRow(db)));
   } catch {
     return out; // no forecast for this branch yet: the checks that need it are skipped
   }

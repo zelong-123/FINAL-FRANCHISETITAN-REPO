@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, LOGISTICS, PASSWORD, setup } from '../support/harness.ts';
 import { addDays, manilaDate, weekday, earliestTargetDate } from '../../supabase/functions/api/services/workingDays.ts';
-import { addDays as forecastAddDays, weekStart } from '../../supabase/functions/api/services/forecast.ts';
+import { addDays as forecastAddDays } from '../../supabase/functions/api/services/forecast.ts';
 
 const { pg, call, login, auth, files } = await setup();
 const admin = await login(ADMIN);
@@ -200,17 +200,16 @@ test('4. Partial – Consolidated reserves stock another request cannot take, th
 });
 
 test('5. bulk: over 50% needs a reason; Admin returns it; the branch edits and resubmits', async () => {
-  // A ready estimate for Alpha: nine complete weeks of 10 kg used, nothing on hand.
+  // A ready estimate for Alpha (daily model): 20 recorded days of 2 kg used, nothing on hand.
   const sugar = await product('Brown sugar', 'kg', 500);
   const created = await call('POST', '/profittrack/materials', { token: A.token, body: { name: 'Brown sugar', unit: 'kg' } });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   await q(`update profittrack_materials set warehouse_product_id = $1 where id = $2`, [sugar.id, created.json.data.id]);
-  const thisWeek = weekStart(manilaDate());
-  for (let ago = 10; ago >= 1; ago--) {
-    if (ago === 6) continue;
+  const today = manilaDate();
+  for (let ago = 20; ago >= 1; ago--) {
     await q(
-      `insert into profittrack_material_movements (location_id, material_id, type, quantity_delta_milli, reason, recorded_by_user_id, occurred_at) values ($1, $2, 'physical_count', -10000, 'Used', $3, ($4::date + 2)::timestamp at time zone 'Asia/Manila')`,
-      [A.id, created.json.data.id, A.userId, forecastAddDays(thisWeek, -7 * ago)],
+      `insert into profittrack_material_movements (location_id, material_id, type, quantity_delta_milli, reason, recorded_by_user_id, occurred_at) values ($1, $2, 'physical_count', -2000, 'Used', $3, ($4::date + time '12:00') at time zone 'Asia/Manila')`,
+      [A.id, created.json.data.id, A.userId, forecastAddDays(today, -ago)],
     );
   }
   const check = await post(A.token, '/supply-requests/check', { location_id: A.id, items: [{ product_id: sugar.id, quantity_requested: 1 }] });
