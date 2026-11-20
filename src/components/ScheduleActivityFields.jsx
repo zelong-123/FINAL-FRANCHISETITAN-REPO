@@ -13,16 +13,20 @@ import {
 } from '../lib/scheduleRules';
 import { closesMinutes, isWorkingDate, lastStartMinutes, minutesLabel } from '../lib/scheduleConfig';
 import useScheduleConfig from '../lib/useScheduleConfig';
+import { SmartStartPicker } from './schedule/SmartSchedule';
 
 /**
  * Starts (date + hour + minute), Duration (whole hours + Custom), Venue and the
  * calculated end time — shared by the Activities page and the Applicant modal
  * (Phase 2) so both use exactly the same whole-hour rules.
  *
- * The applicant pickers stay in the parent: One applicant hides the People
- * attending section, Multiple shows it with the capacity counter.
+ * The applicant picker stays in the parent.
+ *
+ * `smart` (new schedules with an applicant and an activity): the date input and the hour select
+ * become the calendar picker (the applicant's Sales user's sessions as dots, unavailable days
+ * dimmed) and hour slots 9–5 with their reasons. { availability, month, setMonth, activityLabel }
  */
-export default function ScheduleWindowFields({ form, setForm, onError }) {
+export default function ScheduleWindowFields({ form, setForm, onError, smart = null }) {
   // The one scheduling window (same values as the API save check).
   const window_ = useScheduleConfig();
   const closeLabel = minutesLabel(closesMinutes());
@@ -78,8 +82,24 @@ export default function ScheduleWindowFields({ form, setForm, onError }) {
   const today = new Date();
   const minDate = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
 
+  /** A day, an hour slot or Next available was picked in the smart picker. */
+  const pickSmart = ({ date, hour, month }) => {
+    if (month) smart.setMonth(month);
+    updateStart({ start_date: date, ...(hour !== undefined ? { start_hour: hour, start_minute: 0 } : {}) });
+  };
+
   return (
     <>
+      {smart ? (
+        <SmartStartPicker
+          availability={smart.availability}
+          month={smart.month}
+          setMonth={smart.setMonth}
+          form={form}
+          onPick={pickSmart}
+          activityLabel={smart.activityLabel}
+        />
+      ) : (
       <Field label="Starts" required full hint={`${window_.days_label} only. The last valid start time is ${lastStartLabel}.`}>
         <div className="grid grid-cols-[minmax(140px,_1.1fr)_minmax(110px,_0.8fr)_minmax(82px,_0.5fr)] gap-2">
           <input
@@ -114,6 +134,7 @@ export default function ScheduleWindowFields({ form, setForm, onError }) {
           </select>
         </div>
       </Field>
+      )}
 
       <Field label="Duration" required full hint={`Whole hours only — no minutes. The end time is calculated and never passes ${closeLabel}.`}>
         <div className="flex items-center gap-2 flex-wrap [&_input[type='number']]:max-w-[120px]">

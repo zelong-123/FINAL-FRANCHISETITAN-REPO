@@ -7,6 +7,7 @@ import { formatDate } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
 import FollowUpRules from '../components/applicants/FollowUpRules';
+import SchedulingLimits from '../components/schedule/SchedulingLimits';
 
 const SECTIONS = [
   { key: 'users', label: 'Users', heading: 'Archived users' },
@@ -16,7 +17,7 @@ const SECTIONS = [
 
 export default function AdminSettings() {
   const [params] = useSearchParams();
-  const [tab, setTab] = useState(() => (['information', 'follow_up'].includes(params.get('tab')) || SECTIONS.some((section) => section.key === params.get('tab')) ? params.get('tab') : 'information'));
+  const [tab, setTab] = useState(() => (['information', 'follow_up', 'scheduling'].includes(params.get('tab')) || SECTIONS.some((section) => section.key === params.get('tab')) ? params.get('tab') : 'information'));
   const { user } = useAuth();
   const [restoringId, setRestoringId] = useState(null);
   const [actionError, setActionError] = useState('');
@@ -214,6 +215,9 @@ export default function AdminSettings() {
         <button type="button" role="tab" aria-selected={tab === 'follow_up'} className={`admin-tab py-[14px] border-0 border-b-2 bg-transparent text-[16px] font-[600] cursor-pointer -mb-[2px] ${tab === 'follow_up' ? 'text-[#fff] border-b-[#7b88ff]' : 'text-[#8fa0c0] border-b-transparent'}`} onClick={() => setTab('follow_up')}>
           Follow-up rules
         </button>
+        <button type="button" role="tab" aria-selected={tab === 'scheduling'} className={`admin-tab py-[14px] border-0 border-b-2 bg-transparent text-[16px] font-[600] cursor-pointer -mb-[2px] ${tab === 'scheduling' ? 'text-[#fff] border-b-[#7b88ff]' : 'text-[#8fa0c0] border-b-transparent'}`} onClick={() => setTab('scheduling')}>
+          Scheduling
+        </button>
         {SECTIONS.map((item) => (
           <button
             key={item.key}
@@ -254,7 +258,13 @@ export default function AdminSettings() {
         </section>
       )}
 
-      {tab !== 'information' && tab !== 'follow_up' && <section key={tab} className="admin-tab-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      {tab === 'scheduling' && (
+        <section key="scheduling" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[19px] [background:var(--panel)]">
+          <SchedulingLimits />
+        </section>
+      )}
+
+      {tab !== 'information' && tab !== 'follow_up' && tab !== 'scheduling' && <section key={tab} className="admin-tab-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
           <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
             <h2>{SECTIONS.find((item) => item.key === tab)?.heading}</h2>

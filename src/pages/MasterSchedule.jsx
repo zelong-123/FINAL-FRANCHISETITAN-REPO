@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
 import SessionForm from '../components/schedule/SessionForm';
 import { MiniCalendar, MonthYearWheel, StatusPanel, WeekSidePanels } from '../components/schedule/MasterSchedulePanels';
-import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, shiftBusinessDay } from '../lib/masterScheduleDays';
+import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, panelRange, sessionsInRange, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
 import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
@@ -57,6 +57,22 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
   const [form, setForm] = useState(null); // { mode, session?, applicant? }
   const detailId = searchParams.get('session');
 
+  // "Open in Master Schedule" (Schedule activity modal → Sessions): ?date=YYYY-MM-DD shows that day.
+  // The date is applied once and then dropped from the URL, so later navigation is not pulled back.
+  const dateParam = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
+  const [appliedDateParam, setAppliedDateParam] = useState(null);
+  if (dateParam !== appliedDateParam) {
+    // Adjusting state while rendering (not in an effect): React re-renders once with the new day.
+    setAppliedDateParam(dateParam);
+    if (dateParam) {
+      setViewDate(dateParam);
+      setMiniMonth(monthOf(dateParam));
+    }
+  }
+  useEffect(() => {
+    if (dateParam) setSearchParams((params) => { params.delete('date'); return params; }, { replace: true });
+  }, [dateParam, setSearchParams]);
+
   // Reference data for the filters and the form.
   useEffect(() => {
     void (async () => {
@@ -95,33 +111,6 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
     void reloadRef.current();
   }, [refreshKey]);
 
-  // Counts for the status panel (month) and the Week ACTIVITIES panel (week). Uses the
-  // summary endpoint; if it is missing or fails, counts come from the loaded list.
-  const [summaryData, setSummaryData] = useState({ status: null, activity: null });
-  useEffect(() => {
-    if (!range) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await api.get('/schedule-sessions/summary', {
-          from: range.from,
-          to: range.to,
-          activity_type: filters.activity_type,
-          brand_id: filters.brand_id,
-          handler_id: filters.handler_id,
-        });
-        if (!cancelled) setSummaryData({ status: response.data?.status_counts ?? null, activity: response.data?.activity_counts ?? null });
-      } catch {
-        if (!cancelled) setSummaryData({ status: null, activity: null });
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [range, filters.activity_type, filters.brand_id, filters.handler_id, refreshKey]);
-
-  // Same fallback rule for both panels (see panelCounts): summary when it answered, else the loaded list.
-  const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, sessions).status, [summaryData.status, sessions]);
-  const activityCounts = useMemo(() => panelCounts(summaryData.activity ? { activity_counts: summaryData.activity } : null, sessions).activity, [summaryData.activity, sessions]);
-
   const outsideHours = useMemo(() => sessions.filter(isOutsideHours), [sessions]);
   const dayDate = viewDate;
   const pickDay = (date) => setViewDate(date);
@@ -143,6 +132,37 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
     next.setMonth(next.getMonth() + 1);
     setRange({ from, to: next.toISOString() });
   }, [mode, dayDate, weekStart, miniMonth]);
+  // Counts for the Day status panel and the Week ACTIVITIES + STATUS panels: exactly the displayed
+  // range (the day, or the shown week days) with every filter. The summary endpoint answers; if it
+  // is missing or fails, the counts come from the loaded list cut to the same range.
+  const summaryRange = useMemo(() => (range ? panelRange(mode, dayDate, weekStart, range) : null), [mode, dayDate, weekStart, range]);
+  const [summaryData, setSummaryData] = useState({ status: null, activity: null });
+  useEffect(() => {
+    if (!summaryRange) return undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await api.get('/schedule-sessions/summary', {
+          from: summaryRange.from,
+          to: summaryRange.to,
+          activity_type: filters.activity_type,
+          brand_id: filters.brand_id,
+          handler_id: filters.handler_id,
+          'status[]': filters.status,
+          merge_suggested: filters.merge_suggested ? 1 : undefined,
+        });
+        if (!cancelled) setSummaryData({ status: response.data?.status_counts ?? null, activity: response.data?.activity_counts ?? null });
+      } catch {
+        if (!cancelled) setSummaryData({ status: null, activity: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [summaryRange, filters.activity_type, filters.brand_id, filters.handler_id, filters.status, filters.merge_suggested, refreshKey]);
+  const rangeSessions = useMemo(() => sessionsInRange(sessions, summaryRange), [sessions, summaryRange]);
+  // Same fallback rule for both panels (see panelCounts): summary when it answered, else the loaded list.
+  const statusCounts = useMemo(() => panelCounts(summaryData.status ? { status_counts: summaryData.status } : null, rangeSessions).status, [summaryData.status, rangeSessions]);
+  const activityCounts = useMemo(() => panelCounts(summaryData.activity ? { activity_counts: summaryData.activity } : null, rangeSessions).activity, [summaryData.activity, rangeSessions]);
+
   const [weekSlide, setWeekSlide] = useState('');
   const shiftView = (step) => {
     setWeekSlide(step > 0 ? 'ms-cal-grid-next' : 'ms-cal-grid-prev');
@@ -167,11 +187,22 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
     return () => document.removeEventListener('mousedown', close);
   }, [customOpen]);
   const pinnedRef = useRef(null);
+  // The "Show Pinned Activity" menu closes on an outside click and on Esc.
   useEffect(() => {
     if (!pinnedOpen) return undefined;
     const close = (event) => { if (!pinnedRef.current?.contains(event.target)) setPinnedOpen(false); };
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setPinnedOpen(false);
+      pinnedRef.current?.querySelector('button')?.focus();
+    };
     document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [pinnedOpen]);
   const togglePinned = (key) => setPinnedShown((current) => ({ ...current, [key]: !current[key] }));
   const chartSessions = useMemo(() => sessions.filter((session) => (
@@ -450,7 +481,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
                     month={miniMonth}
                     selectedDate={dayDate}
                     todayDate={todayDate}
-                    sessions={sessions}
+                    sessions={chartSessions}
                     onMonth={setMiniMonth}
                     plain
                     activeWeekStart={dayDate}
@@ -543,7 +574,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
             month={miniMonth}
             selectedDate={dayDate}
             todayDate={todayDate}
-            sessions={sessions}
+            sessions={chartSessions}
             onMonth={setMiniMonth}
             onPickDate={(date) => { pickDay(date); setMiniMonth(monthOf(date)); }}
           >
@@ -627,7 +658,12 @@ function EventBody({ session, isAdmin, menu, short }) {
         <span className="ms-event-time overflow-hidden text-ellipsis">{sessionTime(session.start_at, session.end_at)}</span>
         <span className="shrink-0">{session.start_at ? manilaDate.format(new Date(session.start_at)).split(' ').slice(-2).join(' ').toUpperCase() : ''}</span>
       </span>
-      <strong>{activityLabel(session.activity_type)}</strong>
+      {session.status === 'cancelled' ? (
+        <span className="flex items-center gap-[6px] min-w-0">
+          <strong className="line-through decoration-[1.5px] text-[#8a94a6]">{activityLabel(session.activity_type)}</strong>
+          <em className="ms-cancelled-chip shrink-0 p-[1px_7px] rounded-[999px] border border-[rgba(239,68,68,0.5)] bg-[rgba(239,68,68,0.14)] text-[#fca5a5] text-[9px] not-italic font-[700]">Cancelled</em>
+        </span>
+      ) : <strong>{activityLabel(session.activity_type)}</strong>}
       <span className="ms-event-meta overflow-hidden text-[#c9d1e0] text-[10.5px] text-ellipsis whitespace-nowrap">
         {session.brand?.name || (session.activity_type === 'orientation' ? 'Any Brand' : 'No brand')} - {taken}/{capacity}
       </span>

@@ -217,11 +217,21 @@ export default function SessionForm({ mode = 'create', session = null, applicant
     );
   } else {
     const warningBlocked = status === 'warning' && (!isAdmin || !overrideRemarks.trim());
+    // The same Sales user is busy at this time, but that session has seats: Admin adds the applicants to it.
+    const joinButtons = isAdmin && mode === 'create' ? mergeTargets.map((target) => (
+      <button key={target.session_id} type="button" className="ghost-button min-h-[38px] inline-flex items-center justify-center gap-[7px] p-[0_14px] border border-line-strong rounded-[11px] text-text [background:transparent] text-[12px] font-[700]" disabled={saving || checking}
+        onClick={() => void save({ join_session_id: target.session_id })}>
+        Add to existing session · {target.time}
+      </button>
+    )) : null;
     actions = (
+      <>
+      {joinButtons}
       <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" disabled={baseDisabled || status === 'blocked' || warningBlocked}
         onClick={() => void save()}>
         {saving ? 'Saving…' : mode === 'create' ? (isAdmin ? 'Save session' : 'Save (Pending — Admin will review)') : 'Save changes'}
       </button>
+      </>
     );
   }
 
@@ -363,8 +373,14 @@ function EvaluationView({ evaluation, isAdmin, overrideRemarks, setOverrideRemar
 
       {status === 'blocked' && (
         <div className="m-0 p-[9px_12px] border border-line rounded-[9px] text-[12px] [&_ul]:m-[4px_0_0] [&_ul]:pl-[18px] later:[&_p]:m-[4px_0_0] [&_a]:text-accent-text [&.is-ok]:border-[color:color-mix(in_srgb,_var(--success)_45%,_transparent)] [&.is-ok]:text-success-text later:[&.is-blocked]:border-[color:color-mix(in_srgb,_var(--danger)_45%,_transparent)] later:[&.is-blocked]:text-danger-text later-2:[&.is-merge]:border-[color:color-mix(in_srgb,_var(--accent-2)_50%,_transparent)] later-2:[&.is-merge]:text-text-secondary later-3:[&.is-warning]:border-[color:color-mix(in_srgb,_var(--warning)_50%,_transparent)] later-3:[&.is-warning]:text-[color:var(--warning-text)] is-blocked">
-          <strong>Hindi puwede ang oras na ito:</strong>
+          <strong>This time cannot be used:</strong>
           <ul>{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+          {targets.length > 0 && (
+            <p className="text-muted text-[12px]">
+              Join instead: {targets.map((target) => `${formatSessionRange(target.start_at, target.end_at)} (${target.occupancy})`).join(', ')}
+              {isAdmin ? ' — use "Add to existing session".' : ' — use Sessions in the Schedule activity modal.'}
+            </p>
+          )}
         </div>
       )}
 

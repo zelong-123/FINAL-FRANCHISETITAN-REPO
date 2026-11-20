@@ -3,9 +3,9 @@
  *
  *  - Working days and opening/closing time come from the ONE scheduling window
  *    (lib/scheduleConfig.js ← GET /schedule-sessions/config ← the backend config);
- *    defaults Monday–Friday, 9:00 AM to 6:00 PM (Asia/Manila).
+ *    defaults Monday–Friday, 9:00 AM to 5:00 PM (Asia/Manila).
  *  - Starts sit on the hour or the half hour; the last valid start leaves one
- *    whole hour before closing (5:00 PM by default).
+ *    whole hour before closing (4:00 PM by default); a longer session's last start is earlier.
  *  - Duration is a whole number of hours only (1, 2, 3 … Custom). No minutes.
  *  - The end time is always calculated and never passes closing time.
  */
@@ -34,7 +34,8 @@ export const VENUE_OPTIONS = [
 ];
 
 /** Capacity per session, mirroring the API (Orientation/Tasting 5, Training 10). */
-export const CAPACITY = { orientation: 5, training: 10 };
+/** Fallback applicants per session; the API (Admin settings) is the authority. */
+export const CAPACITY = { orientation: 5, training: 1 };
 
 export const pad2 = (value) => String(value).padStart(2, '0');
 
