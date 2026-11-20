@@ -107,11 +107,14 @@ async function addApplicants(tx: Db, session: Row, ids: number[], actor: Row) {
     const handler = await defaultHandlerId(tx, session.activity_type, [...active.map((p: Row) => Number(p.applicant_id)), ...ids.map(Number)]);
     if (handler) session = (await updateRow(tx, 'schedule_sessions', session.id, { handler_id: handler }))!;
   }
+  // Joining takes a seat in a session that already holds its facility: the facility limit is not re-counted.
   const evaluation = await evaluate(tx, {
     activity_type: session.activity_type, brand_id: session.brand_id, start_at: session.start_at, end_at: session.end_at, handler_id: session.handler_id, venue: session.venue,
     applicant_ids: ids, existing_count: active.length, max_capacity: session.max_capacity, ignore_session_ids: [session.id], check_applicant_gates: true, check_window: false,
+    check_facility: false,
   }, actor, false);
   const reasons = [...evaluation.reasons];
+  if (new Date(session.start_at).getTime() <= Date.now()) reasons.unshift('This session has already started.');
   for (const p of active.filter((r) => ids.includes(r.applicant_id))) reasons.push(`Applicant #${p.applicant_id} is already in this session.`);
   if (reasons.length) violation('This applicant cannot be added to the session.', reasons, evaluation);
   if (!isAdmin(actor) && session.status === 'confirmed') {
@@ -133,7 +136,7 @@ export function createSession(db: Db, data: Row, actor: Row) {
   const proposal = proposalFrom(data, data.applicant_ids);
   return locked(db, [proposal.start_at], async (tx) => {
     if (data.join_session_id) {
-      if (!isAdmin(actor)) violation('Admin lang ang puwedeng mag-merge sa existing session.', [], null, 403);
+      if (!isAdmin(actor)) violation('Only Admin can add applicants to an existing session from here. Use "Join this session" in the Sessions list.', [], null, 403);
       const evaluation = await evaluate(tx, { ...proposal, check_applicant_gates: true }, actor, false);
       if (!evaluation.merge_targets.some((t) => t.session_id === Number(data.join_session_id))) {
         violation('That session can no longer be joined at this time.', evaluation.reasons, evaluation);
@@ -255,7 +258,7 @@ async function placeInto(tx: Db, participant: Row, target: Row, actor: Row) {
 }
 
 export function mergeSessions(db: Db, sourceId: number, targetId: number, actor: Row, applicantIds: number[] | null = null) {
-  if (!isAdmin(actor)) violation('Admin lang ang puwedeng mag-merge ng sessions.', [], null, 403);
+  if (!isAdmin(actor)) violation('Only Admin can merge sessions.', [], null, 403);
   return db.tx(async (tx) => {
     const [s, t] = await tx.query(`select id, start_at from schedule_sessions where id in ($1, $2) order by id`, [sourceId, targetId]);
     await acquireDayLocks(tx, [s?.start_at, t?.start_at]);
@@ -268,7 +271,7 @@ export function mergeSessions(db: Db, sourceId: number, targetId: number, actor:
     if (reasons.length) violation('These sessions cannot be merged.', reasons);
     const active = await activeParticipants(tx, sourceId);
     const moving = applicantIds ? active.filter((p) => applicantIds.includes(p.applicant_id)) : active;
-    if (!moving.length) violation('Pumili ng kahit isang applicant na i-merge.');
+    if (!moving.length) violation('Choose at least one applicant to merge.');
     for (const p of moving) {
       await placeInto(tx, p, target, actor);
       await logEvent(tx, await applicantOf(tx, p.applicant_id), 'merged', actor.id, { from_session_id: sourceId, to_session_id: targetId });

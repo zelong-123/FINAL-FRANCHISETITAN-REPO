@@ -25,16 +25,18 @@ import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { fromManilaInput, manilaDateTimeLabel, toManilaInput, formatDate, titleCase as baseTitleCase } from '../lib/format';
 import RequirementFileDrop from '../components/RequirementFileDrop';
-import { occupancyLabel } from '../lib/scheduleSessions';
 import { completedCount, TABLE_FOOTER, tableRows } from '../lib/activityTable';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, ProgressBar, StatusBadge } from '../components/ApiUi';
 import ScheduleWindowFields from '../components/ScheduleActivityFields';
 import {
-  CAPACITY,
   blankScheduleFields,
   buildScheduleWindow,
+  resolvedHours,
   scheduleFieldsFromActivity,
 } from '../lib/scheduleRules';
+import { LiveScheduleCheck, SessionsPanel } from '../components/schedule/SmartSchedule';
+import useAvailability from '../lib/useAvailability';
+import { masterScheduleLink, monthOfDate } from '../lib/smartSchedule';
 import SlidingPagination from '../components/SlidingPagination';
 import { useAuth } from '../context/AuthContext';
 import { can } from '../lib/roleAccess';
@@ -205,8 +207,7 @@ function typeProgress(activities) {
  * chosen activity (already done, prerequisite not done, already scheduled), or
  * '' when they are available.
  */
-function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blockReason, editing, onError, existingActivities = [], lockedApplicantId = null }) {
-  const multi = !editing && form.mode === 'multiple' && !lockedApplicantId;
+function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blockReason, editing, onError, lockedApplicantId = null, isAdmin = false, onJoined, onOpenMaster, onReassign }) {
   const hasActivity = Boolean(form.activity_type);
   const byId = (id) => applicants?.find((item) => String(item.id) === String(id));
 
@@ -217,19 +218,19 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
   const eligible = (applicants || []).filter((item) => !blockReason(item, form.activity_type)
     && (!lockedApplicantId || String(item.id) === String(lockedApplicantId))
     && (!editing || String(item.id) === String(form.applicant_id)));
-  const selectedMany = form.applicant_ids.map(byId).filter(Boolean);
-
-  // Training sessions already booked at the chosen date/time (merge suggestion only).
-  const existingTraining = (() => {
-    if (form.activity_type !== 'training') return [];
-    let window = null;
-    try { window = buildScheduleWindow(form); } catch { return []; }
-    const target = new Date(window.starts_at.replace(' ', 'T')).getTime();
-    return (existingActivities || []).filter((activity) => activity.activity_type === 'training'
-      && !['cancelled'].includes(activity.status)
-      && activity.approval_status !== 'rejected'
-      && Math.abs(new Date(activity.starts_at).getTime() - target) < 60000);
-  })();
+  // Smart scheduling (new schedules): the picker, the live check and the Sessions panel only
+  // look at the applicant's assigned Sales user and the selected activity.
+  const smartOn = !editing && hasActivity && Boolean(form.applicant_id);
+  const hours = resolvedHours(form);
+  const [pickerMonth, setPickerMonth] = useState(() => monthOfDate(form.start_date));
+  const availability = useAvailability(smartOn ? form.applicant_id : null, form.activity_type, pickerMonth, hours >= 1 ? hours * 60 : null);
+  const applicantName = byId(form.applicant_id)?.full_name || '';
+  const typeLabel = titleCase(form.activity_type || '');
+  const useNext = (next) => {
+    onError('');
+    setPickerMonth(next.date.slice(0, 7));
+    setForm((current) => ({ ...current, start_date: next.date, start_hour: Number(next.time.slice(0, 2)), start_minute: 0, join_session_id: '', separate_session: false }));
+  };
 
   // Changing the activity can make already-picked applicants ineligible: drop them.
   const changeActivity = (type) => {
@@ -258,31 +259,6 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
     });
   };
 
-  const changeMode = (mode) => {
-    if (mode === form.mode) return;
-    setForm((current) => {
-      if (mode === 'multiple') {
-        return { ...current, mode, applicant_ids: current.applicant_id ? [String(current.applicant_id)] : [], attendee: '' };
-      }
-      const first = applicants?.find((item) => String(item.id) === String(current.applicant_ids[0]));
-      return { ...current, mode, applicant_id: first ? String(first.id) : '', attendee: first?.full_name || '' };
-    });
-  };
-
-  const toggleApplicant = (id) => {
-    setForm((current) => {
-      const key = String(id);
-      const has = current.applicant_ids.includes(key);
-      return { ...current, applicant_ids: has ? current.applicant_ids.filter((item) => item !== key) : [...current.applicant_ids, key] };
-    });
-  };
-
-  const selectAllAvailable = () => {
-    setForm((current) => ({ ...current, applicant_ids: eligible.map((item) => String(item.id)) }));
-  };
-
-  const clearAll = () => setForm((current) => ({ ...current, applicant_ids: [] }));
-
   const applicantHint = !(applicants || []).some((item) => item.status === 'scheduled')
     ? 'No applicants are at the Scheduling stage. Admin moves a Qualified applicant there with Set Schedule.'
     : !hasActivity
@@ -303,125 +279,51 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         </select>
       </Field>
 
-      {!editing && (
-        <Field label="Schedule for" full>
-          <div role="group" aria-label="Number of applicants" className="inline-flex w-fit justify-self-start gap-1 p-[3px] rounded-[9px] border border-[#262f45] bg-[rgba(255,255,255,0.03)]">
-              <button type="button" aria-pressed={form.mode === 'single'} disabled={Boolean(lockedApplicantId)} onClick={() => changeMode('single')} className={`h-[30px] px-[14px] rounded-[7px] border text-[12px] font-[650] transition-colors ${form.mode === 'single' ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.16)] text-[#aeb6ff]' : 'border-transparent bg-transparent text-[#8590a8] hover:text-[#f4f4f5]'}`}>
-                One applicant
-              </button>
-              <button type="button" aria-pressed={form.mode === 'multiple'} disabled={Boolean(lockedApplicantId)} onClick={() => changeMode('multiple')} className={`h-[30px] px-[14px] rounded-[7px] border text-[12px] font-[650] transition-colors ${form.mode === 'multiple' ? 'border-[#7b88ff] bg-[rgba(123,136,255,0.16)] text-[#aeb6ff]' : 'border-transparent bg-transparent text-[#8590a8] hover:text-[#f4f4f5]'}`}>
-                Multiple applicants
-              </button>
-          </div>
-        </Field>
-      )}
-
-      {!multi ? (
-        <Field label="Applicant" full required hint={applicantHint}>
-          <select
-            required
-            disabled={!hasActivity || fixedPerson}
-            className={highlightApplicant ? 'later-2:[.activities-modal-root_select&]:border-[color:var(--act-accent,_#7b88ff)] later:[.activities-modal-root_select&]:[background-color:rgba(123,_136,_255,_0.16)] later:[.activities-modal-root_select&]:[box-shadow:0_0_0_2px_rgba(123,_136,_255,_0.45)] [.activities-modal-root_select&]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_select&]:font-[650] [.activities-modal-root_select&]:[animation:applicant-select-blink_0.8s_ease-in-out_4] motion-reduce:later:[.activities-modal-root_select&]:[animation:none]' : undefined}
-            value={form.applicant_id}
-            onChange={(e) => changeApplicant(e.target.value)}
-          >
-            <option value="">{hasActivity ? 'Select applicant' : 'Select an activity first'}</option>
-            {eligible.map((applicant) => <option key={applicant.id} value={applicant.id}>{applicant.full_name}</option>)}
-          </select>
-        </Field>
-      ) : (
-        <Field
-          label="Applicants"
-          full
+      <Field label="Applicant" full required hint={applicantHint}>
+        <select
           required
-          hint={applicantHint || `${form.applicant_ids.length} selected · ${eligible.length} available. Applicants with an active ${titleCase(form.activity_type)} schedule are disabled.`}
+          disabled={!hasActivity || fixedPerson}
+          className={highlightApplicant ? 'later-2:[.activities-modal-root_select&]:border-[color:var(--act-accent,_#7b88ff)] later:[.activities-modal-root_select&]:[background-color:rgba(123,_136,_255,_0.16)] later:[.activities-modal-root_select&]:[box-shadow:0_0_0_2px_rgba(123,_136,_255,_0.45)] [.activities-modal-root_select&]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_select&]:font-[650] [.activities-modal-root_select&]:[animation:applicant-select-blink_0.8s_ease-in-out_4] motion-reduce:later:[.activities-modal-root_select&]:[animation:none]' : undefined}
+          value={form.applicant_id}
+          onChange={(e) => changeApplicant(e.target.value)}
         >
-          <div className="flex flex-col gap-[10px] w-full">
-            <div className="flex gap-2 [&_button]:py-[5px] [&_button]:px-[12px] [&_button]:border [&_button]:border-[#262f45] [&_button]:rounded-[6px] [&_button]:bg-transparent [&_button]:text-[#aeb6ff] [&_button]:text-[12px] [&_button]:font-[650] [&_button]:cursor-pointer [&_button]:transition-colors hover:[&_button:not(:disabled)]:border-[#7b88ff] [&_button:disabled]:opacity-[0.45] [&_button:disabled]:cursor-not-allowed">
-              <button type="button" onClick={selectAllAvailable} disabled={!hasActivity || !eligible.length}>Select all available</button>
-              <button type="button" onClick={clearAll} disabled={!form.applicant_ids.length}>Clear</button>
-            </div>
-            <div className="flex flex-col gap-[6px] max-h-[220px] overflow-y-auto p-[6px] border border-[#262f45] rounded-[8px] bg-[rgba(255,255,255,0.02)]" role="group" aria-label="Applicants">
-              {(applicants || []).filter((applicant) => applicant.status === 'scheduled').map((applicant) => {
-                const blocked = hasActivity ? blockReason(applicant, form.activity_type) : '';
-                const checked = form.applicant_ids.includes(String(applicant.id));
-                return (
-                  <button
-                    type="button"
-                    key={applicant.id}
-                    role="checkbox"
-                    aria-checked={checked}
-                    disabled={!hasActivity || Boolean(blocked)}
-                    className={`flex items-center gap-[10px] w-full box-border p-[8px_10px] border rounded-[6px] text-left text-[13.5px] cursor-pointer transition-colors ${checked ? 'border-[rgba(123,136,255,0.4)] bg-[rgba(123,136,255,0.14)]' : 'border-transparent bg-transparent'} hover:enabled:bg-[rgba(123,136,255,0.08)] focus-visible:outline-2 focus-visible:outline-[#7b88ff] ${blocked ? 'opacity-[0.55] cursor-not-allowed' : ''}`}
-                    onClick={() => toggleApplicant(applicant.id)}
-                  >
-                    <span className={`inline-grid place-items-center flex-none w-[18px] h-[18px] border rounded-[4px] text-[10px] text-white ${checked ? 'bg-[#7b88ff] border-[#7b88ff]' : 'border-[#262f45]'}`} aria-hidden="true">{checked && <FaCheck />}</span>
-                    <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{applicant.full_name}</span>
-                    {blocked && <span className="flex-none p-[2px_8px] border border-[rgba(34,197,94,0.4)] rounded-[4px] bg-[rgba(34,197,94,0.12)] text-[#22c55e] text-[11px] font-[650]">{blocked}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </Field>
+          <option value="">{hasActivity ? 'Select applicant' : 'Select an activity first'}</option>
+          {eligible.map((applicant) => <option key={applicant.id} value={applicant.id}>{applicant.full_name}</option>)}
+        </select>
+      </Field>
+
+      <ScheduleWindowFields
+        form={form}
+        setForm={setForm}
+        onError={onError}
+        smart={smartOn ? { availability, month: pickerMonth, setMonth: setPickerMonth, activityLabel: typeLabel } : null}
+      />
+
+      {smartOn && (
+        <LiveScheduleCheck
+          form={form}
+          hours={hours}
+          applicantId={form.applicant_id}
+          applicantName={applicantName}
+          activityType={form.activity_type}
+          activityLabel={typeLabel}
+          availability={availability}
+          isAdmin={isAdmin}
+          onUseNext={useNext}
+          onJoined={onJoined}
+          onReassign={() => onReassign(form.applicant_id)}
+        />
       )}
 
-      <ScheduleWindowFields form={form} setForm={setForm} onError={onError} />
-
-      {/* Training merge suggestion: one click, never a block. */}
-      {existingTraining.length > 0 && !form.merge_dismissed && (
-        <Notice type="info">
-          <span>
-            A Training session already exists on this date/time ({existingTraining.length}/{CAPACITY.training} slots). Join it instead?
-          </span>
-          <span className="inline-flex gap-2 ml-3 later-2:[&_button]:border later-4:[&_button]:border-[color:color-mix(in_srgb,_#39ffb0_45%,_transparent)] later-3:[&_button]:[background:transparent] later-2:[&_button]:text-[color:inherit] later-4:[&_button]:rounded-[8px] later-2:[&_button]:p-[4px_10px] later-4:[&_button]:text-[12px] later-3:[&_button]:font-[700] later:[&_button]:cursor-pointer">
-            <button
-              type="button"
-              onClick={() => {
-                // Join: keep the date/time and add the applicant to the session
-                // that is already running there — no second session is created.
-                onError('');
-                setForm({
-                  ...form,
-                  merge_dismissed: true,
-                  join_session_id: existingTraining[0]?.session_id ?? '',
-                  separate_session: false,
-                });
-              }}
-            >
-              Join existing
-            </button>
-          </span>
-          {/* No "Create separate" for Training: Trainings never overlap (rule H4),
-              so a second Training at this time would always be refused. */}
-          <small className="muted-note text-muted text-[8px] leading-[1.6]">A separate Training cannot run at the same time — pick another time to schedule one.</small>
-        </Notice>
-      )}
-
-      {form.activity_type === 'training' && form.merge_dismissed && existingTraining.length > 0 && (
-        <p className="muted-note text-muted text-[8px] leading-[1.6]" role="status">
-          Adding the applicant to the existing Training session at this date/time.
-        </p>
-      )}
-
-      {/* People attending belongs to Multiple mode only. */}
-      {multi && (
-        <Field
-          label="People attending"
-          full
-          hint={`${selectedMany.length} of ${CAPACITY[form.activity_type] || 0} slots in this session.`}
-        >
-          {selectedMany.length ? (
-            <ul className="[.activities-modal-root_&]:flex [.activities-modal-root_&]:flex-wrap [.activities-modal-root_&]:gap-2 [.activities-modal-root_&]:m-0 [.activities-modal-root_&]:p-0 [.activities-modal-root_&]:[list-style:none]" aria-label="People attending">
-              {selectedMany.map((item) => (
-                <li key={item.id} className="[.activities-modal-root_&]:inline-flex [.activities-modal-root_&]:items-center [.activities-modal-root_&]:gap-2 [.activities-modal-root_&]:p-[5px_12px] [.activities-modal-root_&]:border [.activities-modal-root_&]:border-[rgba(123,_136,_255,_0.4)] [.activities-modal-root_&]:rounded-[6px] [.activities-modal-root_&]:[background:rgba(123,_136,_255,_0.14)] [.activities-modal-root_&]:text-[color:var(--accent,_#aeb6ff)] [.activities-modal-root_&]:text-[13px] [.activities-modal-root_&]:font-[600] is-static"><span>{item.full_name}</span></li>
-              ))}
-            </ul>
-          ) : (
-            <span className="muted-note text-muted text-[8px] leading-[1.6]">No applicants selected yet.</span>
-          )}
-          <p className="font-[700] text-[#39ffb0]" role="status">{occupancyLabel(selectedMany.length, CAPACITY[form.activity_type] || 0)}</p>
-        </Field>
+      {smartOn && (
+        <SessionsPanel
+          applicantId={form.applicant_id}
+          applicantName={applicantName}
+          activityType={form.activity_type}
+          activityLabel={typeLabel}
+          onJoined={onJoined}
+          onOpenMaster={onOpenMaster}
+        />
       )}
     </>
   );
@@ -534,12 +436,6 @@ export default function Activities() {
 
   // Every person (used by the calendar and the read panel: full history).
   const currentGroups = useMemo(() => groups.map((group) => ({ ...group, current: currentActivity(group) })), [groups]);
-
-  // Flat activity list for the form (Training merge suggestion at a date/time).
-  const allActivities = useMemo(
-    () => groups.flatMap((group) => group.activities || []),
-    [groups],
-  );
 
   // Rows the backend returned for the Data panel. Completed applicants are
   // already absent here, so counts and pagination never include hidden rows.
@@ -763,6 +659,27 @@ export default function Activities() {
     setEditing(null);
     setHighlightApplicant(false);
     setLockedApplicantId(null);
+  };
+
+  // Sessions panel / live check: "Join this session" added the applicant (participant API).
+  const joinedSession = async (message) => {
+    closeForm();
+    setScheduleGlow(false);
+    setSuccess(message);
+    await remote.reload();
+    setMasterRefreshKey((key) => key + 1);
+  };
+
+  // "Open in Master Schedule": Day view on that date with the session open; nothing is scheduled.
+  const openInMasterSchedule = (row) => {
+    closeForm();
+    navigate(masterScheduleLink(row));
+  };
+
+  // "Reassign Sales" (Admin): the existing Reassign flow lives in the applicant's Update modal.
+  const reassignSales = (applicantId) => {
+    closeForm();
+    navigate(APPLICANTS_ROUTE, { state: { focusApplicantId: Number(applicantId) } });
   };
 
   const openEdit = (activity) => {
@@ -1370,7 +1287,10 @@ export default function Activities() {
               blockReason={blockReason}
               editing={editing}
               onError={setActionError}
-              existingActivities={allActivities}
+              isAdmin={role === 'admin'}
+              onJoined={joinedSession}
+              onOpenMaster={openInMasterSchedule}
+              onReassign={reassignSales}
             />
           </form>
         </Modal>

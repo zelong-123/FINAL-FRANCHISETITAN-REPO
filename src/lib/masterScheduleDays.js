@@ -122,6 +122,24 @@ export function panelCounts(summary, sessions) {
   };
 }
 
+/**
+ * The range the side panels count: exactly what the chart shows. Day = that day; Week = the
+ * displayed days (from the shown day to Friday); Month = the month range.
+ */
+export function panelRange(mode, dayDate, weekStart, monthRange) {
+  if (mode === 'day') return { from: `${dayDate}T00:00:00+08:00`, to: `${addDays(dayDate, 1)}T00:00:00+08:00` };
+  if (mode === 'week') return { from: `${dayDate}T00:00:00+08:00`, to: `${addDays(weekStart, 5)}T00:00:00+08:00` };
+  return monthRange;
+}
+
+/** Sessions that overlap a { from, to } range (the list fallback of the panel counts). */
+export function sessionsInRange(sessions, range) {
+  if (!range) return sessions;
+  const from = new Date(range.from).getTime();
+  const to = new Date(range.to).getTime();
+  return sessions.filter((s) => new Date(s.start_at).getTime() < to && new Date(s.end_at ?? s.start_at).getTime() > from);
+}
+
 /** "YYYY-MM-DD" in Manila for an ISO timestamp. */
 export function manilaDateOf(iso) {
   return manilaToday(new Date(iso));

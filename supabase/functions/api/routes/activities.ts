@@ -197,7 +197,7 @@ activityRoutes.post('/activities', staff, async (c) => {
   const applicantId = Number(v.applicant_id);
   const [applicant] = await db.query(`select * from applicants where id = $1`, [applicantId]);
   if (!isSchedulable(applicant)) fail('applicant_id', NOT_SCHEDULABLE);
-  const window = rules.resolveWindow(parseLocal(v.starts_at), v.duration_minutes ?? null, v.ends_at ?? null);
+  const window = rules.resolveWindow(parseLocal(v.starts_at), v.duration_minutes ?? null, v.ends_at ?? null, v.activity_type);
   const sessionKey = await resolveSessionKey(db, v, window.starts_at, applicant.preferred_brand_id);
   await rules.assertCapacity(db, v.activity_type, window.starts_at, applicant.preferred_brand_id, null, sessionKey);
   await rules.assertNoConflict(db, applicantId, window.starts_at, window.ends_at);
@@ -237,7 +237,7 @@ activityRoutes.post('/applicants/:applicant/activities/set-again', staff, async 
     starts_at: ['required', 'date'], duration_minutes: ['nullable', 'integer', 'min:60', 'max:600'], ends_at: ['nullable', 'date'], venue: ['nullable', VENUES],
     meeting_link: ['nullable', 'string', 'max:500'], assigned_to_user_id: ['nullable', 'exists:users,id'], participants: ['nullable', 'array'],
   });
-  const window = rules.resolveWindow(parseLocal(v.starts_at), v.duration_minutes ?? null, v.ends_at ?? null);
+  const window = rules.resolveWindow(parseLocal(v.starts_at), v.duration_minutes ?? null, v.ends_at ?? null, firstTarget);
   const isSales = roleName(c) === 'sales';
   await rules.assertCapacity(db, firstTarget, window.starts_at, applicant.preferred_brand_id);
   const activity = await db.tx(async (tx) => {
@@ -301,7 +301,7 @@ async function adjust(c: Context<AppEnv>) {
   await assertNoActiveType(db, activity.applicant_id, nextType, activity.id);
   await rules.assertNotPreviouslyCompleted(db, activity.applicant_id, nextType, activity.id);
   await rules.assertNoOtherActiveSchedule(db, activity.applicant_id, activity.id);
-  const window = rules.resolveWindow(parseLocal(v.starts_at ?? activity.starts_at), 'duration_minutes' in v ? (v.duration_minutes || null) : null, v.ends_at ?? activity.ends_at);
+  const window = rules.resolveWindow(parseLocal(v.starts_at ?? activity.starts_at), 'duration_minutes' in v ? (v.duration_minutes || null) : null, v.ends_at ?? activity.ends_at, nextType);
   const assigned = 'assigned_to_user_id' in v ? (v.assigned_to_user_id ? Number(v.assigned_to_user_id) : null) : activity.assigned_to_user_id;
   await rules.assertNoConflict(db, activity.applicant_id, window.starts_at, window.ends_at, activity.id);
   await rules.assertCapacity(db, nextType, window.starts_at, applicant?.preferred_brand_id ?? null, activity.id, String(activity.session_key ?? ''));

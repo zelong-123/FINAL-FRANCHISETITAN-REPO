@@ -2,15 +2,15 @@
  * The scheduling window for every time picker — loaded from the API
  * (GET /schedule-sessions/config → App\Support\ScheduleWindow, the same values
  * the save check reads). Until it arrives the defaults below apply, and they
- * equal the backend defaults: Monday–Friday, 9:00 AM–6:00 PM.
+ * equal the backend defaults: Monday–Friday, 9:00 AM–5:00 PM (every session ends by 5:00 PM).
  *
  * Plain module (no React, no API import) so the pure rules and their node tests
  * can read it; the React hook that loads it lives in useScheduleConfig.js.
  */
 export const DEFAULT_SCHEDULE_CONFIG = {
   opens_at: '09:00',
-  closes_at: '18:00',
-  last_start: '17:00',
+  closes_at: '17:00',
+  last_start: '16:00',
   working_days: [1, 2, 3, 4, 5],
   days_label: 'Monday to Friday',
   step_minutes: 30,

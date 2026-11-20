@@ -112,7 +112,17 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
   return (
     <>
     {floatingRow}
-    <Modal title={<span className="text-[18px] font-[800] tracking-[-.01em]">{session ? `${session.activity_label} session` : 'Session'}</span>} onClose={onClose} size="wide" chromeColor="#070A13">
+    <Modal
+      title={session?.status === 'cancelled' ? (
+        <span className="inline-flex items-center gap-2">
+          <span className="text-[18px] font-[800] tracking-[-.01em] line-through decoration-[2px] text-muted">{`${session.activity_label} session`}</span>
+          <span className="p-[2px_9px] rounded-[999px] border border-[rgba(239,68,68,0.5)] bg-[rgba(239,68,68,0.14)] text-[#fca5a5] text-[11px] font-[700]">Cancelled</span>
+        </span>
+      ) : <span className="text-[18px] font-[800] tracking-[-.01em]">{session ? `${session.activity_label} session` : 'Session'}</span>}
+      onClose={onClose}
+      size="wide"
+      chromeColor="#070A13"
+    >
       <Notice type="error">{error}</Notice>
       <Notice type="success">{notice}</Notice>
       {!session ? (error ? null : <LoadingState />) : (
