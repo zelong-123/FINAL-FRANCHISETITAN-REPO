@@ -11,14 +11,15 @@ const form = (date, hour, minute, hours) => ({ start_date: date, start_hour: hou
 const MONDAY = '2030-01-07';
 const SATURDAY = '2030-01-12';
 
-test('defaults: Mon–Fri, 9:00 AM–6:00 PM, same messages as before', () => {
-  assert.deepEqual(startHours(), [9, 10, 11, 12, 13, 14, 15, 16, 17]);
-  assert.equal(maxHoursFor(15, 0), 3);
-  assert.equal(isValidStart(17, 30), false);
+test('defaults: Mon–Fri, 9:00 AM–5:00 PM (sessions end by 5:00 PM), same messages as before', () => {
+  assert.deepEqual(startHours(), [9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(maxHoursFor(15, 0), 2);
+  assert.equal(maxHoursFor(14, 0), 3, 'a 3-hour Training can start at 2:00 PM at the latest');
+  assert.equal(isValidStart(16, 30), false);
   assert.throws(() => buildScheduleWindow(form(SATURDAY, 9, 0, 1)), /Activities can only be scheduled Monday to Friday\./);
-  assert.throws(() => buildScheduleWindow(form(MONDAY, 17, 30, 1)), /No whole-hour duration fits before 6:00 PM, so this start time cannot be used\. The last valid start time is 5:00 PM\./);
-  assert.throws(() => buildScheduleWindow(form(MONDAY, 16, 0, 3)), /only allows up to 2 hrs before 6:00 PM/);
-  assert.equal(buildScheduleWindow(form(MONDAY, 15, 0, 3)).duration_minutes, 180);
+  assert.throws(() => buildScheduleWindow(form(MONDAY, 16, 30, 1)), /No whole-hour duration fits before 5:00 PM, so this start time cannot be used\. The last valid start time is 4:00 PM\./);
+  assert.throws(() => buildScheduleWindow(form(MONDAY, 15, 0, 3)), /only allows up to 2 hrs before 5:00 PM/);
+  assert.equal(buildScheduleWindow(form(MONDAY, 14, 0, 3)).duration_minutes, 180);
 });
 
 test('a changed config moves the picker and its checks with it', () => {
