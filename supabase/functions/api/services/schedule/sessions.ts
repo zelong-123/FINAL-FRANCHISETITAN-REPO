@@ -4,9 +4,10 @@
 import type { Db, Row } from '../../lib/db.ts';
 import { insertRow, updateRow, abort, RawError } from '../../lib/http.ts';
 import { logEvent } from '../applicantStage.ts';
+import { notifyUser } from '../notifications.ts';
 import { activityDone, activityLabel } from '../pipeline.ts';
 import { defaultHandlerId, evaluate, isAdmin, isLive, mergeReasons, SESSION_RELATIONS } from './conflict.ts';
-import { acquireDayLocks, addMinutes, iso8601, MINUTE, parseLocal, sessionCapacity } from './rules.ts';
+import { acquireDayLocks, addMinutes, iso8601, longDateTime, MINUTE, parseLocal, sessionCapacity } from './rules.ts';
 import { mirror, updateActivity } from './sync.ts';
 
 /** ScheduleRuleViolation: a validation-shaped refusal that also carries the evaluation. */
@@ -90,14 +91,59 @@ async function writeDecisions(tx: Db, session: Row, choice: ReturnType<typeof re
   }
 }
 
-async function seat(tx: Db, session: Row, applicantId: number, actor: Row, event: string) {
+const ACTIVITY_MODEL = 'App\\Models\\ActivitySchedule';
+const isLiveActivity = (a: Row | null | undefined) => Boolean(a && ['pending', 'confirmed'].includes(a.status) && a.approval_status !== 'rejected');
+const ATTENDANCE_RESET = { sales_completed_by: null, sales_completed_at: null, admin_attended_by: null, admin_attended_by_name: null, admin_attended_at: null };
+
+/**
+ * THE one way an applicant takes a seat in a session (create, join, Join this session, Add to existing
+ * session, merge, Set Again). Seating == scheduling: the seat always ends linked to ONE live activity
+ * record that mirrors the session (type, time, handler, venue, approval), exactly as Schedule activity.
+ *  - An earlier seat row of this applicant in this session (cancelled / removed) is reused, because a
+ *    session holds one row per applicant.
+ *  - `activityId`: the live record that moves with the seat (merge, Set Again). Without it, the seat's
+ *    record is reused only while it is live; a cancelled / No Show / rejected record stays as history
+ *    and a new record is created (never revived, so old history is not rewritten).
+ *  - A new record is audited (activity.created), logged in the stage history and notified, like a
+ *    normal schedule.
+ * Runs inside the caller's transaction (which holds the day locks): if any write fails, the seat,
+ * the record and the logs are all rolled back together.
+ */
+export async function addApplicantToSession(
+  tx: Db, session: Row, applicantId: number, actor: Row,
+  options: { activityId?: number | null; fields?: Row; event?: string | null; context?: Row } = {},
+): Promise<{ participant: Row; activity: Row; created: boolean }> {
   const [existing] = await tx.query(`select * from schedule_session_participants where session_id = $1 and applicant_id = $2`, [session.id, applicantId]);
+  let linkId: number | null = options.activityId ?? null;
+  if (linkId === null && existing?.activity_schedule_id) {
+    const [linked] = await tx.query(`select status, approval_status from activity_schedules where id = $1`, [existing.activity_schedule_id]);
+    if (isLiveActivity(linked)) linkId = Number(existing.activity_schedule_id);
+  }
+  const changed = existing && Number(existing.activity_schedule_id ?? 0) !== Number(linkId ?? 0);
+  const seatFields = { attendance_status: 'scheduled', ...(changed && !options.fields ? ATTENDANCE_RESET : {}), ...(options.fields ?? {}), activity_schedule_id: linkId };
   const participant = existing
-    ? (await updateRow(tx, 'schedule_session_participants', existing.id, { attendance_status: 'scheduled' }))!
-    : await insertRow(tx, 'schedule_session_participants', { session_id: session.id, applicant_id: applicantId, attendance_status: 'scheduled' });
-  await mirror(tx, participant, session, actor.id);
-  await logEvent(tx, await applicantOf(tx, applicantId), event, actor.id, { session_id: session.id, activity_type: session.activity_type, start_at: iso8601(session.start_at) });
-  return participant;
+    ? (await updateRow(tx, 'schedule_session_participants', existing.id, seatFields))!
+    : await insertRow(tx, 'schedule_session_participants', { session_id: session.id, applicant_id: applicantId, ...seatFields });
+  const activity = await mirror(tx, participant, session, actor.id);
+  const created = linkId === null;
+  // The invariant every caller relies on; a breach aborts the whole transaction.
+  if (!isLiveActivity(activity) || Number(participant.activity_schedule_id) !== Number(activity.id)) {
+    throw new Error(`Seat ${participant.id} in session ${session.id} has no live activity record.`);
+  }
+  const applicant = await applicantOf(tx, applicantId);
+  const context = { session_id: session.id, activity_id: activity.id, activity_type: session.activity_type, start_at: iso8601(session.start_at), ...(options.context ?? {}) };
+  if (created) {
+    await tx.query(
+      `insert into audit_logs (user_id, action, auditable_type, auditable_id, old_values, new_values, created_at) values ($1, 'activity.created', $2, $3, null, $4, now())`,
+      [actor.id, ACTIVITY_MODEL, activity.id, JSON.stringify({ ...activity, via_session_id: session.id })],
+    );
+    if (applicant?.user_id) {
+      await notifyUser(tx, applicant.user_id, 'schedule_created', 'Activity scheduled', `${activity.title} is scheduled for ${longDateTime(new Date(activity.starts_at))}.`, { activity_id: activity.id }, actor);
+    }
+  }
+  const event = options.event === undefined ? 'scheduled' : options.event;
+  if (event) await logEvent(tx, applicant, event, actor.id, context);
+  return { participant, activity, created };
 }
 
 async function addApplicants(tx: Db, session: Row, ids: number[], actor: Row) {
@@ -122,7 +168,8 @@ async function addApplicants(tx: Db, session: Row, ids: number[], actor: Row) {
     session.status = 'pending';
   }
   for (const id of ids) {
-    await seat(tx, session, Number(id), actor, 'participant_added');
+    // Joining is scheduling: the stage history records it as 'scheduled', like a new session.
+    await addApplicantToSession(tx, session, Number(id), actor, { context: { via: 'join' } });
     await history(tx, session.id, 'participant_added', null, { applicant_id: Number(id) }, actor);
   }
 }
@@ -154,7 +201,7 @@ export function createSession(db: Db, data: Row, actor: Row) {
       merge_suggested: choice.merge_suggested, max_capacity: proposal.max_capacity, remarks: data.remarks ?? null, created_by: actor.id,
     });
     await history(tx, session.id, 'created', null, snapshot(session), actor, data.remarks ?? null);
-    for (const id of data.applicant_ids) await seat(tx, session, Number(id), actor, 'scheduled');
+    for (const id of data.applicant_ids) await addApplicantToSession(tx, session, Number(id), actor);
     await writeDecisions(tx, session, choice, actor, data);
     return { session: await withRelations(tx, session.id), joined: false };
   });
@@ -241,20 +288,21 @@ export function cancelSession(db: Db, current: Row, actor: Row, remarks: string 
   });
 }
 
-/** Moves a seat (and its mirror row) to another session; the old row stays as 'removed' history. */
+/**
+ * Moves a seat and its live record to another session (merge, Set Again); the old row stays as
+ * 'removed' history. The seat lands through addApplicantToSession, so it ends linked to one live record.
+ */
 async function placeInto(tx: Db, participant: Row, target: Row, actor: Row) {
-  const [existing] = await tx.query(`select * from schedule_session_participants where session_id = $1 and applicant_id = $2`, [target.id, participant.applicant_id]);
-  const scheduleId = participant.activity_schedule_id;
-  let seated = participant;
-  if (existing) {
-    await updateRow(tx, 'schedule_session_participants', participant.id, { attendance_status: 'removed', activity_schedule_id: null });
-    seated = (await updateRow(tx, 'schedule_session_participants', existing.id, { attendance_status: 'scheduled', activity_schedule_id: scheduleId }))!;
-  } else if (participant.session_id !== target.id) {
-    await updateRow(tx, 'schedule_session_participants', participant.id, { attendance_status: 'removed', activity_schedule_id: null });
-    const { id: _id, created_at: _c, updated_at: _u, ...copy } = participant;
-    seated = await insertRow(tx, 'schedule_session_participants', { ...copy, session_id: target.id, activity_schedule_id: scheduleId });
+  if (participant.session_id === target.id) {
+    await mirror(tx, participant, target, actor.id);
+    return;
   }
-  await mirror(tx, seated, target, actor.id);
+  const scheduleId = participant.activity_schedule_id ? Number(participant.activity_schedule_id) : null;
+  const [record] = scheduleId ? await tx.query(`select status, approval_status from activity_schedules where id = $1`, [scheduleId]) : [];
+  await updateRow(tx, 'schedule_session_participants', participant.id, { attendance_status: 'removed', activity_schedule_id: null });
+  const { id: _id, created_at: _c, updated_at: _u, session_id: _s, applicant_id: _a, activity_schedule_id: _x, ...carry } = participant;
+  // The callers log their own stage event ('merged', 'set_again').
+  await addApplicantToSession(tx, target, Number(participant.applicant_id), actor, { activityId: isLiveActivity(record) ? scheduleId : null, fields: carry, event: null });
 }
 
 export function mergeSessions(db: Db, sourceId: number, targetId: number, actor: Row, applicantIds: number[] | null = null) {
