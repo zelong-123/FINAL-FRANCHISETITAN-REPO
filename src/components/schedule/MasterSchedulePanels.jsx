@@ -26,7 +26,7 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
         <strong className="text-text text-[14px] font-[700]">{title}</strong>
         <button type="button" aria-label="Next month" className="inline-flex items-center justify-center w-[32px] h-[32px] border border-line rounded-[8px] [background:transparent] text-muted hover:text-text" onClick={() => { setSlide('ms-cal-grid-next'); onMonth(shiftMonth(month, 1)); }}><FaChevronRight aria-hidden="true" /></button>
       </div>
-      {indicator && !plain && <span aria-hidden="true" className="ms-day-indicator absolute w-[32px] h-[32px] rounded-[50%] [background:#3b5b8f] pointer-events-none" style={{ left: indicator.left, top: indicator.top }} />}
+      {indicator && !plain && <span aria-hidden="true" className="ms-day-indicator absolute z-0 w-[32px] h-[32px] rounded-[50%] [background:#070A13] [border:2px_solid_#5b7fc0] pointer-events-none" style={{ left: indicator.left, top: indicator.top }} />}
       <table key={month} className={`w-full border-collapse text-center text-[13px] ${slide}`}>
         <thead>
           <tr>{DAY_HEADINGS.map((day) => <th key={day} className="text-muted text-[14px] font-[800] pb-[4px]">{day}</th>)}</tr>
@@ -36,7 +36,7 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
             <tr key={index}>
               {week.map((date, cell) => {
                 if (!date) return <td key={cell} />;
-                const { dots, more } = plain ? { dots: 0, more: 0 } : dayDots(sessions, date);
+                const { dots, more, done } = plain ? { dots: 0, more: 0, done: 0 } : dayDots(sessions, date);
                 const selected = date === selectedDate;
                 const isToday = date === todayDate;
                 return (
@@ -49,8 +49,8 @@ export function MiniCalendar({ month, selectedDate, todayDate, sessions, onMonth
                       className={`relative w-[32px] h-[32px] mx-auto rounded-[50%] flex flex-col items-center justify-center text-text text-[17px] border-0 shadow-none [background:transparent] ${selected ? 'font-[750]' : ''} ${isToday ? 'text-accent' : ''}`}
                     >
                       {Number(date.slice(8))}
-                      <span className="flex items-center gap-[2px] h-[4px]" aria-hidden="true">
-                        {Array.from({ length: dots }, (_, i) => <i key={i} className="w-[4px] h-[4px] rounded-[50%] bg-accent" />)}
+                      <span className="relative z-[1] flex items-center gap-[2px] h-[4px]" aria-hidden="true">
+                        {Array.from({ length: dots }, (_, i) => <i key={i} className={`w-[4px] h-[4px] rounded-[50%] ${i < done ? '[background:#3b82f6]' : '[background:#22c55e]'}`} />)}
                         {more > 0 && <em className="not-italic text-[8px] text-muted">+{more}</em>}
                       </span>
                     </button>

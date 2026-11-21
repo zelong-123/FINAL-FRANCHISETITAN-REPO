@@ -42,9 +42,17 @@ test('dots cap at four and report the remainder', () => {
     { start_at: '2026-11-18T05:00:00Z', participant_count: 3 },
     { start_at: '2026-11-19T01:00:00Z', participant_count: 2 },
   ];
-  assert.deepEqual(dayDots(sessions, '2026-11-18'), { count: 6, dots: 4, more: 2 });
-  assert.deepEqual(dayDots(sessions, '2026-11-19'), { count: 2, dots: 2, more: 0 });
-  assert.deepEqual(dayDots(sessions, '2026-11-20'), { count: 0, dots: 0, more: 0 });
+  assert.deepEqual(dayDots(sessions, '2026-11-18'), { count: 6, dots: 4, more: 2, done: 0 });
+  assert.deepEqual(dayDots(sessions, '2026-11-19'), { count: 2, dots: 2, more: 0, done: 0 });
+  assert.deepEqual(dayDots(sessions, '2026-11-20'), { count: 0, dots: 0, more: 0, done: 0 });
+});
+
+test('completed sessions are counted as done (blue), scheduled ones are not', () => {
+  const sessions = [
+    { start_at: '2026-11-18T01:00:00Z', participant_count: 2, status: 'completed' },
+    { start_at: '2026-11-18T03:00:00Z', participant_count: 3, status: 'confirmed' },
+  ];
+  assert.deepEqual(dayDots(sessions, '2026-11-18'), { count: 5, dots: 4, more: 1, done: 2 });
 });
 
 test('sessions outside 9 AM-5 PM Manila are flagged, inside ones are not', () => {

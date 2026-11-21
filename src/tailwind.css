@@ -450,6 +450,26 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   overflow: hidden;
   min-height: 0;
 }
+/* Add warehouse product modal: bigger labels, taller inputs and dropdowns. */
+.wh-product-form label > span {
+  font-size: 13px;
+  font-weight: 700;
+}
+.wh-product-form label > small {
+  font-size: 12px;
+}
+.wh-product-form input,
+.wh-product-form select {
+  min-height: 46px;
+  font-size: 15px;
+  padding: 10px 13px;
+}
+.wh-product-form select {
+  padding-right: 36px;
+}
+.wh-product-form input::placeholder {
+  font-size: 15px;
+}
 @media (prefers-reduced-motion: reduce) {
   .tabs-collapse { transition: none; }
 }

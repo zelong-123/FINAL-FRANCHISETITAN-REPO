@@ -4,8 +4,6 @@ import {
   FaBell,
   FaCheck,
   FaCommentDots,
-  FaMoon,
-  FaSun,
   FaWifi,
 } from 'react-icons/fa6';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -24,7 +22,6 @@ import { FollowUpDialogs } from '../../applicants/FollowUp';
 import FollowUpsTab from './FollowUpsTab';
 import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
-import { useTheme } from '../../../context/ThemeContext';
 import { initialsOf } from '../../../lib/initials';
 
 function initials(name = 'User') {
@@ -33,7 +30,6 @@ function initials(name = 'User') {
 
 export default function Header({ onMenu, mobileOpen }) {
   const { user, role } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const { unreadTotal, toggleMessenger } = useChat();
   const location = useLocation();
   const navigate = useNavigate();
@@ -279,16 +275,6 @@ export default function Header({ onMenu, mobileOpen }) {
           <FaWifi aria-hidden="true" />
           <span>{systemStatus === 'checking' ? 'Checking' : systemStatus === 'online' ? 'Live' : 'Offline'}</span>
         </div>
-
-        <button
-          type="button"
-          className="w-[40px] h-[40px] inline-grid place-items-center flex-[0_0_auto] p-0 border border-transparent rounded-[12px] text-text-secondary [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_border-color_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:border-line hover:[transform:translateY(-1px)] overflow-hidden [&_svg]:[transition:transform_.3s_cubic-bezier(.2,_.8,_.2,_1)] [&:hover_svg]:[transform:rotate(18deg)_scale(1.08)]"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-        >
-          {theme === 'dark' ? <FaSun /> : <FaMoon />}
-        </button>
 
         <button
           type="button"

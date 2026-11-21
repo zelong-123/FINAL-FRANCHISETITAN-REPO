@@ -3606,25 +3606,25 @@ export default function Applicants() {
 
       {tab !== 'franchisees' && (
         <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_label]:text-[12px] [&_label]:font-[700] [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
-          <label>From<input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} /></label>
-          <label>To<input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} /></label>
-          <label>Date basis
-            <select value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
-              <option value="applied">Date Applied</option>
+          <label className="relative"><input type="date" aria-label="From" className={`min-w-[175px] ${!filters.from ? 'text-transparent!' : ''}`} value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} />{!filters.from && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">From mm/dd/yyyy</span>}</label>
+          <label className="relative"><input type="date" aria-label="To" className={`min-w-[175px] ${!filters.to ? 'text-transparent!' : ''}`} value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} />{!filters.to && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">To mm/dd/yyyy</span>}</label>
+          <label><span className="sr-only">Date basis</span>
+            <select aria-label="Date basis" value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
+              <option value="applied">Date applied</option>
               <option value="approved">Approved</option>
               <option value="rejected">Rejected</option>
               <option value="updated">Last Updated</option>
             </select>
           </label>
-          <label>Brand
-            <select value={filters.brand_id} onChange={(e) => { setPage(1); setFilters({ ...filters, brand_id: e.target.value }); }}>
-              <option value="">All brands</option>
+          <label><span className="sr-only">Brand</span>
+            <select aria-label="Brand" value={filters.brand_id} onChange={(e) => { setPage(1); setFilters({ ...filters, brand_id: e.target.value }); }}>
+              <option value="">Brand</option>
               {(remote.data?.brands || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </label>
-          <label>Assigned Sales
-            <select value={filters.assigned_sales_user_id} onChange={(e) => { setPage(1); setFilters({ ...filters, assigned_sales_user_id: e.target.value }); }}>
-              <option value="">Anyone</option>
+          <label><span className="sr-only">Assigned Sales</span>
+            <select aria-label="Assigned Sales" value={filters.assigned_sales_user_id} onChange={(e) => { setPage(1); setFilters({ ...filters, assigned_sales_user_id: e.target.value }); }}>
+              <option value="">Assigned Sales</option>
               {role === 'sales' && user?.id && <option value={user.id}>Assigned to me</option>}
               {salesChoices.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
               <option value="unassigned">Unassigned</option>
