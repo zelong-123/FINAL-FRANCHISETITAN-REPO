@@ -3,7 +3,7 @@ import QualificationReview from '../components/applicants/QualificationReview.js
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  FaCheck, FaChevronDown, FaClipboardCheck, FaClock, FaEye, FaFileCsv, FaFilePdf, FaImage, FaList, FaLock, FaPen, FaPrint, FaStore,
+  FaArrowDown, FaArrowUp, FaCheck, FaChevronDown, FaCircleInfo, FaClipboardCheck, FaClock, FaEye, FaFile, FaFileCsv, FaFilePdf, FaImage, FaList, FaLock, FaPen, FaPlus, FaPrint, FaStore,
   FaRotateLeft, FaTableCellsLarge, FaTrashCan, FaUserCheck, FaXmark,
 } from 'react-icons/fa6';
 import RequirementFileDrop from '../components/RequirementFileDrop';
@@ -700,6 +700,16 @@ const PAY_BADGE_TONE = {
   completed: 'text-[#45d991] [background:rgba(69,_217,_145,_.14)]',
   new: 'text-[#c3cbe0] [background:#232b3d]',
 };
+// Same colors as PAY_BADGE_TONE, text only: used for the section header status.
+const PAY_TEXT_TONE = {
+  unpaid: 'text-[#f87171]',
+  not_yet_paid: 'text-[#c3cbe0]',
+  for_verification: 'text-[#fbbf24]',
+  rejected: 'text-[#f87171]',
+  verified: 'text-[#45d991]',
+  completed: 'text-[#45d991]',
+  new: 'text-[#c3cbe0]',
+};
 const PAY_INPUT = 'w-full min-h-[42px] p-[0_12px] border border-[#2a3550] rounded-[10px] [background:#0b111c] text-[#e7ebf5] placeholder:text-[#64708c]';
 
 function PayBadge({ tone, children }) {
@@ -733,23 +743,55 @@ function ReceiptLinks({ applicantId, entry, busy, onError }) {
 }
 
 function EntryDetails({ applicantId, entry, busy, onError }) {
+  const [viewing, setViewing] = useState(null);
   const cells = [
     ['Date paid', formatDate(entry.payment_date)],
     ['Method', entry.payment_method_label],
     ['Reference no.', entry.reference_number || '—'],
     ['OR / AR no.', entry.or_number || '—'],
-    [entry.receipts?.length > 1 ? 'Receipts' : 'Receipt', <span key="r" className="grid gap-1 justify-items-start"><ReceiptLinks applicantId={applicantId} entry={entry} busy={busy} onError={onError} /></span>],
-    ['Remarks', entry.remarks || '—'],
+    ['Remarks', entry.remarks || 'None', !entry.remarks],
   ];
+  const receipts = entry.receipts?.length > 1 ? 'Receipts' : 'Receipt';
   return (
-    <dl className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[14px_18px] m-[14px_0_0] max-[721px]:grid-cols-[repeat(2,_minmax(0,_1fr))]">
-      {cells.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[#8f9bbd] text-[11px] font-[700] tracking-[.08em] uppercase">{label}</dt>
-          <dd className="m-[3px_0_0] text-[#edf0fa] text-[15px] [overflow-wrap:anywhere]">{value}</dd>
+    <>
+      <dl className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[20px_32px] m-[18px_0_0] max-[721px]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[480px]:grid-cols-[1fr]">
+        {cells.map(([label, value, muted]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[#98a2b8] text-[13px]">{label}</dt>
+            <dd className={`m-[4px_0_0] text-[15px] font-[500] [overflow-wrap:anywhere] ${muted ? 'text-[#98a2b8]' : 'text-[#e8ebf3]'}`}>{value}</dd>
+          </div>
+        ))}
+        <div className="min-w-0">
+          <dt className="text-[#98a2b8] text-[13px]">{receipts}</dt>
+          {entry.receipts?.length ? (
+            <dd className="m-[4px_0_0] grid gap-[6px]">
+              {entry.receipts.map((doc) => (
+                <span key={doc.id} className="flex items-center gap-[8px] min-w-0 text-[15px] font-[500] text-[#e8ebf3]">
+                  <FaFile aria-hidden="true" className="shrink-0 text-[#98a2b8]" />
+                  <span className="min-w-0 truncate" title={doc.original_name}>{doc.original_name}</span>
+                  <button type="button" disabled={busy} aria-label={`View ${doc.original_name}`} className="shrink-0 min-h-[24px] p-0 border-0 [background:none] text-[#aab4ff] text-[14px] font-[600] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => setViewing(doc)}>
+                    View
+                  </button>
+                </span>
+              ))}
+            </dd>
+          ) : (
+            <dd className="m-[4px_0_0] text-[15px] font-[500] text-[#e8ebf3] [overflow-wrap:anywhere]">
+              <ReceiptLinks applicantId={applicantId} entry={entry} busy={busy} onError={onError} />
+            </dd>
+          )}
         </div>
-      ))}
-    </dl>
+      </dl>
+      <RequirementPreview
+        open={Boolean(viewing)}
+        applicantId={applicantId}
+        doc={viewing}
+        fetchPath={viewing ? `/applicants/${applicantId}/payments/${entry.id}/documents/${viewing.id}/download` : null}
+        onClose={() => setViewing(null)}
+        onError={onError}
+      />
+    </>
   );
 }
 
@@ -759,7 +801,7 @@ function AuditLine({ entry }) {
   if (entry.verified_by) parts.push(`Verified by Admin · ${entry.verified_by}${entry.verified_at ? ` · ${manilaDateTimeLabel(entry.verified_at)}` : ''}`);
   if (entry.rejected_by) parts.push(`Rejected by Admin · ${entry.rejected_by}${entry.rejected_at ? ` · ${manilaDateTimeLabel(entry.rejected_at)}` : ''}`);
   if (!parts.length) return null;
-  return <p className="m-[12px_0_0] text-[#8f9bbd] text-[13px]">{parts.join('  |  ')}</p>;
+  return <p className="m-[14px_0_0] text-[#98a2b8] text-[13px]">{parts.join('  |  ')}</p>;
 }
 
 function RejectedNote({ entry }) {
@@ -872,15 +914,35 @@ function PaymentEntryForm({ item, record, existing, applicantId, busy, onCancel,
 /** Admin: reason + Reject / Verify payment on an entry that is For verification. */
 function VerificationBox({ entry, busy, onVerify, onReject }) {
   const [reason, setReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const canReject = reason.trim().length >= 5;
+  const closeReject = () => { setRejecting(false); setReason(''); };
+  if (rejecting) {
+    return (
+      <div className="mt-[20px] pt-[20px] border-t border-t-[#252c42]" onKeyDown={(e) => { if (e.key === 'Escape') closeReject(); }}>
+        <label className="grid gap-[6px] text-[#98a2b8] text-[13px] font-[600]">Reason for rejection · required
+          <input autoFocus className="w-full min-h-[48px] p-[0_12px] border border-[#2f3752] rounded-[10px] [background:#0a0e1a] text-[15px] text-[#e8ebf3] placeholder:text-[#6b7590] focus:outline-none focus:outline-2 focus:outline-[#5160ee] focus:outline-offset-0" placeholder="e.g. Receipt unreadable" value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
+          <span className="flex flex-wrap gap-[10px]">
+            <button type="button" className="min-h-[44px] p-[0_18px] border-0 rounded-[10px] [background:#3a2230] text-[#8a6672] font-[600] enabled:[background:#5a2a3a] enabled:text-[#ff9d9d] disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy || !canReject} title={canReject ? '' : 'Enter a reason of at least 5 characters.'} onClick={() => { onReject(entry, reason.trim()); closeReject(); }}>Confirm reject</button>
+            <button type="button" className="min-h-[44px] p-[0_16px] border-0 rounded-[10px] [background:transparent] text-[#e8ebf3] font-[600] hover:[background:#161c2e] focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy} onClick={closeReject}>Back</button>
+          </span>
+          <span className="text-[#98a2b8] text-[13px]">The reason is saved in the payment record.</span>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-wrap items-center gap-3 mt-[14px] pt-[14px] border-t border-t-[#232c40]">
-      <label className="flex flex-[1_1_360px] items-center gap-3 text-[#8f9bbd] text-[13.5px]">
-        <span className="whitespace-nowrap">Reason (required to reject)</span>
-        <input className={PAY_INPUT} placeholder="e.g. Receipt unreadable" value={reason} onChange={(e) => setReason(e.target.value)} />
-      </label>
-      <button type="button" className={PAY_DANGER} disabled={busy || !canReject} title={canReject ? '' : 'Enter a reason of at least 5 characters.'} onClick={() => { onReject(entry, reason.trim()); setReason(''); }}>Reject</button>
-      <button type="button" className={PAY_PRIMARY} disabled={busy} onClick={() => onVerify(entry)}>Verify payment</button>
+    <div className="flex flex-wrap items-center justify-between gap-3 mt-[20px] pt-[20px] border-t border-t-[#252c42]">
+      <span className="flex flex-wrap items-center gap-[10px]">
+        <button type="button" className="inline-flex items-center gap-[8px] min-h-[44px] p-[0_18px] border-0 rounded-[10px] [background:#5160ee] text-[#fff] font-[600] hover:[background:#6070f5] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#aab4ff] focus-visible:outline-offset-2" disabled={busy} onClick={() => {
+          if (!window.confirm('Verify this payment? Once verified, the entry will be locked.')) return;
+          onVerify(entry);
+        }}><FaCheck aria-hidden="true" />Verify payment</button>
+        <button type="button" className="min-h-[44px] p-[0_14px] border-0 rounded-[10px] [background:transparent] text-[#ff9d9d] font-[600] hover:[background:rgba(248,_113,_113,_.1)] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy} onClick={() => setRejecting(true)}>Reject…</button>
+      </span>
+      <span className="text-[#98a2b8] text-[13px]">Rejecting asks for a reason first.</span>
     </div>
   );
 }
@@ -892,6 +954,8 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   const embedded = isPaymentRecord(editing?.payment_record) ? editing.payment_record : null;
   // The card reads GET /payment-record itself, so a failure shows here instead of hiding every action.
   const [loaded, setLoaded] = useState({ key: null, record: null, error: '' });
+  // Verified payments can be hidden or shown (keyed by required payment id).
+  const [hiddenVerified, setHiddenVerified] = useState({});
   // { id, mode: 'record' | 'edit' }; { id: -1 } means "no form" after Cancel.
   const [formFor, setFormFor] = useState(null);
   const loadKey = `${editing?.id}:${editing?.updated_at ?? ''}:${JSON.stringify(editing?.payment_record?.required?.map((r) => [r.id, r.status, r.entry?.revision]) ?? null)}`;
@@ -937,60 +1001,62 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   return (
     <section className="ap-section m-[0_0_17px] p-[20px_22px] border border-[#2a3041] rounded-[13px] [background:#0C111D] text-[14px] leading-[1.5] text-[#c9d0e0]" aria-labelledby="ap-payment-record-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 id="ap-payment-record-title" className="m-0 text-[1rem] tracking-[0.09em] uppercase text-[#edf0fa] font-[800]">Payment Record</h3>
-        <PayBadge tone={record.badge || 'unpaid'}>{record.badge_label || 'Unpaid'}</PayBadge>
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 id="ap-payment-record-title" className="m-0 text-[20px] font-[700] text-[#e8ebf3]">Payment record</h3>
+          <span className={`inline-flex items-center gap-[6px] whitespace-nowrap p-[3px_10px] rounded-[999px] text-[13px] font-[600] [background:#2b2417] ${PAY_TEXT_TONE[record.badge] || PAY_TEXT_TONE.unpaid}`}><span aria-hidden="true" className="inline-block w-[6px] h-[6px] rounded-full bg-current" />{record.badge_label || 'Unpaid'}</span>
+        </div>
+        {!readOnly && record.can_edit_required && (
+          <button type="button" className="inline-flex items-center gap-[8px] min-h-[44px] p-[0_16px] border border-[#2f3752] rounded-[10px] [background:transparent] text-[#e8ebf3] text-[14px] font-[600] cursor-pointer hover:[background:#161c2e] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy} onClick={onEditRequired}><FaPen aria-hidden="true" className="text-[12px]" />Edit required payments</button>
+        )}
       </div>
       {fresh.error && <p className="m-[10px_0_0] p-[9px_12px] rounded-[9px] border border-[rgba(248,_113,_113,_.35)] [background:rgba(248,_113,_113,_.08)] text-[#fca5a5] text-[13.5px]" role="alert">Could not refresh the Payment Record: {fresh.error}</p>}
       {salesView && <p className="m-[10px_0_0] text-[#9aa6c4]">Record payments the applicant made outside the system. Admin verifies each entry before the applicant can move forward.</p>}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 mt-[14px]">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[#9aa6c4]">{salesView ? 'Required payments (set by Admin):' : 'Required payments:'}</span>
-          {required.length
-            ? required.map((item) => <PayChip key={item.id}>{item.name}</PayChip>)
-            : <span className="text-[#fbbf24]">{record.legacy_confirmed ? 'None (confirmed under the older flow)' : 'Not set yet'}</span>}
-        </div>
-        {!readOnly && record.can_edit_required && (
-          <button type="button" className={`${PAY_SECONDARY} text-[#a9c1ff]! hover:border-[#5b6a8f] hover:[background:#1c2435]`} disabled={busy} onClick={onEditRequired}>Edit required payments</button>
-        )}
-      </div>
+      <p className="m-[12px_0_0] text-[#e8ebf3] text-[14px]">
+        <strong className="font-[600]">{record.verified_count ?? 0} of {record.required_count ?? 0}</strong> required payments verified
+      </p>
 
       {(record.basis_note || record.loi_document || record.loi_file_missing) && (
-        <p className="m-[10px_0_0] text-[#9aa6c4] text-[13.5px]">
-          {record.basis_note && <>Package or basis: <strong className="text-[#d6dcea] font-[600]">{record.basis_note}</strong></>}
-          {record.basis_note && (record.loi_document || record.loi_file_missing) && ' · '}
-          {record.loi_document && (
-            <button type="button" className="p-0 border-0 [background:none] text-[#7fa8ff] hover:underline" onClick={openLoi}>Open signed LOI ({record.loi_document.original_name})</button>
-          )}
-          {!record.loi_document && record.loi_file_missing && <span className="text-[#fbbf24]">No LOI file on record</span>}
-          <span className="block text-[12px] text-[#7b86a3]">Reference only, to check the amount to collect. The system does not store or compute amounts.</span>
+        <p className="m-[10px_0_0] flex flex-wrap items-center gap-x-[6px] text-[#98a2b8] text-[14px]">
+          <FaFile aria-hidden="true" className="shrink-0" />
+          {record.loi_document ? (
+            <span>Reference: <button type="button" className="p-0 border-0 [background:none] text-[#aab4ff] hover:underline focus-visible:outline-2 focus-visible:outline-[#5160ee]" onClick={openLoi}>{record.loi_document.original_name}</button></span>
+          ) : record.loi_file_missing ? <span className="text-[#f2b866]">No LOI file on record</span> : null}
+          {record.basis_note && <span>· Package or basis: <span className="text-[#e8ebf3]">{record.basis_note}</span></span>}
+          <span>· For checking the amount to collect. Amounts are not stored or computed.</span>
         </p>
       )}
 
       <div className="grid gap-[14px] mt-[16px]">
-        {required.map((item) => {
+        {required.map((item, index) => {
           const entry = item.entry;
           const formHere = Boolean(activeForm && activeForm.id === item.id);
           // Sales: Verified items collapse into one locked row.
           if (salesView && item.status === 'verified' && entry) {
             return (
-              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-[14px_18px] border border-[#252e42] rounded-[11px] [background:#111727]">
-                <span className="flex flex-wrap items-baseline gap-3 min-w-0">
-                  <strong className="text-[#edf0fa] text-[16px]">{item.name}</strong>
-                  <span className="text-[#8f9bbd] text-[13px] [overflow-wrap:anywhere]">
-                    {[formatDate(entry.payment_date), entry.payment_method_label, entry.or_number].filter(Boolean).join(' · ')}
-                  </span>
-                  <span className="flex flex-wrap gap-x-3 gap-y-1 text-[13px]"><ReceiptLinks applicantId={editing.id} entry={entry} busy={busy} onError={onError} /></span>
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-[16px_20px] rounded-[12px] [background:#131929]">
+                <span className="flex items-center gap-[12px] min-w-0">
+                  <span aria-hidden="true" className="inline-grid place-items-center shrink-0 w-[28px] h-[28px] rounded-full [background:rgba(127,_216,_168,_.16)] text-[#7fd8a8]"><FaCheck className="text-[12px]" /></span>
+                  <strong className="text-[#e8ebf3] text-[16px] font-[600]">{item.name}</strong>
+                  <span className="text-[#7fd8a8] text-[13px] font-[600]">Verified</span>
                 </span>
-                <PayBadge tone="verified">Verified · locked</PayBadge>
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[#98a2b8] min-w-0">
+                  {[formatDate(entry.payment_date), entry.payment_method_label, entry.or_number].filter(Boolean).join(' · ')}
+                  <ReceiptLinks applicantId={editing.id} entry={entry} busy={busy} onError={onError} />
+                </span>
               </div>
             );
           }
           const highlighted = formHere || (isAdminRole && entry?.reviewable && !readOnly);
+          const verifiedHidden = Boolean(hiddenVerified[item.id]) && item.status === 'verified' && !formHere;
           return (
-            <article key={item.id} className={`p-[16px_20px] border rounded-[6px] [background:#111727] ${highlighted ? 'border-[#3b5bd9]' : 'border-[#252e42]'}`}>
+            <article key={item.id} className={`p-[20px_24px] rounded-[12px] ${highlighted ? '[background:#161c2e]' : '[background:#131929]'}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <strong className="text-[#edf0fa] text-[17px]">{item.name}</strong>
+                <span className="flex items-center gap-[12px] min-w-0">
+                  <span aria-hidden="true" className="inline-grid place-items-center shrink-0 w-[28px] h-[28px] rounded-full [background:rgba(242,_184,_102,_.16)] text-[#f2b866] text-[13px] font-[700]">{index + 1}</span>
+                  <strong className="text-[#e8ebf3] text-[18px] font-[700]">{item.name}</strong>
+                </span>
+                {isAdminRole && entry?.reviewable && !readOnly && <span className="text-[#f2b866] text-[14px] font-[600]">Needs your review</span>}
                 <span className="flex items-center gap-2">
                   {salesView && entry?.editable && !formHere && !readOnly && (
                     <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={() => setFormFor({ id: item.id, mode: 'edit' })}>Edit entry</button>
@@ -998,16 +1064,23 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
                   {salesView && item.can_record && !formHere && !readOnly && (
                     <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={() => setFormFor({ id: item.id, mode: 'record' })}>{item.status === 'rejected' ? 'Correct and resubmit' : 'Record payment'}</button>
                   )}
-                  <PayBadge tone={item.status}>{item.status_label}</PayBadge>
+                  {!(isAdminRole && entry?.reviewable && !readOnly) && <PayBadge tone={item.status}>{item.status_label}</PayBadge>}
+                  {item.status === 'verified' && entry && !formHere && (
+                    <button type="button" aria-expanded={!verifiedHidden} aria-label={`${verifiedHidden ? 'Show' : 'Hide'} ${item.name} details`} className="inline-flex items-center justify-center w-[44px] h-[44px] p-0 border-0 rounded-[10px] bg-transparent text-[#98a2b8] cursor-pointer hover:[background:#161c2e] focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" onClick={() => setHiddenVerified({ ...hiddenVerified, [item.id]: !hiddenVerified[item.id] })}>
+                      <FaChevronDown aria-hidden="true" className={`transition-transform duration-300 ${verifiedHidden ? '-rotate-90' : 'rotate-180'}`} />
+                    </button>
+                  )}
                 </span>
               </div>
               {formHere && <p className="m-[6px_0_0] text-[#a9c1ff] text-[13px] font-[700]">Recording: {item.name}</p>}
               <RejectedNote entry={entry} />
               {entry && !formHere && (
-                <>
-                  <EntryDetails applicantId={editing.id} entry={entry} busy={busy} onError={onError} />
-                  <AuditLine entry={entry} />
-                </>
+                <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${verifiedHidden ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
+                  <div className="min-h-0 overflow-hidden">
+                    <EntryDetails applicantId={editing.id} entry={entry} busy={busy} onError={onError} />
+                    <AuditLine entry={entry} />
+                  </div>
+                </div>
               )}
               {!entry && !formHere && (
                 <p className="m-[10px_0_0] text-[#8f9bbd] text-[13.5px]">{salesView ? 'Not yet recorded.' : 'Waiting for Sales to record this payment.'}</p>
@@ -1072,22 +1145,17 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
         </details>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 mt-[16px] p-[14px_18px] border border-dashed border-[#2a3550] rounded-[11px] [background:#0f1522]">
-        <p className="m-0 flex-[1_1_320px] text-[#c9d0e0]">
-          {record.required_count
-            ? <><strong className="text-[#edf0fa]">{record.verified_count} of {record.required_count}</strong> required payments verified. </>
-            : <><strong className="text-[#edf0fa]">No required payments set.</strong> </>}
-          {readOnly ? '' : 'The applicant moves to For Approval once all required payments are Verified.'}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4 mt-[20px] pt-[20px] border-t border-t-[#1f2639]">
+        <div className="flex-[1_1_320px] min-w-0">
+          <p className="m-0 text-[#e8ebf3] text-[15px] font-[600]">Next step: Move to For Approval</p>
+          <p className="m-[4px_0_0] text-[#98a2b8] text-[13px]">Available once all required payments are verified.{(() => { const pending = required.filter((r) => r.status !== 'verified').map((r) => r.name); return pending.length ? ` Still to verify: ${pending.join(', ')}.` : ''; })()}</p>
+        </div>
         {!readOnly && isAdminRole && editing.status === 'payment_submitted' && (
-          <button type="button" className={`${PAY_PRIMARY} disabled:[background:#070A13]!`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
+          <button type="button" className={`min-h-[44px] inline-flex items-center justify-center p-[0_20px] border-0 rounded-[10px] font-[600] focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2 ${record.can_move ? '[background:#5160ee] text-[#fff] hover:[background:#6070f5]' : '[background:#1c2338] text-[#6b7590] cursor-not-allowed'}`} disabled={busy || !record.can_move} title={record.can_move ? 'Every required payment is Verified.' : (record.move_blocker || '')} onClick={onMove}>
             Move to For Approval
           </button>
         )}
       </div>
-      {!readOnly && isAdminRole && !record.can_move && record.move_blocker && (
-        <p className="m-[8px_0_0] text-[#8f9bbd] text-[12.5px]">{record.move_blocker}</p>
-      )}
 
       {(record.history || []).length > 0 && (
         <details className="mt-3 text-[13px]">
@@ -1143,9 +1211,9 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
     basis_note: note.trim() || null,
   });
   const subtitle = [
-    applicant.full_name && <strong key="name" className="font-[700] text-[#D4AF37]">{applicant.full_name}</strong>,
+    applicant.full_name && <strong key="name" className="font-[600] text-[#e8ebf3]">{applicant.full_name}</strong>,
     applicant.applicant_code,
-    applicant.preferred_brand?.name && <strong key="brand" className="font-[700]" style={{ color: brandColor(applicant.preferred_brand.name) }}>{applicant.preferred_brand.name}</strong>,
+    applicant.preferred_brand?.name && <span key="brand" className="text-[#98a2b8]">{applicant.preferred_brand.name}</span>,
   ].filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part]));
 
   return (
@@ -1157,53 +1225,60 @@ function EditRequiredPaymentsModal({ applicant, record, busy, onCancel, onSave }
       animated
       footer={(
         <>
-          <button type="button" className={PAY_SECONDARY} disabled={busy} onClick={onCancel}>Cancel</button>
-          <button type="button" className={PAY_PRIMARY} disabled={busy || Boolean(issue)} title={issue} onClick={save}>Save required payments</button>
+          <span className="mr-auto text-[#98a2b8] text-[13px] max-[561px]:hidden">Changes are logged with your name and date.</span>
+          <button type="button" className="min-h-[44px] p-[0_18px] border border-[#2f3752] rounded-[8px] [background:transparent] text-[#e8ebf3] font-[600] hover:[background:#161c2e] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy} onClick={onCancel}>Cancel</button>
+          <button type="button" className="min-h-[44px] p-[0_22px] border-0 rounded-[8px] [background:#5160ee] text-[#fff] font-[600] hover:[background:#6070f5] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#aab4ff] focus-visible:outline-offset-2" disabled={busy || Boolean(issue)} title={issue} onClick={save}>Save</button>
         </>
       )}
     >
-      <p className="m-0 text-[#9aa6c4] text-[14px]">{subtitle}. Choose which payments this applicant must complete. No amounts are set or computed here.</p>
-      <label className="grid gap-[6px] mt-[16px] text-[#c9d0e0] text-[13.5px] font-[600]">Payment plan
-        <select className={`${PAY_INPUT} cursor-pointer transition-[border-color,box-shadow,background] duration-200 ease-out hover:border-[#4a5a80] hover:[background:#111a2b] focus:outline-none focus:border-[#5b7bd9] focus:shadow-[0_0_0_3px_rgba(91,_123,_217,_.18)]`} value={preset} onChange={(e) => applyPreset(e.target.value)}>
+      <div className="flex gap-[10px] items-start p-[12px_14px] rounded-[10px] [background:#161c2e] text-[#98a2b8] text-[13px] leading-[1.5]">
+        <FaCircleInfo aria-hidden="true" className="flex-none mt-[3px] text-[#98a2b8]" />
+        <span>Choose which payments this applicant must complete. This is a record only. No amounts are entered or computed here.</span>
+      </div>
+      <label className="grid gap-[6px] mt-[18px] text-[#98a2b8] text-[13px] font-[600]">Payment plan
+        <select className={`${PAY_INPUT} min-h-[48px] text-[15px] cursor-pointer transition-[border-color,box-shadow,background] duration-200 ease-out hover:border-[#4a5a80] focus:outline-none focus:border-[#5160ee] focus:shadow-[0_0_0_2px_rgba(81,_96,_238,_.35)]`} value={preset} onChange={(e) => applyPreset(e.target.value)}>
           <option value="">Choose a plan…</option>
-          {(record.preset_options || []).map((o) => <option key={o.value} value={o.value}>{o.label}{o.items.length ? ` (${o.items.join(', ')})` : ''}</option>)}
+          {(record.preset_options || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </label>
-      <ol className="grid gap-[10px] m-[16px_0_0] p-0 [list-style:none]">
+      <div className="flex items-baseline justify-between mt-[20px]">
+        <span className="text-[#98a2b8] text-[13px] font-[600]">Payments to complete</span>
+        <span className="text-[#98a2b8] text-[13px]">{rows.length} {rows.length === 1 ? 'item' : 'items'}</span>
+      </div>
+      <ol className="grid gap-[8px] m-[10px_0_0] p-0 [list-style:none]">
         {rows.map((row, index) => (
-          <li key={row.key} className="grid grid-cols-[22px_minmax(0,_1fr)_auto_auto] items-center gap-[10px] max-[561px]:grid-cols-[22px_minmax(0,_1fr)_auto]">
-            <span className="text-[#8f9bbd] text-[14px]">{index + 1}</span>
-            <input className={PAY_INPUT} value={row.name} disabled={row.locked} maxLength={80} placeholder="Payment name, e.g. 2nd Installment" aria-label={`Required payment ${index + 1}`} onChange={(e) => update(row.key, e.target.value)} />
-            <span className="flex items-center gap-[6px] max-[561px]:col-start-2">
-              {row.locked && <PayBadge tone={row.status === 'verified' ? 'verified' : 'for_verification'}>{row.lockLabel}</PayBadge>}
-              {!row.locked && !row.id && <PayBadge tone="new">New</PayBadge>}
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:-translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === 0} aria-label="Move up" onClick={() => moveRow(index, -1)}>↑</button>
-              <button type="button" className="w-[30px] h-[30px] border border-[#2a3550] rounded-[8px] [background:#121826] text-[#9aa6c4] transition-[background,border-color,color,transform] duration-150 ease-out enabled:hover:translate-y-px enabled:hover:border-[#5b7bd9] enabled:hover:text-[#a9c1ff] enabled:hover:[background:#1c2640] enabled:active:translate-y-0 enabled:active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed" disabled={index === rows.length - 1} aria-label="Move down" onClick={() => moveRow(index, 1)}>↓</button>
+          <li key={row.key} className="grid grid-cols-[24px_minmax(0,_1fr)_112px_auto_44px] items-center gap-[8px] max-[561px]:grid-cols-[24px_minmax(0,_1fr)_auto] max-[561px]:[&>.pay-row-status]:col-span-full max-[561px]:[&>.pay-row-status]:order-last">
+            <span className="inline-grid place-items-center w-[24px] h-[24px] rounded-full [background:#1c2338] text-[#98a2b8] text-[12px] font-[600]">{index + 1}</span>
+            <input className={`${PAY_INPUT} min-h-[48px] text-[15px] border-[#2f3752] [background:#0a0e1a] disabled:text-[#98a2b8] disabled:cursor-not-allowed`} value={row.name} disabled={row.locked} maxLength={80} placeholder="Payment name, e.g. 2nd Installment" aria-label={`Required payment ${index + 1}`} onChange={(e) => update(row.key, e.target.value)} />
+            <span className="pay-row-status flex items-center gap-[6px] text-[13px] font-[600] whitespace-nowrap">
+              {row.locked && row.status === 'verified' && <><FaCheck aria-hidden="true" className="text-[#7fd8a8]" /><span className="text-[#7fd8a8]">Verified</span></>}
+              {row.locked && row.status !== 'verified' && <><span aria-hidden="true" className="inline-block w-[6px] h-[6px] rounded-full [background:#f2b866]" /><span className="text-[#f2b866]">Has entry</span></>}
+              {!row.locked && !row.id && <span className="text-[#98a2b8]">New</span>}
             </span>
-            <button
-              type="button"
-              className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[9px] border [background:#121826] transition-[background,border-color,color,transform,box-shadow] duration-150 ease-out ${row.locked ? 'border-[#2a3550] text-[#4d5872] cursor-not-allowed' : 'border-[rgba(248,_113,_113,_.6)] text-[#f87171] enabled:hover:[background:rgba(248,_113,_113,_.14)] enabled:hover:border-[#f87171] enabled:hover:shadow-[0_0_0_3px_rgba(248,_113,_113,_.14)] enabled:hover:-translate-y-px enabled:active:translate-y-0 enabled:active:scale-95'}`}
-              disabled={row.locked}
-              title={row.locked ? 'This payment already has an entry, so it cannot be removed.' : 'Remove'}
-              aria-label={`Remove ${row.name || 'row'}`}
-              onClick={() => remove(row.key)}
-            >
-              <FaXmark aria-hidden="true" />
-            </button>
+            <span className="flex items-center gap-[4px]">
+              <button type="button" className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[8px] transition-[background,border-color,color] duration-150 ease-out ${index === 0 ? 'border-0 [background:transparent] text-[#4a5370] cursor-not-allowed' : 'border border-[#2f3752] [background:transparent] text-[#98a2b8] enabled:hover:[background:#161c2e] enabled:hover:text-[#e8ebf3]'} focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2`} disabled={index === 0} aria-label={`Move ${row.name || `item ${index + 1}`} up`} onClick={() => moveRow(index, -1)}><FaArrowUp aria-hidden="true" /></button>
+              <button type="button" className={`w-[40px] h-[40px] inline-grid place-items-center rounded-[8px] transition-[background,border-color,color] duration-150 ease-out ${index === rows.length - 1 ? 'border-0 [background:transparent] text-[#4a5370] cursor-not-allowed' : 'border border-[#2f3752] [background:transparent] text-[#98a2b8] enabled:hover:[background:#161c2e] enabled:hover:text-[#e8ebf3]'} focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2`} disabled={index === rows.length - 1} aria-label={`Move ${row.name || `item ${index + 1}`} down`} onClick={() => moveRow(index, 1)}><FaArrowDown aria-hidden="true" /></button>
+            </span>
+            {row.locked ? (
+              <span role="img" aria-label="Locked" title="Locked: this payment already has entries" className="inline-grid place-items-center w-[44px] h-[44px] text-[#98a2b8]"><FaLock aria-hidden="true" /></span>
+            ) : (
+              <button type="button" className="inline-grid place-items-center w-[44px] h-[44px] rounded-[8px] [background:transparent] text-[#98a2b8] hover:text-[#f87171] hover:[background:rgba(248,_113,_113,_.1)] focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" title="Remove" aria-label={`Remove ${row.name || 'row'}`} onClick={() => remove(row.key)}>
+                <FaXmark aria-hidden="true" />
+              </button>
+            )}
           </li>
         ))}
       </ol>
-      <button type="button" className="mt-[14px] min-h-[42px] p-[0_18px] border border-dashed border-[#3a4660] rounded-[10px] [background:transparent] text-[#a9c1ff] font-[700]" onClick={() => { setRows([...rows, newRow()]); setPreset('custom'); }}>
-        + Add required payment
+      <button type="button" className="mt-[8px] inline-flex items-center gap-[8px] min-h-[44px] p-[0_12px] border-0 rounded-[8px] [background:transparent] text-[#aab4ff] text-[14px] font-[600] cursor-pointer hover:[background:#161c2e] focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" onClick={() => { setRows([...rows, newRow()]); setPreset('custom'); }}>
+        <FaPlus aria-hidden="true" className="text-[12px]" />
+        Add required payment
       </button>
-      <hr className="my-[18px] border-0 border-t border-t-[#232c40]" />
-      <label className="grid gap-[6px] text-[#c9d0e0] text-[13.5px] font-[600]">Package or basis (optional, text only)
-        <input className={PAY_INPUT} maxLength={500} placeholder="e.g. Package B, per signed LOI" value={note} onChange={(e) => setNote(e.target.value)} />
-        <small className="text-[#8f9bbd] font-[500]">A reference note for Sales and Admin. It is not a number and is never added, compared, or reported.</small>
+      <p className="m-[4px_0_0] text-[#98a2b8] text-[13px]">Locked payments already have entries, so they can&apos;t be renamed or removed.</p>
+      <label className="grid gap-[6px] mt-[22px] text-[#98a2b8] text-[13px] font-[600]">
+        <span>Package or basis <span className="font-[500]">· optional</span></span>
+        <input className={`${PAY_INPUT} min-h-[48px] text-[15px] border-[#2f3752] [background:#0a0e1a] placeholder:text-[#4a5370]`} maxLength={500} placeholder="e.g. Package B, per signed LOI" value={note} onChange={(e) => setNote(e.target.value)} />
+        <small className="text-[#98a2b8] text-[13px] font-[400]">Text note for Sales and Admin only. It is never added, compared, or reported.</small>
       </label>
-      <p className="m-[16px_0_0] p-[12px_14px] border border-dashed border-[#2a3550] rounded-[10px] text-[#9aa6c4] text-[13px]">
-        Payments that already have entries can&apos;t be renamed or removed. Every change is logged with your name and the date.
-      </p>
       {issue && <p className="m-[10px_0_0] text-[#ff9ca3] text-[13px]" role="alert">{issue}</p>}
     </Dialog>
   );
@@ -1229,7 +1304,7 @@ async function openRequirementFile(applicantId, key, document) {
 }
 
 /** In-app preview of a requirement file: zoom, rotate, and full screen. Fetched as a blob, same route as the download. */
-function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, onError }) {
+function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, onError, fetchPath = null }) {
   const [src, setSrc] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [rotate, setRotate] = useState(0);
@@ -1240,7 +1315,8 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
     (async () => {
       try {
         const token = await authToken.get();
-        const response = await fetch(`${API_BASE_URL}/applicants/${applicantId}/requirements/${requirementKey}/documents/${doc.id}/download`, {
+        const path = fetchPath || `/applicants/${applicantId}/requirements/${requirementKey}/documents/${doc.id}/download`;
+        const response = await fetch(`${API_BASE_URL}${path}`, {
           headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         });
         if (!response.ok) throw new Error('The file could not be previewed.');
@@ -1252,7 +1328,7 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
       }
     })();
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); setSrc(null); };
-  }, [open, doc?.id, applicantId, requirementKey]);
+  }, [open, doc?.id, applicantId, requirementKey, fetchPath]);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -1262,8 +1338,8 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
   if (!open || !doc) return null;
   const isPdf = (doc.mime_type || '').includes('pdf');
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center p-[20px] [background:rgba(4,6,12,0.82)]" onClick={onClose}>
-      <div className="relative w-[min(1000px,_100%)] h-[min(86dvh,_100%)] grid grid-rows-[auto_1fr] gap-[10px] p-[12px] border border-[#2a3041] rounded-[13px] [background:#0c111d]" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[80] grid place-items-center p-[20px] [background:rgba(4,6,12,0.82)] [animation:overlay-in_.2s_ease-out_both]" onClick={onClose}>
+      <div className="relative w-[min(1000px,_100%)] h-[min(86dvh,_100%)] grid grid-rows-[auto_1fr] gap-[10px] p-[12px] border border-[#2a3041] rounded-[13px] [background:#0c111d] [animation:modal-pop_.28s_ease-out_both] motion-reduce:[animation:none]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <span className="truncate text-[#edf0fa] text-[14px]">{doc.original_name}</span>
           <span className="flex items-center gap-2">
@@ -1708,6 +1784,25 @@ function latestActivityOf(editing, type) {
  * Orientation/Tasting: Admin must open every current file before Verify works (the server keeps
  * the views per file and per Admin), and cannot verify a submission they encoded.
  */
+/** Splits a Manila datetime label into [date, time] for the two-line info cells. */
+function splitManila(value) {
+  const label = manilaDateTimeLabel(value);
+  const cut = label.lastIndexOf(', ');
+  return cut > 0 ? [label.slice(0, cut), label.slice(cut + 2)] : [label, ''];
+}
+
+/** One label + value cell of the activity info grid (label muted, value 15px/500, optional second line). */
+function Cell({ label, value, sub = '' }) {
+  if (!value) return null;
+  return (
+    <div className="min-w-0">
+      <dt className="text-[#98a2b8] text-[13px] font-normal">{label}</dt>
+      <dd className="m-[4px_0_0] text-[#e8ebf3] text-[15px] font-[500] [overflow-wrap:anywhere]">{value}</dd>
+      {sub && <dd className="m-0 text-[#98a2b8] text-[13px]">{sub}</dd>}
+    </div>
+  );
+}
+
 function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn, onError, currentUserId = null, inquiryBrandName = null }) {
   const [returning, setReturning] = useState(false);
   const [reason, setReason] = useState('');
@@ -1722,7 +1817,6 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
   const proofs = activity.proof_documents || [];
   const isTasting = activity.activity_type === 'orientation';
   const newFlow = isTasting && proofs.some((doc) => doc.type === 'brand_selection');
-  const reviewLabel = { submitted: 'Waiting for Admin review', returned: 'Returned to Sales', accepted: newFlow ? 'Verified' : 'Attended (accepted)' }[activity.review_status] || '';
   const canReview = isAdminRole && activity.review_status === 'submitted';
   const current = proofs.filter((doc) => !doc.replaced_at);
   const viewed = (doc) => Boolean(doc.viewed_by_me) || opened.has(doc.id);
@@ -1733,43 +1827,59 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
     .then(() => setOpened((set) => new Set(set).add(doc.id)))
     .catch((error) => onError(error.message));
   const fileButton = (doc) => (
-    <button key={doc.id} type="button" disabled={busy} onClick={() => open(doc)} className="inline-flex items-center gap-[6px]">
-      {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
+    <button key={doc.id} type="button" disabled={busy} onClick={() => open(doc)} title={doc.original_name} className="inline-flex items-center gap-[8px] min-h-[36px] max-w-[340px] p-[0_12px] border-0 rounded-[8px] [background:#1c2338] hover:[background:#252d45] text-[#e8ebf3] text-[13px] cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2">
+      <FaFile aria-hidden="true" className="shrink-0 text-[#98a2b8]" />
+      <span className="min-w-0 truncate">{doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}</span>
       {newFlow && isAdminRole && !doc.replaced_at && (viewed(doc)
-        ? <span className="text-[#34d399] text-[11px] font-[700]"><FaCheck aria-hidden="true" /> Viewed</span>
-        : <span className="text-[#fbbf24] text-[11px] font-[700]">Not viewed</span>)}
+        ? <span className="shrink-0 text-[#7fd8a8] text-[11px] font-[600]"><FaCheck aria-hidden="true" /> Viewed</span>
+        : <span className="shrink-0 text-[#f2b866] text-[11px] font-[600]">Not viewed</span>)}
     </button>
   );
-  const group = (label, type) => {
+  const proofGroup = (label, type) => {
     const list = proofs.filter((doc) => (type ? doc.type === type : true));
-    return list.length ? <span className="flex flex-wrap gap-2 items-center">{label}: {list.map(fileButton)}</span> : null;
+    if (!list.length) return null;
+    return (
+      <div className="grid gap-[8px]">
+        <span className="text-[#98a2b8] text-[13px]">{label} · {list.length}</span>
+        <span className="flex flex-wrap gap-[8px]">{list.map(fileButton)}</span>
+      </div>
+    );
   };
   return (
-    <div className="basis-full grid gap-[6px] mt-2 p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:#0c111d] text-[14px] leading-[1.5] text-[#c9d0e0]">
-      <div className="flex flex-wrap gap-[6px_16px]">
-        <span><strong>{activity.status === 'no_show' ? 'No Show' : 'Attended'}</strong>{reviewLabel ? ` · ${reviewLabel}` : ''}</span>
-        <span>Submitted by {activity.completion_submitted_by?.full_name || '—'} on {manilaDateTimeLabel(activity.completion_submitted_at)}</span>
-      </div>
+    <div className="basis-full grid gap-[20px] text-[14px] text-[#e8ebf3]">
       {activity.status === 'no_show' ? (
-        <p className="m-0">Reason: {activity.no_show_reason}</p>
+        <p className="m-0 text-[15px] text-[#e8ebf3]">Reason: {activity.no_show_reason}</p>
       ) : (
-        <>
-          <span>Actual time: {manilaDateTimeLabel(activity.actual_started_at)} · Handled by {activity.handler_name || '—'}{!isTasting && activity.tasted_brand_name ? ` · Brand tasted: ${activity.tasted_brand_name}` : ''}</span>
-          {isTasting && (activity.selected_brand_name || inquiryBrandName) && (
-            <span>Inquired brand: <strong>{inquiryBrandName || '—'}</strong> · Selected brand: <strong>{activity.selected_brand_name || '—'}</strong></span>
+        <dl className="grid grid-cols-[repeat(3,_minmax(0,_1fr))] gap-[20px_32px] m-0 max-[721px]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[480px]:grid-cols-[1fr]">
+          <Cell label="Actual time" value={splitManila(activity.actual_started_at)[0]} sub={splitManila(activity.actual_started_at)[1]} />
+          <Cell label="Handled by" value={activity.handler_name} />
+          <Cell label="Submitted by" value={activity.completion_submitted_by?.full_name} sub={manilaDateTimeLabel(activity.completion_submitted_at)} />
+          {activity.reviewed_by?.full_name && activity.review_status !== 'submitted' && (
+            <Cell label={newFlow ? 'Verified by' : 'Reviewed by'} value={activity.reviewed_by.full_name} sub={manilaDateTimeLabel(activity.reviewed_at)} />
           )}
-          <p className="m-0">Notes: {activity.result_notes}</p>
-          {newFlow ? (
-            <>
-              {group('Attendance proof', 'attendance_proof')}
-              {group('Brand selection document', 'brand_selection')}
-            </>
-          ) : group('Proof', null)}
-        </>
+          {isTasting && inquiryBrandName && <Cell label="Inquired brand" value={inquiryBrandName} />}
+          {isTasting && activity.selected_brand_name && <Cell label="Selected brand" value={activity.selected_brand_name} />}
+          {!isTasting && activity.tasted_brand_name && <Cell label="Brand tasted" value={activity.tasted_brand_name} />}
+        </dl>
       )}
-      {activity.review_status === 'returned' && <span className="text-[#fbbf24]">Returned: {activity.return_reason}</span>}
-      {activity.reviewed_by?.full_name && activity.review_status !== 'submitted' && <span>{activity.review_status === 'accepted' && newFlow ? 'Verified' : 'Reviewed'} by {activity.reviewed_by.full_name} on {manilaDateTimeLabel(activity.reviewed_at)}</span>}
-      {activity.review_status === 'accepted' && newFlow && <small className="text-[#8f9ab2]">Verified submissions are locked.</small>}
+      {activity.status !== 'no_show' && activity.result_notes && (
+        <div className="grid gap-[4px] pt-[20px] border-t border-t-[#252c42]">
+          <span className="text-[#98a2b8] text-[13px]">Notes</span>
+          <p className="m-0 text-[15px] leading-[1.55] text-[#e8ebf3] [overflow-wrap:anywhere]">{activity.result_notes}</p>
+        </div>
+      )}
+      {activity.status !== 'no_show' && (newFlow ? (
+        <div className="grid gap-[16px] pt-[20px] border-t border-t-[#252c42]">
+          {proofGroup('Attendance proof', 'attendance_proof')}
+          {proofGroup('Brand selection document', 'brand_selection')}
+        </div>
+      ) : proofs.length ? (
+        <div className="grid gap-[16px] pt-[20px] border-t border-t-[#252c42]">{proofGroup('Attendance proof', null)}</div>
+      ) : null)}
+      {activity.review_status === 'returned' && <span className="text-[#f2b866]">Returned: {activity.return_reason}</span>}
+      {activity.review_status === 'accepted' && newFlow && (
+        <p className="m-0 flex items-center gap-[8px] text-[#98a2b8] text-[13px]"><FaLock aria-hidden="true" />Verified submissions are locked.</p>
+      )}
       {canReview && !returning && (
         <span className="flex flex-wrap gap-2 items-center">
           {activity.status === 'completed' && (
@@ -1824,7 +1934,7 @@ function ScheduleSection({
         <h3>Schedule activity</h3>
         <small>{doneCount} of {TRACKED_ACTIVITIES.length} done</small>
       </div>
-      <ul className="[.ap-schedule-section_&]:[list-style:none] [.ap-schedule-section_&]:m-[12px_0_0] [.ap-schedule-section_&]:p-[14px_0_0] [.ap-schedule-section_&]:flex [.ap-schedule-section_&]:flex-col [.ap-schedule-section_&]:gap-[10px] relative [&::before]:[content:''] [&::before]:absolute [&::before]:top-0 [&::before]:bottom-0 [&::before]:left-[161px] [&::before]:w-px [&::before]:[background:#2a3041]">
+      <ul className="m-0 p-0 list-none grid gap-[16px]">
         {TRACKED_ACTIVITIES.map((tracked) => {
           const info = infoOf(tracked.type);
           const state = info.state || 'not_scheduled';
@@ -1838,21 +1948,17 @@ function ScheduleSection({
           const overdue = Boolean(info.overdue) && !saved;
           const hasLinks = state !== 'not_scheduled' && Boolean(onOpenCalendar || onView);
           return (
-            <li key={tracked.type} className="ap-activity-row flex items-center gap-3 flex-wrap p-[0_0_20px] border-0 [background:none]" data-activity-type={tracked.type}>
-              <span className="w-[150px] shrink-0 mr-3 pr-3 flex items-center"><span className={`p-[4px_10px] rounded-[999px] text-[10px] font-[500] tracking-[0.04em] uppercase whitespace-nowrap later-5:[&.is-not\_scheduled]:text-[color:var(--muted,_#8b93a5)] later-6:[&.is-pending\_admin]:text-[#ffc857] later-7:[&.is-scheduled]:text-[#4cc9ff] later-8:[&.is-completed]:text-[#7ddfff] later-9:[&.is-attended]:text-[#39ffb0] [&.is-attended]:[box-shadow:0_0_10px_color-mix(in_srgb,_#39ffb0_25%,_transparent)] later-10:[&.is-overdue]:text-[#ffb454] [.ap-schedule-section.is-locked_&]:opacity-[.75] is-${overdue ? 'overdue' : state}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span></span>
-              <span className="flex flex-col gap-[2px] w-[240px] shrink-0 mr-3 pr-3 later-2:[&_small]:text-[color:var(--muted,_#8b93a5)] later:[&_small]:text-[11px]">
-                <strong className="text-[15px]">{tracked.label}</strong>
-                {info.active && info.starts_at && <small>{fmtDateTime(info.starts_at)}{overdue ? ' · missed' : ''}</small>}
-                {info.completed && !saved && <small>Sales marked Complete — waiting for Attended</small>}
-                {saved && info.completed_at && <small>Sales completed {fmtDateTime(info.completed_at)}</small>}
-                {checked && (
-                  <small>
-                    Date marked {fmtDateTime(draft.details[tracked.key]?.on)} · Marked by {draft.details[tracked.key]?.by || '—'}
-                  </small>
-                )}
+            <li key={tracked.type} className="ap-activity-row grid gap-[20px] p-[20px_24px] rounded-[12px] [background:#161c2e]" data-activity-type={tracked.type}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="flex flex-wrap items-center gap-x-[10px] gap-y-[4px] min-w-0">
+                {saved && <span aria-hidden="true" className="inline-grid place-items-center shrink-0 w-[28px] h-[28px] rounded-full [background:#1b3a30] text-[#7fd8a8]"><FaCheck className="text-[12px]" /></span>}
+                <strong className="text-[#e8ebf3] text-[18px] font-[700]">{tracked.label}</strong>
+                {saved && <span className="text-[#7fd8a8] text-[14px] font-[600]">Attended</span>}
+                {!saved && <span className={`text-[14px] font-[600] ${overdue ? 'text-[#f2b866]' : 'text-[#98a2b8]'}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span>}
+                {saved && <span className="text-[#98a2b8] text-[13px]">· {tracked.type === 'orientation' && latest?.proof_documents?.some((doc) => doc.type === 'brand_selection') ? 'Verified' : 'Accepted'}</span>}
               </span>
               {hasLinks && (
-                <span className="ap-activity-links ml-auto inline-flex gap-[6px] flex-wrap">
+                <span className="ap-activity-links inline-flex gap-[8px] flex-wrap">
                   {onOpenCalendar && sessionOf(tracked.type) && (
                     <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onOpenCalendar(sessionOf(tracked.type))}>
                       Open in calendar
@@ -1865,6 +1971,7 @@ function ScheduleSection({
                   )}
                 </span>
               )}
+              </div>
               {isAdminRole && legacyCompletion && (
                 <button
                   type="button"
@@ -3959,7 +4066,7 @@ export default function Applicants() {
 
       {editing && draft && (
         <Dialog
-          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle] font-[400]"><span className="text-[0.85rem]">Applicant:</span> <strong className="text-[1.05rem] font-[800] uppercase mr-2">{editing.full_name}</strong>{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && <span className="ml-2 text-[14px] font-[700] uppercase">{editing.preferred_brand?.name}</span>}</span>}
+          title={<span className="[&_.ap-status-label.ap-endorsed-label]:ml-4 [&_.ap-status-label.ap-endorsed-label]:[align-self:baseline] [&_.record-code]:[vertical-align:middle] font-[400]"><span className="text-[0.85rem]">Applicant:</span> <strong className="text-[1.05rem] font-[800] uppercase mr-2">{editing.full_name}</strong>{editing.applicant_code && <> · <RecordCode code={editing.applicant_code} label="Applicant ID" size="md" /></>} {editing.inquiry?.converted_from_status === 'endorsed' && editing.preferred_brand?.name && (editing.brand_confirmation?.locked ? <span className="ml-2 inline-flex items-center gap-[5px] text-[14px] font-[700] uppercase" style={{ color: brandColor(editing.preferred_brand.name) }} title="Brand locked after Orientation/Tasting"><FaLock aria-hidden="true" className="text-[11px]" />{editing.preferred_brand.name}</span> : <span className="ml-2 text-[14px] font-[700] uppercase">{editing.preferred_brand.name}</span>)}</span>}
           onClose={closeEditor}
           modalClass={paymentsVisible && stage === 'payment_submitted' ? 'is-payment' : (isAdminRole && stage === 'converted' ? 'is-qualification' : '')}
           closeOnEscape={updateEscapeEnabled}

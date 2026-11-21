@@ -17,7 +17,8 @@ export const DELIVERED_ON = ['delivered', 'discrepancy_review', 'completed', 'co
 
 /** The staff list tabs ("needs_action" is worked out per role from the owners). */
 export const TABS = {
-  all: null,
+  /** Every request except the finished ones, which live under Completed. */
+  all: STATUSES.filter((s) => !['completed', 'completed_with_discrepancy'].includes(s)),
   under_review: ['submitted', 'under_review', 'returned'],
   on_hold: ['on_hold'],
   scheduled_preparing: ['waiting_logistics', 'scheduled', 'preparing'],
