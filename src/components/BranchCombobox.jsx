@@ -6,7 +6,7 @@ import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
  * `extra` options (e.g. "All branches — network view") stay at the top of the list.
  * Same look and keyboard behaviour as the searchable Province / City fields (LocationPicker).
  */
-export default function BranchCombobox({ branches, value, onChange, extra = [], label = 'Branch', placeholder = 'Type a branch or franchisee…' }) {
+export default function BranchCombobox({ branches, value, onChange, extra = [], label = 'Branch', placeholder = 'Type a branch or franchisee…', disabled = false, className = 'w-full' }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -50,7 +50,8 @@ export default function BranchCombobox({ branches, value, onChange, extra = [], 
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={activeId}
-        className="w-full"
+        className={className}
+        disabled={disabled}
         value={open ? query : (selected?.name || '')}
         placeholder={selected?.name || placeholder}
         onFocus={() => { setOpen(true); setQuery(''); setActive(0); }}

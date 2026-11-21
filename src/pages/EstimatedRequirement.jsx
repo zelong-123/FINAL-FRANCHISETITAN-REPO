@@ -1002,5 +1002,5 @@ export default function EstimatedRequirement({ embedded = false }) {
 
   return embedded
     ? <div className="block [&_.er-note-inline]:mt-0">{body}</div>
-    : <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px]">{body}<ForecastingSections role={role} /></div>;
+    : <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px]">{body}<ForecastingSections role={role} /></div>;
 }
