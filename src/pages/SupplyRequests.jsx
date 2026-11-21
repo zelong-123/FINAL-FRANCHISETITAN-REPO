@@ -8,6 +8,7 @@ import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatDate, formatNumber } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
+import BranchCombobox from '../components/BranchCombobox';
 import { rowActionLabel } from '../lib/supplyActions';
 import { supplyStatusLabel } from '../lib/supplyStatus';
 import SupplyDrawer from '../components/supply/SupplyDrawer';
@@ -94,6 +95,8 @@ function CreateRequestModal({ onClose, onCreated }) {
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const submit = async (event) => {
     event.preventDefault();
+    if (!form.location_id) { setError('Please select a branch.'); return; }
+    if (items.some((i) => !i.product_id)) { setError('Please select a product for each item.'); return; }
     setSaving(true); setError('');
     try {
       const res = await api.post('/supply-requests', {
@@ -116,10 +119,13 @@ function CreateRequestModal({ onClose, onCreated }) {
       {warnings.map((w) => <Notice key={w} type="info">{w}</Notice>)}
       <form id="supply-create" onSubmit={submit} className="form-grid grid grid-cols-2 gap-[14px] max-[681px]:grid-cols-1">
         <Field label="Branch" required>
-          <select required value={form.location_id} onChange={(e) => { const l = lookups.locations.find((x) => String(x.id) === e.target.value); setForm((f) => ({ ...f, location_id: e.target.value, delivery_address: l?.address || '', contact_number: l?.contact_number || '' })); setItems([{ product_id: '', quantity_requested: '' }]); }}>
-            <option value="">Select branch</option>
-            {lookups.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+          <BranchCombobox
+            label="Branch"
+            placeholder="Select branch"
+            branches={lookups.locations}
+            value={form.location_id}
+            onChange={(next) => { const l = lookups.locations.find((x) => String(x.id) === String(next)); setForm((f) => ({ ...f, location_id: String(next), delivery_address: l?.address || '', contact_number: l?.contact_number || '' })); setItems([{ product_id: '', quantity_requested: '' }]); }}
+          />
         </Field>
         <Field label="Urgency" required>
           <select value={form.urgency} onChange={(e) => set('urgency', e.target.value)}>
@@ -137,10 +143,16 @@ function CreateRequestModal({ onClose, onCreated }) {
           <div className="grid gap-[8px]">
             {items.map((item, index) => (
               <div key={index} className="grid grid-cols-[minmax(0,1fr)_130px_auto] gap-[8px] items-start max-[560px]:grid-cols-1">
-                <select required value={item.product_id} disabled={!location} onChange={(e) => setItems(items.map((row, i) => (i === index ? { ...row, product_id: e.target.value } : row)))}>
-                  <option value="">{location ? 'Select product' : 'Choose the branch first'}</option>
-                  {products.map((p) => <option key={p.id} value={p.id} disabled={items.some((row, i) => i !== index && row.product_id === String(p.id))}>{p.name} ({p.unit})</option>)}
-                </select>
+                <BranchCombobox
+                  label="Product"
+                  placeholder={location ? 'Select product' : 'Choose the branch first'}
+                  disabled={!location}
+                  branches={products
+                    .filter((p) => !items.some((row, i) => i !== index && row.product_id === String(p.id)))
+                    .map((p) => ({ id: p.id, name: `${p.name} (${p.unit})` }))}
+                  value={item.product_id}
+                  onChange={(next) => setItems(items.map((row, i) => (i === index ? { ...row, product_id: String(next) } : row)))}
+                />
                 <input required aria-label="Quantity" type="number" min="0.01" step="0.01" value={item.quantity_requested} onChange={(e) => setItems(items.map((row, i) => (i === index ? { ...row, quantity_requested: e.target.value } : row)))} />
                 <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} disabled={items.length === 1} onClick={() => setItems(items.filter((_, i) => i !== index))}>Remove</button>
                 <div className="col-span-full"><EstimateHint locationId={form.location_id} productId={item.product_id} /></div>
@@ -172,8 +184,10 @@ export default function SupplyRequests() {
   const [modal, setModal] = useState(null); // { key, request }
   const [notice, setNotice] = useState({ type: '', text: '' });
   const [brands, setBrands] = useState([]);
+  const [branchOptions, setBranchOptions] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAllTabs, setShowAllTabs] = useState(false);
 
   const update = useCallback((patch) => {
     const next = new URLSearchParams(params);
@@ -188,6 +202,23 @@ export default function SupplyRequests() {
     return () => window.clearTimeout(t);
   }, [search, filters.search, update]);
   useEffect(() => { api.get('/brands').then((r) => setBrands(r.data || [])).catch(() => {}); }, []);
+  // Only branches that have an active (open) supply request are offered in the branch search.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const byId = new Map();
+      let page = 1;
+      let lastPage = 1;
+      do {
+        const r = await api.get('/supply-requests', { view: 'active', per_page: 100, page });
+        for (const row of r.data || []) if (row.location && !byId.has(row.location.id)) byId.set(row.location.id, row.location);
+        lastPage = r.meta?.last_page || 1;
+        page += 1;
+      } while (page <= lastPage && !cancelled);
+      if (!cancelled) setBranchOptions([...byId.values()].sort((a, b) => String(a.name).localeCompare(String(b.name))));
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const query = useMemo(() => ({ tab, page, per_page: 20, overdue: overdue ? 1 : '', location_id: locationId, ...filters }), [tab, page, overdue, locationId, filters]);
   const remote = useRemote(async () => api.get('/supply-requests', query), [JSON.stringify(query), reloadKey]);
@@ -233,10 +264,28 @@ export default function SupplyRequests() {
   const closeModal = () => setModal(null);
   const done = (text) => () => { setModal(null); say(text); refresh(); };
 
+  const isMainTab = (key) => key === 'all' || (key === tab && !overdue);
+  const tabButton = ([key, label]) => (
+    <button key={key} type="button" role="tab" aria-selected={tab === key && !overdue}
+      className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${tab === key && !overdue ? 'border-accent text-text [background:color-mix(in_srgb,_var(--accent)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
+      onClick={() => update({ tab: key, overdue: '' })}
+    >
+      {label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(tabs[key] ?? 0)}</span>
+    </button>
+  );
+  const overdueButton = (
+    <button type="button" role="tab" aria-selected={overdue} key="overdue"
+      className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${overdue ? 'border-danger text-text [background:color-mix(in_srgb,_var(--danger)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
+      onClick={() => update(OVERDUE_TAB.target)}
+    >
+      {OVERDUE_TAB.label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(kpis.overdue ?? 0)}</span>
+    </button>
+  );
+
   const isAdmin = role === 'admin';
   const filtersOn = Object.entries(filters).some(([k, v]) => v !== EMPTY_FILTERS[k]) || Boolean(locationId);
   return (
-    <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:p-[22px_14px_30px]">
+    <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:p-[22px_14px_30px]">
       <PageHeader
         title="Supply requests"
         subtitle="Ordering and fulfillment workflow"
@@ -257,24 +306,30 @@ export default function SupplyRequests() {
       )}
 
       <div className="flex flex-wrap gap-[6px] pb-[4px] mb-[10px]" role="tablist" aria-label="Request tabs">
-        {TABS.map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={tab === key && !overdue}
-            className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${tab === key && !overdue ? 'border-accent text-text [background:color-mix(in_srgb,_var(--accent)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
-            onClick={() => update({ tab: key, overdue: '' })}
-          >
-            {label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(tabs[key] ?? 0)}</span>
-          </button>
-        ))}
-        <button type="button" role="tab" aria-selected={overdue}
-          className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${overdue ? 'border-danger text-text [background:color-mix(in_srgb,_var(--danger)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
-          onClick={() => update(OVERDUE_TAB.target)}
-        >
-          {OVERDUE_TAB.label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(kpis.overdue ?? 0)}</span>
+        {TABS.filter(([key]) => isMainTab(key)).map(tabButton)}
+        {overdue && overdueButton}
+        <button type="button" className={`${BTN_GHOST} min-h-[34px] text-[12px] p-[6px_12px]`} aria-expanded={showAllTabs} onClick={() => setShowAllTabs((v) => !v)}>
+          {showAllTabs ? 'Hide' : 'Show all'}
         </button>
       </div>
-
+      <div className={`tabs-collapse ${showAllTabs ? 'is-open' : ''} mb-[10px]`}>
+        <div className="tabs-collapse-inner flex flex-wrap gap-[6px] pb-[4px]" role="tablist" aria-label="More request tabs">
+          {TABS.filter(([key]) => !isMainTab(key)).map(tabButton)}
+          {!overdue && overdueButton}
+        </div>
+      </div>
       <div className="flex flex-wrap gap-[8px] items-end mb-[12px]">
-        <input aria-label="Search" className={`${TOOL} flex-[1_1_240px] min-w-[200px]`} placeholder="Search branch, city or request number" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="flex-[1_1_240px] min-w-[200px] [&_input]:h-full">
+          <BranchCombobox
+            label="Search branch"
+            placeholder="Search or select branch..."
+            className={`${TOOL} w-full`}
+            branches={branchOptions}
+            value={locationId}
+            extra={locationId ? [{ value: '', label: 'All branches' }] : []}
+            onChange={(next) => update({ location_id: next })}
+          />
+        </div>
         <select aria-label="Brand" className={`${TOOL}`} value={filters.brand_id} onChange={(e) => setFilter('brand_id', e.target.value)}>
           <option value="">All brands</option>
           {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}

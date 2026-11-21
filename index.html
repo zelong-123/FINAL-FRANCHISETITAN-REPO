@@ -9,12 +9,8 @@
     <title>Franchise Titan</title>
     <script>
       (() => {
-        const stored = localStorage.getItem('herald_theme');
-        const theme = stored === 'light' || stored === 'dark'
-          ? stored
-          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.style.colorScheme = theme;
+        document.documentElement.dataset.theme = 'dark';
+        document.documentElement.style.colorScheme = 'dark';
       })();
     </script>
   </head>

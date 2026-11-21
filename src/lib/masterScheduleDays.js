@@ -83,10 +83,13 @@ export function monthWeeks(month) {
  * with the rest shown as "+N". Input: sessions with start_at and participant_count.
  */
 export function dayDots(sessions, date, maxDots = 4) {
-  const count = sessions
-    .filter((session) => session.start_at && manilaDateOf(session.start_at) === date)
+  const day = sessions.filter((session) => session.start_at && manilaDateOf(session.start_at) === date);
+  const count = day.reduce((sum, session) => sum + (session.participant_count ?? 0), 0);
+  // Completed sessions get blue dots; everything else still scheduled stays green.
+  const done = day
+    .filter((session) => session.status === 'completed')
     .reduce((sum, session) => sum + (session.participant_count ?? 0), 0);
-  return { count, dots: Math.min(count, maxDots), more: Math.max(0, count - maxDots) };
+  return { count, dots: Math.min(count, maxDots), more: Math.max(0, count - maxDots), done: Math.min(done, count, maxDots) };
 }
 
 /** Hour (Manila, 0-23) and minutes of an ISO timestamp, as a number of minutes since midnight. */

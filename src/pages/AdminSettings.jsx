@@ -35,18 +35,6 @@ export default function AdminSettings() {
   const [purging, setPurging] = useState(false);
 
   const remote = useRemote(async () => (await api.get('/archive')).data, []);
-  const activeCounts = useRemote(async () => {
-    const [users, inquiries, applicants] = await Promise.all([
-      api.get('/users', { per_page: 1, role: 'staff' }),
-      api.get('/inquiries', { per_page: 1 }),
-      api.get('/applicants', { per_page: 1 }),
-    ]);
-    return {
-      users: Number(users.data?.meta?.total ?? 0),
-      inquiries: Number(inquiries.data?.meta?.total ?? 0),
-      applicants: Number(applicants.data?.meta?.total ?? 0),
-    };
-  }, []);
 
   const data = remote.data || {};
   const section = data[tab] || { items: [] };
@@ -195,7 +183,7 @@ export default function AdminSettings() {
   if (remote.error) return <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]"><Notice type="error">{remote.error}</Notice></div>;
 
   return (
-    <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">
+    <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">
       <div className="relative mb-[10px] -mx-[clamp(22px,_3vw,_38px)] pt-[46px] [background:linear-gradient(180deg,_#0b0f19,_#1a2133_46%,_#1a2133)]">
         <div className="flex items-end gap-[26px] px-[clamp(22px,_3vw,_38px)] pb-[16px]">
           <span className="w-[118px] h-[118px] flex-[0_0_auto] grid place-items-center -mt-[52px] border-[6px] border-[#0b0f19] rounded-[50%] [background:#6366d6] text-[#fff] text-[48px] font-[800] [box-shadow:0_16px_34px_rgba(74,_73,_184,_0.35)]" aria-hidden="true">{(user?.full_name || 'A').charAt(0).toUpperCase()}</span>
@@ -227,13 +215,14 @@ export default function AdminSettings() {
             className={`admin-tab py-[14px] border-0 border-b-2 bg-transparent text-[16px] font-[600] cursor-pointer -mb-[2px] ${tab === item.key ? 'text-[#fff] border-b-[#7b88ff]' : 'text-[#8fa0c0] border-b-transparent'}`}
             onClick={() => setTab(item.key)}
           >
-            {item.label} ({activeCounts.data?.[item.key] ?? 0})
+            {item.label}
+            <span className="ml-[8px] inline-grid place-items-center min-w-[22px] h-[22px] px-[6px] align-middle rounded-[999px] text-[#fff] text-[11px] font-[700] leading-none [background:#7b88ff] [box-shadow:0_0_0_3px_rgba(123,_136,_255,_0.18)]">{(remote.data?.[item.key]?.items || []).length}</span>
           </button>
         ))}
       </div>
 
       {tab === 'information' && (
-        <section key="information" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[19px] [background:var(--panel)]">
+        <section key="information" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[10px] [background:var(--panel)]">
           <div className="grid gap-[18px] [grid-template-columns:minmax(0,_1fr)_minmax(0,_1fr)] max-[861px]:[grid-template-columns:1fr]">
             <div>
               <h2 className="m-0 mb-[14px] text-[12px] font-[800] tracking-[.12em] uppercase text-muted">Information</h2>
@@ -253,18 +242,18 @@ export default function AdminSettings() {
       )}
 
       {tab === 'follow_up' && (
-        <section key="follow_up" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[19px] [background:var(--panel)]">
+        <section key="follow_up" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[10px] [background:var(--panel)]">
           <FollowUpRules />
         </section>
       )}
 
       {tab === 'scheduling' && (
-        <section key="scheduling" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[19px] [background:var(--panel)]">
+        <section key="scheduling" className="admin-tab-panel data-panel mb-[18px] p-[22px] border border-line rounded-[10px] [background:var(--panel)]">
           <SchedulingLimits />
         </section>
       )}
 
-      {tab !== 'information' && tab !== 'follow_up' && tab !== 'scheduling' && <section key={tab} className="admin-tab-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      {tab !== 'information' && tab !== 'follow_up' && tab !== 'scheduling' && <section key={tab} className="admin-tab-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
           <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
             <h2>{SECTIONS.find((item) => item.key === tab)?.heading}</h2>

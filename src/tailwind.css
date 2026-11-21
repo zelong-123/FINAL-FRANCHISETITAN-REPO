@@ -436,6 +436,43 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+.tabs-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .3s cubic-bezier(.22, .8, .24, 1), opacity .25s ease;
+}
+.tabs-collapse.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.tabs-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+/* Add warehouse product modal: bigger labels, taller inputs and dropdowns. */
+.wh-product-form label > span {
+  font-size: 13px;
+  font-weight: 700;
+}
+.wh-product-form label > small {
+  font-size: 12px;
+}
+.wh-product-form input,
+.wh-product-form select {
+  min-height: 46px;
+  font-size: 15px;
+  padding: 10px 13px;
+}
+.wh-product-form select {
+  padding-right: 36px;
+}
+.wh-product-form input::placeholder {
+  font-size: 15px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabs-collapse { transition: none; }
+}
 .bp-inventory-filter-enter {
   animation: bpInventoryFilterIn .28s cubic-bezier(.22, .8, .24, 1) both;
 }

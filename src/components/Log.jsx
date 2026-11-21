@@ -7,15 +7,12 @@ import {
   FaEye,
   FaEyeSlash,
   FaGlobe,
-  FaMoon,
   FaShieldHalved,
-  FaSun,
 } from 'react-icons/fa6';
 import FranchiseImg from '../assets/Logo.jpg.png';
 import AppIconImg from '../assets/icon.png.png';
 import { api, firstValidationMessage } from '../lib/api';
 import { ROLE_HOME, roleName, useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
 import { AppLoader } from './ApiUi';
 import AuthSuccessOverlay, { ButtonSpinner } from './AuthSuccessOverlay';
 
@@ -38,7 +35,6 @@ const textInput = 'min-h-[46px] w-full rounded-xl border border-input-line bg-in
 
 export default function Log() {
   const { loginForPortal, isAuthenticated, role, loading } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
@@ -102,14 +98,6 @@ export default function Log() {
           <span className="flex min-h-[34px] items-center gap-2 rounded-full border border-line bg-panel/78 px-3 text-[11px] font-[650] text-muted backdrop-blur-md max-[620px]:w-[34px] max-[620px]:justify-center max-[620px]:p-0 max-[620px]:text-[0]">
             <span className={`size-[7px] rounded-full max-[620px]:size-2 ${STATUS_DOT[serverStatus]}`} />{STATUS_LABEL[serverStatus]}
           </span>
-          <button
-            type="button"
-            className="grid size-[38px] place-items-center rounded-xl border border-line bg-panel/78 text-text backdrop-blur-md transition-[translate,rotate,background,border-color] duration-200 hover:-translate-y-0.5 hover:rotate-[5deg] hover:border-line-strong hover:bg-panel"
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-          >
-            {theme === 'dark' ? <FaSun /> : <FaMoon />}
-          </button>
         </div>
       </header>
 

@@ -1,29 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo } from 'react';
 
-const STORAGE_KEY = 'herald_theme';
+// Light mode is removed: the app always runs in dark mode.
+const THEME = 'dark';
 const ThemeContext = createContext(null);
 
-function getInitialTheme() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-}
-
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(getInitialTheme);
-
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#070a12' : '#f5f7fb');
-    localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+    document.documentElement.dataset.theme = THEME;
+    document.documentElement.style.colorScheme = THEME;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#070a12');
   }, []);
 
-  const value = useMemo(() => ({ theme, setTheme, toggleTheme }), [theme, toggleTheme]);
+  const value = useMemo(() => ({ theme: THEME }), []);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 

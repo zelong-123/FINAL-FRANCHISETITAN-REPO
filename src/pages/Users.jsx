@@ -5,7 +5,8 @@ import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatDate, titleCase } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
-import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
+import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
+import SlidingPagination from '../components/SlidingPagination';
 import { accountBadge, localDateTimeInput } from '../lib/accountStatus';
 
 const blank = { full_name: '', email: '', phone: '', role: 'marketing', applicant_id: '' };
@@ -70,7 +71,7 @@ export default function Users() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const remote = useRemote(async () => api.get('/users', {
     page,
-    per_page: 20,
+    per_page: 8,
     search,
     role: tab === 'branch' ? 'franchisee' : (roleFilter || 'staff'),
   }), [page, search, tab, roleFilter]);
@@ -261,7 +262,7 @@ export default function Users() {
   };
 
   return (
-    <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] users-page [&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later:[&>:empty]:hidden! [&_.unified-toolbar-container]:m-0 [&_.data-panel]:m-0 [&_.table-wrap_table]:text-[12px] [&_.table-wrap_table_tbody_td]:text-[12px] [&_.table-wrap_table_tbody_td]:leading-[1.5] [&_.table-wrap_table_tbody_td]:pt-3 [&_.table-wrap_table_tbody_td]:pb-3 [&_.table-wrap_table_tbody_td_strong]:text-[13px] [&_.table-wrap_table_tbody_td_small]:text-[11px]">
+    <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] users-page [&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later:[&>:empty]:hidden! [&_.unified-toolbar-container]:m-0 [&_.data-panel]:m-0 [&_.table-wrap_table]:text-[12px] [&_.table-wrap_table_tbody_td]:text-[12px] [&_.table-wrap_table_tbody_td]:leading-[1.5] [&_.table-wrap_table_tbody_td]:pt-3 [&_.table-wrap_table_tbody_td]:pb-3 [&_.table-wrap_table_tbody_td_strong]:text-[15px] [&_.table-wrap_table_tbody_td_small]:text-[11px]">
       <PageHeader title="User management" subtitle="Accounts and role-based access" />
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError || remote.error}</Notice>
@@ -291,7 +292,7 @@ export default function Users() {
         </button>
       </div>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)]">
+      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[10px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)]">
         {remote.loading ? <LoadingState /> : !visibleUsers.length ? (
           <EmptyState label={tab === 'branch' ? 'No branch accounts match this search.' : 'No staff users match this search.'} detail="Clear the search or create a new account. Archived users are in Admin settings → Archive." />
         ) : (
@@ -361,7 +362,7 @@ export default function Users() {
             </table>
           </div>
         )}
-        <Pagination meta={remote.data?.meta} onPage={setPage} />
+        <SlidingPagination meta={remote.data?.meta} onPage={setPage} />
       </section>
 
       {showCreate && (

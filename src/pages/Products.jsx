@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { FaImage, FaPlus, FaTrashCan, FaUtensils } from 'react-icons/fa6';
+import { brandColor, FALLBACK_BRAND_COLOR } from '../lib/brandColors';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatNumber } from '../lib/format';
@@ -26,6 +28,29 @@ export default function Products() {
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
   const [page, setPage] = useState(1);
+  // Hover preview: shown after the cursor rests 1.3 s on a row, hidden when it leaves.
+  const [preview, setPreview] = useState(null);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const previewTimer = useRef(null);
+  const previewFade = useRef(null);
+  const clearPreviewTimers = () => {
+    window.clearTimeout(previewTimer.current);
+    window.clearTimeout(previewFade.current);
+  };
+  useEffect(() => clearPreviewTimers, []);
+  const showPreviewLater = (event, product) => {
+    clearPreviewTimers();
+    const rect = event.currentTarget.getBoundingClientRect();
+    previewTimer.current = window.setTimeout(() => {
+      setPreview({ product, top: rect.top, left: rect.left });
+      setPreviewVisible(true);
+    }, 500);
+  };
+  const hidePreview = () => {
+    clearPreviewTimers();
+    setPreviewVisible(false);
+    previewFade.current = window.setTimeout(() => setPreview(null), 150);
+  };
 
   // One page of products at a time (the API counts and orders them).
   const remote = useRemote(
@@ -65,7 +90,7 @@ export default function Products() {
   const brandName = (id) => brands.find((brand) => Number(brand.id) === Number(id))?.name || '—';
 
   return (
-    <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] products-page [&_td_small]:block [&_td_small]:mt-[2px] [&_td_small]:text-muted [&_.ghost-button_svg]:w-[11px] [&_.ghost-button_svg]:h-[11px] later-2:[&_td_small]:text-[13px]">
+    <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] products-page [&_td_small]:block [&_td_small]:mt-[2px] [&_td_small]:text-muted [&_.ghost-button_svg]:w-[11px] [&_.ghost-button_svg]:h-[11px] later-2:[&_td_small]:text-[13px]">
       <Notice type="success">{notice}</Notice>
       <Notice type="error">{remote.error || actionError}</Notice>
 
@@ -106,7 +131,7 @@ export default function Products() {
               </thead>
               <tbody>
                 {products.map((product) => (
-                  <tr key={product.id}>
+                  <tr key={product.id} onMouseEnter={(event) => showPreviewLater(event, product)} onMouseLeave={hidePreview}>
                     <td>
                       <div className="flex items-center gap-[10px] min-w-0 [&_strong]:block [&_strong]:text-text [&_small]:block [&_small]:mt-[2px] [&_small]:text-muted [&_small]:text-[9px] later:[&_strong]:text-[length:inherit]">
                         <span className="w-[38px] h-[38px] flex-[0_0_auto] grid place-items-center overflow-hidden rounded-[10px] border border-line text-muted [background:var(--surface-subtle)] text-[14px] [&_img]:w-full [&_img]:h-full [&_img]:object-cover [.products-page_&]:w-[42px] [.products-page_&]:h-[42px]">
@@ -145,6 +170,11 @@ export default function Products() {
         {products.length > 0 && <SlidingPagination meta={meta} onPage={setPage} />}
       </section>
 
+      {preview && createPortal(
+        <ProductPreviewCard product={preview.product} top={preview.top} left={preview.left} visible={previewVisible} />,
+        document.body,
+      )}
+
       {formOpen && (
         <ProductFormModal
           product={editing}
@@ -159,6 +189,50 @@ export default function Products() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Hover preview: a larger picture, description, ID and brand, then the recipe with batch amounts.
+function ProductPreviewCard({ product, top, left, visible }) {
+  const width = 300;
+  const x = Math.min(left, window.innerWidth - width - 12);
+  const y = Math.max(12, Math.min(top, window.innerHeight - 380));
+  const brandName = product.brand?.name || '';
+  const color = brandColor(brandName) || FALLBACK_BRAND_COLOR;
+  return (
+    <div
+      role="tooltip"
+      className="fixed z-[1000] pointer-events-none p-[16px] border border-[#1f2a3d] rounded-[6px] text-[#f4f4f5] [background:#070A12] [box-shadow:0_18px_40px_rgba(0,0,0,0.45)] transition-opacity duration-150 ease-in-out"
+      style={{ top: y, left: Math.max(12, x), width, opacity: visible ? 1 : 0 }}
+    >
+      <div className="flex items-center gap-[12px] pb-[12px] border-b border-[#1f2a3d]">
+        <span className="w-[76px] h-[76px] flex-none grid place-items-center overflow-hidden rounded-[6px] border border-[#1f2a3d] [&_img]:w-full [&_img]:h-full [&_img]:object-cover">
+          <ProductImage src={product.image_url} alt={product.name} fallback={<FaImage aria-hidden="true" />} />
+        </span>
+        <div className="min-w-0">
+          <strong className="block text-[16px] font-[700] leading-[1.2]">{product.name}</strong>
+          <span className="block mt-[4px] text-[12px] text-[#a1a1aa] break-words">{product.description || 'No description'}</span>
+          <span className="block mt-[4px] text-[12px] text-[#a1a1aa]">
+            {product.sku} · <span className="font-[700]" style={{ color }}>{brandName || '—'}</span>
+          </span>
+        </div>
+      </div>
+      <div className="pt-[12px]">
+        <strong className="block mb-[8px] text-[13px] font-[700]">Recipe</strong>
+        {(product.ingredients || []).length === 0 ? (
+          <span className="text-[12px] text-[#a1a1aa]">No ingredients yet.</span>
+        ) : (
+          <ul className="m-0 p-0 list-none grid gap-[6px]">
+            {product.ingredients.map((ingredient) => (
+              <li key={ingredient.id} className="flex items-center justify-between gap-[10px] text-[13px]">
+                <span className="min-w-0 truncate">{ingredient.name}</span>
+                <span className="flex-none text-[12px] text-[#a1a1aa]">{formatNumber(ingredient.batch_amount, 3)} {ingredient.unit}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
