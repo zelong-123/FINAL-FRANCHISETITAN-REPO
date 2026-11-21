@@ -4,10 +4,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { FaGear, FaPlus, FaXmark } from 'react-icons/fa6';
+import {
+  MdOutlineAccessTime, MdOutlineAssignment, MdOutlineCalendarMonth, MdOutlineCheckCircleOutline, MdOutlineFactCheck, MdOutlineFindInPage, MdOutlineGridView,
+  MdOutlineInventory2, MdOutlineLocalShipping, MdOutlineLock, MdOutlineManageSearch, MdOutlinePauseCircleOutline, MdOutlinePlayCircleOutline, MdOutlineWarningAmber,
+} from 'react-icons/md';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import { formatDate, formatNumber } from '../lib/format';
-import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
+import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../components/ApiUi';
 import BranchCombobox from '../components/BranchCombobox';
 import { rowActionLabel } from '../lib/supplyActions';
 import { supplyStatusLabel } from '../lib/supplyStatus';
@@ -23,11 +27,45 @@ import { Chip, StatusChip, Stepper, UrgencyChip } from '../components/supply/sup
 import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, TOOL, PANEL, branchLabel, waitingText } from '../components/supply/supplyStyles';
 import { useAuth } from '../context/AuthContext';
 
+/** Icon shown before a row action label; labels without a match stay text-only. */
+const ACTION_ICONS = {
+  'Review': [MdOutlineFindInPage, 'search'], 'Review date': [MdOutlineFindInPage, 'search'], 'Review shortage': [MdOutlineFindInPage, 'search'],
+  'Resolve': [MdOutlineFactCheck, 'tilt'], 'Resume': [MdOutlinePlayCircleOutline, 'lift'], 'Start preparing': [MdOutlinePlayCircleOutline, 'lift'],
+  'Dispatch': [MdOutlineLocalShipping, 'lift'], 'Encode POD': [MdOutlineInventory2, 'tilt'], 'Confirm schedule': [MdOutlineCalendarMonth, 'tilt'],
+  'Complete': [MdOutlineCheckCircleOutline, 'lift'],
+};
+const actionIcon = (label) => {
+  const entry = ACTION_ICONS[label];
+  if (!entry) return null;
+  const [Icon, motion] = entry;
+  return <Icon aria-hidden="true" data-icon={motion} className="supply-action-icon text-[16px] shrink-0" />;
+};
+const TAB_ICONS = {
+  needs_action: MdOutlineAssignment, all: MdOutlineGridView, under_review: MdOutlineManageSearch, on_hold: MdOutlinePauseCircleOutline,
+  scheduled_preparing: MdOutlineCalendarMonth, dispatched: MdOutlineLocalShipping, discrepancy: MdOutlineWarningAmber,
+  completed: MdOutlineCheckCircleOutline, closed: MdOutlineLock,
+};
+/** Count tone: alerts are red, work in progress is blue, completed is green; zero stays neutral. */
+const COUNT_TONE = {
+  needs_action: 'danger', discrepancy: 'danger', overdue: 'danger',
+  under_review: 'accent', on_hold: 'accent', scheduled_preparing: 'accent', dispatched: 'accent',
+  completed: 'success',
+};
+const COUNT_CLASS = {
+  danger: 'text-danger-text font-[750] [background:color-mix(in_srgb,_var(--danger)_38%,_transparent)]',
+  accent: 'text-accent-text font-[750] [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]',
+  success: 'text-success-text font-[750] [background:color-mix(in_srgb,_var(--success)_38%,_transparent)]',
+};
+const countClass = (key, value) => (value > 0 && COUNT_TONE[key] ? COUNT_CLASS[COUNT_TONE[key]] : '[background:var(--surface-strong)]');
 const TABS = [
   ['needs_action', 'Needs my action'], ['all', 'All'], ['under_review', 'Under review'], ['on_hold', 'On hold'],
   ['scheduled_preparing', 'Scheduled / Preparing'], ['dispatched', 'Dispatched'], ['discrepancy', 'Discrepancy'],
   ['completed', 'Completed'], ['closed', 'Closed'],
 ];
+/** Rows per page in the list. */
+const PAGE_SIZE = 7;
+/** Finished statuses: shown only under the Completed tab. */
+const DONE_STATUSES = ['completed', 'completed_with_discrepancy'];
 /** Overdue is a filter on open requests, so it lives here as its own category. */
 const OVERDUE_TAB = { key: 'overdue', label: 'Overdue', target: { tab: 'all', overdue: '1' } };
 const SORTS = [['priority', 'Priority'], ['newest', 'Date requested: newest'], ['oldest', 'Date requested: oldest'], ['target', 'Target delivery date'], ['branch', 'Branch A–Z'], ['brand', 'Brand']];
@@ -188,6 +226,7 @@ export default function SupplyRequests() {
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAllTabs, setShowAllTabs] = useState(false);
+  const [pageDir, setPageDir] = useState(1);
 
   const update = useCallback((patch) => {
     const next = new URLSearchParams(params);
@@ -220,12 +259,18 @@ export default function SupplyRequests() {
     return () => { cancelled = true; };
   }, []);
 
-  const query = useMemo(() => ({ tab, page, per_page: 20, overdue: overdue ? 1 : '', location_id: locationId, ...filters }), [tab, page, overdue, locationId, filters]);
+  const query = useMemo(() => ({ tab, page: tab === 'all' ? 1 : page, per_page: tab === 'all' ? 100 : PAGE_SIZE, overdue: overdue ? 1 : '', location_id: locationId, ...filters }), [tab, page, overdue, locationId, filters]);
   const remote = useRemote(async () => api.get('/supply-requests', query), [JSON.stringify(query), reloadKey]);
-  const rows = remote.data?.data || [];
-  const meta = remote.data?.meta;
-  const tabs = meta?.tabs || {};
-  const kpis = meta?.kpis || {};
+  // All leaves out finished requests (they stay under Completed). Filtered and paged here so it works before the API is deployed.
+  const fetchedRows = remote.data?.data || [];
+  const allOpen = fetchedRows.filter((r) => !DONE_STATUSES.includes(r.status));
+  const allLast = Math.max(1, Math.ceil(allOpen.length / PAGE_SIZE));
+  const allPage = Math.min(page, allLast);
+  const allMeta = { current_page: allPage, per_page: PAGE_SIZE, total: allOpen.length, last_page: allLast };
+  const rows = tab === 'all' ? allOpen.slice((allPage - 1) * PAGE_SIZE, allPage * PAGE_SIZE) : fetchedRows;
+  const meta = tab === 'all' ? allMeta : remote.data?.meta;
+  const tabs = remote.data?.meta?.tabs || {};
+  const kpis = remote.data?.meta?.kpis || {};
 
   const { reload } = remote;
   useEffect(() => {
@@ -265,20 +310,23 @@ export default function SupplyRequests() {
   const done = (text) => () => { setModal(null); say(text); refresh(); };
 
   const isMainTab = (key) => key === 'all' || (key === tab && !overdue);
-  const tabButton = ([key, label]) => (
+  const tabButton = ([key, label]) => {
+    const TabIcon = TAB_ICONS[key];
+    return (
     <button key={key} type="button" role="tab" aria-selected={tab === key && !overdue}
       className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${tab === key && !overdue ? 'border-accent text-text [background:color-mix(in_srgb,_var(--accent)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
       onClick={() => update({ tab: key, overdue: '' })}
     >
-      {label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(tabs[key] ?? 0)}</span>
+      {TabIcon && <TabIcon aria-hidden="true" className="text-[16px] shrink-0" />}{label}<span className={`min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] ${countClass(key, key === 'all' ? (tabs.all ?? 0) - (tabs.completed ?? 0) : (tabs[key] ?? 0))}`}>{formatNumber(key === 'all' ? (tabs.all ?? 0) - (tabs.completed ?? 0) : (tabs[key] ?? 0))}</span>
     </button>
-  );
+    );
+  };
   const overdueButton = (
     <button type="button" role="tab" aria-selected={overdue} key="overdue"
       className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${overdue ? 'border-danger text-text [background:color-mix(in_srgb,_var(--danger)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
       onClick={() => update(OVERDUE_TAB.target)}
     >
-      {OVERDUE_TAB.label}<span className="min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] [background:var(--surface-strong)]">{formatNumber(kpis.overdue ?? 0)}</span>
+      <MdOutlineAccessTime aria-hidden="true" className="text-[16px] shrink-0" />{OVERDUE_TAB.label}<span className={`min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] ${countClass('overdue', kpis.overdue ?? 0)}`}>{formatNumber(kpis.overdue ?? 0)}</span>
     </button>
   );
 
@@ -286,17 +334,6 @@ export default function SupplyRequests() {
   const filtersOn = Object.entries(filters).some(([k, v]) => v !== EMPTY_FILTERS[k]) || Boolean(locationId);
   return (
     <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:p-[22px_14px_30px]">
-      <PageHeader
-        title="Supply requests"
-        subtitle="Ordering and fulfillment workflow"
-        actions={(
-          <>
-            {isAdmin && <button type="button" className={BTN_GHOST} onClick={() => setShowSettings(true)}><FaGear aria-hidden="true" /> Supply settings</button>}
-            <button type="button" className={BTN_GHOST} onClick={() => navigate('/estimated-requirement')}>Analytics and Forecasting</button>
-            {isAdmin && <button type="button" className={BTN_PRIMARY} onClick={() => setShowCreate(true)}><FaPlus aria-hidden="true" /> New supply request</button>}
-          </>
-        )}
-      />
       <Notice type={notice.type || 'info'}>{notice.text}</Notice>
       {remote.error && (
         <div className="flex flex-wrap items-start gap-[10px] [&>div]:flex-1">
@@ -305,12 +342,20 @@ export default function SupplyRequests() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-[6px] pb-[4px] mb-[10px]" role="tablist" aria-label="Request tabs">
-        {TABS.filter(([key]) => isMainTab(key)).map(tabButton)}
-        {overdue && overdueButton}
-        <button type="button" className={`${BTN_GHOST} min-h-[34px] text-[12px] p-[6px_12px]`} aria-expanded={showAllTabs} onClick={() => setShowAllTabs((v) => !v)}>
-          {showAllTabs ? 'Hide' : 'Show all'}
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-[6px] pb-[4px] mb-[10px]">
+        <div className="flex flex-wrap gap-[6px]" role="tablist" aria-label="Request tabs">
+          {TABS.filter(([key]) => isMainTab(key)).map(tabButton)}
+          {overdue && overdueButton}
+          <button type="button" className={`${BTN_GHOST} min-h-[34px] text-[12px] p-[6px_12px]`} aria-expanded={showAllTabs} onClick={() => setShowAllTabs((v) => !v)}>
+            {showAllTabs ? 'Hide' : 'Show all'}
+          </button>
+        </div>
+        {isAdmin && (
+          <div className="flex flex-wrap gap-[9px]">
+            <button type="button" className={BTN_GHOST} onClick={() => setShowSettings(true)}><FaGear aria-hidden="true" /> Supply settings</button>
+            <button type="button" className={BTN_PRIMARY} onClick={() => setShowCreate(true)}><FaPlus aria-hidden="true" /> New supply request</button>
+          </div>
+        )}
       </div>
       <div className={`tabs-collapse ${showAllTabs ? 'is-open' : ''} mb-[10px]`}>
         <div className="tabs-collapse-inner flex flex-wrap gap-[6px] pb-[4px]" role="tablist" aria-label="More request tabs">
@@ -354,7 +399,7 @@ export default function SupplyRequests() {
         ) : !rows.length ? (
           <EmptyState label={EMPTY[overdue ? 'overdue' : tab]?.[0] || 'No requests in this view.'} detail={filtersOn ? 'Nothing matches these filters. Clear them to see more.' : (EMPTY[overdue ? 'overdue' : tab]?.[1] || 'Choose another tab.')} />
         ) : (
-          <>
+          <div key={`page-${allPage}-${tab}-${page}`} className={`supply-page-slide ${pageDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}`}>
             <div className="overflow-x-auto max-[760px]:hidden">
               <table className="w-full min-w-[960px] [border-collapse:collapse] [&_th]:p-[11px_14px] [&_th]:text-left [&_th]:text-muted [&_th]:text-[10.5px] [&_th]:font-[800] [&_th]:tracking-[.12em] [&_th]:uppercase [&_th]:[background:var(--surface-subtle)] [&_td]:p-[13px_14px] [&_td]:border-t [&_td]:border-line [&_td]:align-middle">
                 <thead><tr><th>Branch / request</th><th>Items</th><th>Urgency</th><th>Progress</th><th>Target</th><th className="!text-right">Next step</th></tr></thead>
@@ -373,7 +418,7 @@ export default function SupplyRequests() {
                         <td><ProgressCell request={r} /></td>
                         <td><TargetCell request={r} /></td>
                         <td className="text-right" onClick={(e) => e.stopPropagation()}>
-                          {label ? <button type="button" className={`${BTN_PRIMARY} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>{label}</button> : <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>View</button>}
+                          {label ? <button type="button" className={`supply-action-btn ${BTN_PRIMARY} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>{actionIcon(label)}{label}</button> : <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>View</button>}
                         </td>
                       </tr>
                     );
@@ -395,14 +440,14 @@ export default function SupplyRequests() {
                       <div className="mt-[8px]"><ProgressCell request={r} /></div>
                       <div className="mt-[6px] flex justify-between gap-2 text-[12px]"><span className="text-muted">{items.count} item{items.count === 1 ? '' : 's'} · {items.first}</span><span className="text-right"><TargetCell request={r} /></span></div>
                     </button>
-                    {label && <button type="button" className={`${BTN_PRIMARY} ${BTN_SMALL} mt-[9px] w-full`} onClick={() => setDrawerId(r.id)}>{label}</button>}
+                    {label && <button type="button" className={`supply-action-btn ${BTN_PRIMARY} ${BTN_SMALL} mt-[9px] w-full`} onClick={() => setDrawerId(r.id)}>{actionIcon(label)}{label}</button>}
                   </li>
                 );
               })}
             </ul>
-          </>
+          </div>
         )}
-        <div className="p-[0_14px]"><Pagination meta={meta} onPage={(p) => update({ page: String(p) })} /></div>
+        <div className="p-[0_14px] [&_nav]:text-[13px] [&_nav_button]:text-[13px] [&_nav_span]:text-[13px]"><Pagination meta={meta} onPage={(p) => { setPageDir(p >= (meta?.current_page || 1) ? 1 : -1); update({ page: String(p) }); }} /></div>
       </section>
 
       {openId && (

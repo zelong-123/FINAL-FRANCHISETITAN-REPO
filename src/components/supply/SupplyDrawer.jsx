@@ -12,7 +12,7 @@ import { supplyStatusLabel } from '../../lib/supplyStatus';
 import useRemote from '../../lib/useRemote';
 import { LoadingState, Notice } from '../ApiUi';
 import { Callout, Chip, KV, Section, StatusChip, Stepper, UrgencyChip } from './supplyUi';
-import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, STAGES, qty, stageIndex, branchLabel } from './supplyStyles';
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, STAGES, qty, stageIndex, branchLabel, urgencyLabel } from './supplyStyles';
 
 const when = (value) => (value ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—');
 const ROLE_NAME = { admin: 'Admin', logistics: 'Logistics', franchisee: 'Branch', system: 'System' };
@@ -71,7 +71,7 @@ function Thumb({ requestId, doc, label }) {
   );
 }
 
-const TABLE = 'w-full min-w-[500px] [border-collapse:collapse] text-[12.5px] [&_th]:p-[8px_9px] [&_th]:text-left [&_th]:align-bottom [&_th]:text-muted [&_th]:text-[10px] [&_th]:font-[750] [&_th]:tracking-[.06em] [&_th]:uppercase [&_th]:leading-[1.25] [&_th]:[background:var(--surface-subtle)] [&_td]:p-[9px] [&_td]:border-t [&_td]:border-line [&_td]:text-text-secondary [&_td]:align-top';
+const TABLE = 'w-full min-w-[500px] [border-collapse:collapse] text-[13px] [&_th]:p-[8px_9px] [&_th]:text-left [&_th]:align-bottom [&_th]:text-muted [&_th]:text-[13px] [&_th]:font-[500] [&_td]:p-[10px_9px] [&_td]:border-t [&_td]:border-line [&_td]:text-text-secondary [&_td]:align-top';
 
 /**
  * Two compact tables so every column fits the drawer at desktop width: what Admin reviews
@@ -80,14 +80,13 @@ const TABLE = 'w-full min-w-[500px] [border-collapse:collapse] text-[12.5px] [&_
  */
 function ItemsTable({ request, staff }) {
   const review = new Map((request.review_lines || []).map((l) => [Number(l.item_id), l]));
-  const afterEndorse = request.items.some((i) => i.quantity_endorsed !== null && i.quantity_endorsed !== undefined);
   const prepared = request.items.some((i) => i.quantity_prepared !== null && i.quantity_prepared !== undefined);
   const received = Boolean(request.branch_received_at);
   const unitOf = (item) => item.product?.unit || item.unit_snapshot || '';
   const nameOf = (item) => item.product?.name || item.product_name_snapshot;
   return (
     <>
-      <div className="overflow-x-auto border border-line rounded-[12px]" data-table="review">
+      <div className="overflow-x-auto" data-table="review">
         <table className={TABLE}>
           <thead>
             <tr>
@@ -115,9 +114,9 @@ function ItemsTable({ request, staff }) {
                   {staff && (
                     <>
                       <td className="whitespace-nowrap">{r ? `${qty(r.available)} ${unit}` : '—'}</td>
-                      <td className={`whitespace-nowrap ${r?.unavailable > 0 ? '!text-danger-text font-[750]' : ''}`}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit} ⚠` : '0') : '—'}</td>
-                      <td>{r?.days_covered ?? '—'}</td>
-                      <td>{r?.suggested ?? '—'}</td>
+                      <td className={`whitespace-nowrap ${r?.unavailable > 0 ? '!text-danger-text font-[750]' : r ? '!text-muted' : ''}`}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit}` : '0') : '—'}</td>
+                      <td className={r?.branch_stock_status === 'low' ? '!text-[color:var(--warning-text)] font-[600]' : ''}>{r?.days_covered ?? '—'}</td>
+                      <td className={Number(r?.suggested) > 0 ? '!text-text font-[700]' : r ? '!text-muted' : ''}>{r?.suggested ?? '—'}</td>
                     </>
                   )}
                 </tr>
@@ -126,18 +125,16 @@ function ItemsTable({ request, staff }) {
           </tbody>
         </table>
       </div>
-      {afterEndorse && (
-        <div className="mt-[10px] overflow-x-auto border border-line rounded-[12px]" data-table="quantities">
+      {received && (
+        <div className="mt-[10px] overflow-x-auto" data-table="quantities">
           <table className={TABLE}>
             <thead>
-              <tr><th>Item</th><th>Endorsed</th>{prepared && <th>Prepared</th>}{received && <th>Received good / damaged / short</th>}</tr>
+              <tr><th>Item</th><th>Received good / damaged / short</th></tr>
             </thead>
             <tbody>
               {request.items.map((item) => (
                 <tr key={item.id}>
-                  <td className="!text-text font-[650]">{nameOf(item)}</td>
-                  <td className="whitespace-nowrap">{item.quantity_endorsed === null ? '—' : `${qty(item.quantity_endorsed)} ${unitOf(item)}`}</td>
-                  {prepared && <td className="whitespace-nowrap">{item.quantity_prepared === null ? '—' : `${qty(item.quantity_prepared)} ${unitOf(item)}`}</td>}
+                  <td className="!text-text font-[600]">{nameOf(item)}</td>
                   {received && <td>{qty(item.received_good)} / <span className={Number(item.received_damaged) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_damaged)}</span> / <span className={Number(item.received_short) ? '!text-danger-text font-[700]' : ''}>{qty(item.received_short)}</span></td>}
                 </tr>
               ))}
@@ -186,7 +183,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
       <div className="absolute inset-0 [background:rgba(2,_5,_12,_.6)] [backdrop-filter:blur(4px)] [animation:overlayFade_.18s_ease_both]" onClick={onClose} />
       <aside role="dialog" aria-label={r ? `Request ${r.request_number}` : 'Request'} className="absolute top-0 right-0 bottom-0 w-[min(720px,_100%)] overflow-y-auto [overscroll-behavior:contain] border-l border-line-strong [background:var(--panel)] [box-shadow:var(--shadow-xl)] p-[22px] pt-[calc(22px_+_env(safe-area-inset-top,0px))] max-[520px]:p-[16px] [animation:drawerIn_.24s_cubic-bezier(.2,.8,.2,1)_both]">
         <style>{'@keyframes drawerIn{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}'}</style>
-        <button type="button" className={`${BTN_GHOST} ${BTN_SMALL} float-right`} onClick={onClose}><FaXmark aria-hidden="true" /> Close</button>
+        {!r && <button type="button" aria-label="Close" className="absolute top-[14px] right-[14px] w-[44px] h-[44px] grid place-items-center border-0 rounded-[10px] bg-transparent text-muted cursor-pointer hover:text-text" onClick={onClose}><FaXmark aria-hidden="true" /></button>}
         {remote.error && (
           <div className="clear-both pt-[8px]">
             <Notice type="error">{`This request could not be loaded. ${remote.error}`}</Notice>
@@ -196,18 +193,20 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
         <Notice type="error">{error}</Notice>
         {!r ? (!remote.error && <div className="clear-both pt-[8px]"><LoadingState label="Loading request…" /></div>) : (
           <>
-            <div className="text-accent-text text-[11px] font-[800] tracking-[.12em] [font-family:ui-monospace,monospace]">{r.request_number}</div>
-            <h2 className="m-[4px_0_6px] text-text text-[22px] leading-[1.15] tracking-[-.02em]">{branchLabel(r.location)}</h2>
-            <div className="flex flex-wrap gap-[6px]">
-              <StatusChip status={r.status} />
-              <UrgencyChip urgency={r.urgency} />
-              {r.overdue && <Chip tone="danger" title={r.overdue_reason}>Overdue</Chip>}
-              {r.reservation_incomplete && <Chip tone="warning">Reservation incomplete</Chip>}
-              {r.parent && <Chip>Backorder of {r.parent.request_number}</Chip>}
+            <div className="sticky top-[-22px] z-[5] -mx-[22px] -mt-[22px] mb-[4px] px-[22px] pt-[22px] pb-[10px] [background:var(--panel)] max-[520px]:-mx-[16px] max-[520px]:px-[16px] max-[520px]:top-[-16px] max-[520px]:-mt-[16px] max-[520px]:pt-[16px]">
+              <button type="button" aria-label="Close" className="absolute top-[14px] right-[14px] z-10 w-[44px] h-[44px] grid place-items-center border-0 rounded-[10px] bg-transparent text-muted cursor-pointer hover:text-text" onClick={onClose}><FaXmark aria-hidden="true" /></button>
+              <div className="pr-[52px] text-muted text-[12px] [font-family:ui-monospace,monospace]">{r.request_number}</div>
+              <h2 className="m-[4px_0_8px] text-text text-[24px] font-[700] leading-[1.2]">{branchLabel(r.location)}</h2>
+              <div className="flex flex-wrap items-center gap-[10px]">
+                <StatusChip status={r.status} />
+                <span className="text-muted text-[13px]">{urgencyLabel(r.urgency)} priority</span>
+                {r.reservation_incomplete && <Chip tone="warning">Reservation incomplete</Chip>}
+                {r.parent && <Chip>Backorder of {r.parent.request_number}</Chip>}
+              </div>
             </div>
             <div className="mt-[14px]"><Stepper status={r.status} wide /></div>
             <div className="mt-[5px] text-muted text-[11.5px]">Stage {stage + 1} of {STAGES.length} · {STAGES[stage][1]}{r.status !== STAGES[stage][0] ? ` (${supplyStatusLabel(r.status)})` : ''}</div>
-            {r.overdue && <Callout tone="danger"><b>Overdue:</b> {r.overdue_reason}</Callout>}
+            {r.overdue && <div className="mt-[12px] p-[10px_12px] rounded-[10px] [background:#2a1a24] text-[#ffb4b4] text-[13px]"><b className="font-[700]">Overdue.</b> {r.overdue_reason}</div>}
             {(r.urgency_reason || r.bulk_reason) && (
               <Callout>
                 {r.urgency_reason && <div><b>{r.urgency === 'critical' ? 'Critical' : 'Urgent'} reason:</b> {r.urgency_reason}</div>}
@@ -228,6 +227,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
             )}
 
             <Section title={`Next action · ${(r.owners || []).map((o) => ({ admin: 'Admin', logistics: 'Logistics', branch: 'Branch' }[o])).join(' / ') || 'None'}`}>
+              {/* Primary solid button is the only filled one; Reject and Cancel are text-only danger. */}
               {!(r.owners || []).includes({ admin: 'admin', logistics: 'logistics', franchisee: 'branch' }[role]) && (
                 <p className="m-[0_0_8px] text-text-secondary text-[13px]">{waitingLine(r)}{actions.length ? '' : ' Read-only for you.'}</p>
               )}
@@ -235,7 +235,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
                 <div className="flex flex-wrap gap-[8px]">
                   {actions.map((a) => (
                     <button key={`${a.key}-${a.label}`} type="button" disabled={a.disabled} title={a.reason || undefined}
-                      className={a.kind === 'primary' ? BTN_PRIMARY : a.kind === 'danger' ? BTN_DANGER : BTN_GHOST}
+                      className={a.kind === 'primary' ? BTN_PRIMARY : a.kind === 'danger' ? 'min-h-[44px] px-[10px] border-0 rounded-[10px] bg-transparent text-danger-text cursor-pointer hover:[background:color-mix(in_srgb,_var(--danger)_11%,_transparent)] disabled:opacity-50' : BTN_GHOST}
                       onClick={() => onAction(a.key, r)}
                     >{a.label}</button>
                   ))}
@@ -248,9 +248,10 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
               <KV items={[
                 ['Target delivery', formatDate(r.target_delivery_date) || '—'],
                 ['Confirmed delivery', r.confirmed_delivery_date ? formatDate(r.confirmed_delivery_date) : 'Not yet confirmed'],
-                ['Delivery address', r.delivery_address],
-                ['Contact', r.contact_number || r.location?.contact_number || '—'],
-                ['Requested', `${when(r.submitted_at || r.created_at)}${r.requested_by?.full_name ? ` · ${r.requested_by.full_name}` : ''}`],
+                ['Branch', r.delivery_address],
+                ['Contact', r.contact_number || r.location?.contact_number || 'No contact'],
+                ['Requested by', r.requested_by?.full_name || '—'],
+                ['Requested on', when(r.submitted_at || r.created_at)],
                 ['Brand', r.location?.brand?.name || '—'],
               ]} />
               {(r.other_open_requests?.length > 0 || r.parent || r.backorders?.length > 0) && (
@@ -263,6 +264,18 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
             </Section>
 
             <Section title="Items"><ItemsTable request={r} staff={staff} /></Section>
+            {r.items.some((i) => i.quantity_endorsed !== null && i.quantity_endorsed !== undefined) && (
+              <Section title="Endorsed quantity">
+                <ul className="m-0 p-0 [list-style:none]">
+                  {r.items.map((item) => (
+                    <li key={item.id} className="flex justify-between gap-[12px] py-[10px] border-t border-line">
+                      <b className="text-text text-[15px] font-[600]">{item.product?.name || item.product_name_snapshot}</b>
+                      <span className="text-text text-[15px] font-[500] whitespace-nowrap">{item.quantity_endorsed === null ? '—' : `${qty(item.quantity_endorsed)} ${item.product?.unit || item.unit_snapshot || ''}`}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
             {decision && (
               <Section title="Fulfillment decision">
@@ -327,15 +340,22 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
               </Section>
             )}
 
-            <Section title="Audit trail">
-              <ol className="m-0 p-0 pl-[16px] ml-[5px] border-l-2 border-line [list-style:none]">
-                {[...(r.status_history || [])].reverse().map((h, index) => (
-                  <li key={`${h.at}-${index}`} className="relative mb-[13px] before:[content:''] before:absolute before:-left-[23px] before:top-[5px] before:w-[10px] before:h-[10px] before:rounded-[50%] before:[background:var(--accent)]">
-                    <b className="block text-text text-[13px]">{ACTION_NAME[h.action] || supplyStatusLabel(h.to)}</b>
-                    {h.remarks && <span className="block text-text-secondary text-[12.5px]">{h.remarks}</span>}
-                    <small className="text-muted text-[11.5px]">{ROLE_NAME[h.actor_role] || h.actor_role || '—'}{h.actor?.full_name ? ` · ${h.actor.full_name}` : ''} · {when(h.at)}</small>
-                  </li>
-                ))}
+            <Section title="Activity">
+              <ol className="m-0 p-0 [list-style:none]">
+                {[...(r.status_history || [])].reverse().map((h, index) => {
+                  const latest = index === 0;
+                  const actor = [h.actor?.full_name, ROLE_NAME[h.actor_role] || h.actor_role].filter(Boolean).join(' · ') || '';
+                  return (
+                    <li key={`${h.at}-${index}`} className={`relative pl-[24px] pb-[16px] ${index > 0 ? '' : ''} before:[content:''] before:absolute before:left-[0] before:top-[5px] before:w-[12px] before:h-[12px] before:rounded-[50%] before:[background:${latest ? 'var(--accent)' : '#3a4363'}] after:[content:''] after:absolute after:left-[5px] after:top-[17px] after:bottom-0 after:w-[2px] after:[background:#1f2639] last:after:hidden`}>
+                      <div className="flex justify-between gap-[12px]">
+                        <b className={`text-text text-[15px] ${latest ? 'font-[600]' : 'font-[500]'}`}>{ACTION_NAME[h.action] || supplyStatusLabel(h.to)}</b>
+                        <small className="text-muted text-[13px] whitespace-nowrap">{when(h.at)}</small>
+                      </div>
+                      {actor && <div className="text-muted text-[13px]">{actor}</div>}
+                      {h.remarks && <div className="mt-[6px] p-[8px_12px] rounded-[8px] [background:#161c2e] text-text-secondary text-[13px]">{h.remarks}</div>}
+                    </li>
+                  );
+                })}
               </ol>
             </Section>
           </>

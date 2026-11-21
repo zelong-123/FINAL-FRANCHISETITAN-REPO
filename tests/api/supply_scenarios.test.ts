@@ -417,7 +417,7 @@ test('list: tabs, KPIs, filters and sorts follow the role', async () => {
   assert.equal(all.data[0].id, late.id, 'priority: the overdue request comes first');
   assert.match(all.data[0].overdue_reason, /Admin/);
   const meta = all.meta;
-  assert.equal(meta.tabs.all, all.data.length);
+  assert.equal(meta.tabs.all, all.data.filter((r: any) => !['completed', 'completed_with_discrepancy'].includes(r.status)).length, 'All leaves out completed requests');
   assert.equal(meta.tabs.completed, all.data.filter((r: any) => ['completed', 'completed_with_discrepancy'].includes(r.status)).length);
   assert.equal(meta.tabs.discrepancy, 1, 'the salt request waits for Admin');
   assert.equal(meta.kpis.discrepancies, 1);

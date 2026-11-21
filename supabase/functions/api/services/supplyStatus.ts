@@ -29,7 +29,8 @@ export const HIDDEN_FROM_LOGISTICS = ['draft', 'submitted', 'under_review', 'ret
 
 /** The staff list tabs ("needs_action" is worked out per role from the owners). */
 export const TABS = {
-  all: null,
+  /** Every request except the finished ones, which live under Completed. */
+  all: STATUSES.filter((s) => !['completed', 'completed_with_discrepancy'].includes(s)),
   under_review: ['submitted', 'under_review', 'returned'],
   on_hold: ['on_hold'],
   scheduled_preparing: ['waiting_logistics', 'scheduled', 'preparing'],

@@ -53,6 +53,26 @@
   @keyframes qual-slide-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes cal-slide-from-right { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes cal-slide-from-left { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes action-search-scan { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(2px, -2px); } 75% { transform: translate(-2px, 2px); } }
+  @keyframes action-lift { 50% { transform: translateY(-2px); } }
+  @keyframes action-tilt { 50% { transform: rotate(-8deg); } }
+}
+
+/* Row action buttons: only the icon moves on hover; the text and button stay put. */
+.supply-action-btn .supply-action-icon { transition: transform .2s ease; }
+.supply-action-btn:hover:not(:disabled) .supply-action-icon[data-icon='search'] { animation: action-search-scan 1.2s ease-in-out infinite; }
+.supply-action-btn:hover:not(:disabled) .supply-action-icon[data-icon='lift'] { animation: action-lift .9s ease-in-out infinite; }
+.supply-action-btn:hover:not(:disabled) .supply-action-icon[data-icon='tilt'] { animation: action-tilt .9s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .supply-action-btn:hover .supply-action-icon { animation: none !important; }
+}
+
+/* Supply progress bar: the in-progress segment has no color at rest. Its accent fill grows and drains smoothly, back and forth. */
+@keyframes stepper-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.supply-stepper-live { position: relative; overflow: hidden; box-shadow: 0 0 7px var(--accent-2); }
+.supply-stepper-live::after { content: ''; position: absolute; inset: 0; background: var(--accent-2); box-shadow: 0 0 7px var(--accent-2); transform-origin: left center; animation: stepper-fill 2.4s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) {
+  .supply-stepper-live::after { animation: none; transform: scaleX(1); }
 }
 
 /* Laptops with little height: the sign-in card tightens, width behaviour unchanged. */

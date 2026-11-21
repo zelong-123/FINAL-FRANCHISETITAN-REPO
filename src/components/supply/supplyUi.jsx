@@ -12,8 +12,8 @@ const TONES = {
   warning: 'text-[color:var(--warning-text)] [border-color:color-mix(in_srgb,_var(--warning)_40%,_transparent)] [background:color-mix(in_srgb,_var(--warning)_11%,_transparent)]',
   success: 'text-success-text [border-color:color-mix(in_srgb,_var(--success)_40%,_transparent)] [background:color-mix(in_srgb,_var(--success)_11%,_transparent)]',
 };
-export function Chip({ tone = 'neutral', children, title }) {
-  return <span title={title} className={`inline-flex items-center gap-[5px] min-h-[22px] p-[2px_9px] border rounded-[999px] text-[11px] font-[720] whitespace-nowrap ${TONES[tone] || TONES.neutral}`}>{children}</span>;
+export function Chip({ tone = 'neutral', children, title, borderless = false }) {
+  return <span title={title} className={`inline-flex items-center gap-[5px] min-h-[22px] p-[2px_9px] ${borderless ? '' : 'border'} rounded-[999px] text-[11px] font-[720] whitespace-nowrap ${TONES[tone] || TONES.neutral}`}>{children}</span>;
 }
 
 export function UrgencyChip({ urgency }) {
@@ -25,7 +25,7 @@ const STATUS_TONE = {
   completed: 'success', completed_with_discrepancy: 'warning', dispatched: 'accent', delivered: 'accent',
 };
 export function StatusChip({ status }) {
-  if (status === 'returned') return <Chip tone="warning">Returned – waiting for branch</Chip>;
+  if (status === 'returned') return <Chip tone="warning" borderless>Returned – waiting for branch</Chip>;
   return <Chip tone={STATUS_TONE[status] || 'accent'}>{supplyStatusLabel(status)}</Chip>;
 }
 
@@ -40,11 +40,12 @@ export function Stepper({ status, wide = false }) {
         const state = done || index < current ? 'done' : index === current ? (stopped ? 'stopped' : 'current') : 'todo';
         const color = {
           done: '[background:var(--accent)]',
-          current: '[background:var(--accent-2)] [box-shadow:0_0_7px_var(--accent-2)]',
+          current: '[background:var(--surface-strong)]',
           stopped: '[background:var(--danger)]',
           todo: '[background:var(--surface-strong)]',
         }[state];
-        return <i key={key} title={label} className={`block h-[5px] rounded-[3px] ${wide ? 'flex-1' : 'w-[15px]'} ${color}`} />;
+        const live = state === 'current' ? 'supply-stepper-live' : '';
+        return <i key={key} title={label} className={`block h-[5px] rounded-[3px] ${wide ? 'flex-1' : 'w-[15px]'} ${color} ${live}`} />;
       })}
     </div>
   );
@@ -64,11 +65,11 @@ export function Section({ title, children, aside }) {
 
 export function KV({ items }) {
   return (
-    <div className="grid grid-cols-2 gap-[9px] max-[520px]:grid-cols-1">
+    <div className="grid grid-cols-2 gap-x-[24px] max-[520px]:grid-cols-1">
       {items.filter(Boolean).map(([label, value]) => (
-        <div key={label} className="min-w-0 p-[9px_12px] rounded-[11px] [background:var(--surface-subtle)] border border-line">
-          <small className="block text-muted text-[10.5px] font-[650]">{label}</small>
-          <div className="text-text text-[13px] [overflow-wrap:anywhere]">{value ?? '—'}</div>
+        <div key={label} className="min-w-0 py-[10px] border-t border-line">
+          <small className="block text-muted text-[13px]">{label}</small>
+          <div className="mt-[2px] text-text text-[15px] font-[500] [overflow-wrap:anywhere]">{value ?? '—'}</div>
         </div>
       ))}
     </div>
