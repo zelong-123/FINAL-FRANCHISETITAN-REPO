@@ -19,12 +19,13 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, INPUT, LABEL, qty } from '../supply/
 const NO_PICK = { product_id: '', quantity: '' };
 const STATUS_FILTERS = [['', 'All requests'], ['open', 'Open'], ['returned', 'Returned'], ['draft', 'Drafts'], ['in_transit', 'On the way'], ['done', 'Received'], ['closed', 'Cancelled or rejected']];
 const FILTER_QUERY = { open: { view: 'active' }, returned: { status: 'returned' }, draft: { status: 'draft' }, in_transit: { tab: 'dispatched' }, done: { tab: 'completed' }, closed: { tab: 'closed' } };
-const PANEL_CLASS = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] flex flex-col';
+const PANEL_CLASS = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[8px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] flex flex-col';
 const PANEL_HEAD = 'min-h-[64px] flex flex-wrap items-center justify-between gap-3 m-[0_20px] p-[14px_4px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent,_var(--accent))_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_h2]:font-[780] [&_p]:m-[2px_0_0] [&_p]:text-muted [&_p]:text-[12px]';
 const REQUESTS_PANEL = 'flex flex-col min-w-0';
 const REQUESTS_HEAD = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-[10px] pb-[14px]';
 const GHOST_FILTER = 'min-h-[44px] w-auto p-[0_12px] border border-[#2f3752] rounded-[10px] [background:transparent] text-[#e8ebf3] text-[13.5px] font-[500] cursor-pointer [color-scheme:dark] [outline:none] [&>option]:text-[#e8ebf3] [&>option]:[background:#151c2e] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[640px]:w-full';
-const CARD_CLASS = 'p-[24px] rounded-[12px] [background:#131929] max-[640px]:p-[18px]';
+// Same surface as the New request panel, so both columns read as one colour.
+const CARD_CLASS = 'p-[24px] rounded-[8px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] max-[640px]:p-[18px]';
 const BTN_SOLID_44 = 'min-h-[44px] inline-flex items-center justify-center p-[0_16px] border-0 rounded-[10px] text-[#fff] [background:#5160ee] text-[13.5px] font-[600] cursor-pointer [transition:background_.16s_ease] hover:[background:#6573f3] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
 const BTN_TEXT_CANCEL = 'min-h-[44px] inline-flex items-center justify-center p-[0_12px] border-0 rounded-[8px] [background:transparent] text-[#ff9d9d] text-[13.5px] font-[600] cursor-pointer [transition:background_.16s_ease] hover:[background:#2a1c24] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
 const BTN_QUIET_44 = 'min-h-[44px] inline-flex items-center justify-center p-[0_14px] border border-input-line rounded-[10px] [background:transparent] text-text text-[13.5px] font-[600] cursor-pointer hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
@@ -64,14 +65,14 @@ function statusLabel(request, step) {
 
 function Tracker({ request }) {
   const { step, stopped } = branchStep(request.status, request.branch_received_at);
-  const returned = request.status === 'returned';
-  const doneColor = request.status === 'returned' ? '#f2b866' : step >= 3 ? '#7fd8a8' : '#5160ee';
+  // Gold marks every filled stage; a received request turns the whole bar green.
+  const doneColor = step >= 3 ? '#7fd8a8' : '#f2b866';
   return (
     <ol className="m-0 p-0 [list-style:none] grid grid-cols-4 gap-[6px]" aria-label={`Progress: ${BRANCH_STEPS[step] || 'Draft'}`}>
       {BRANCH_STEPS.map((name, index) => {
         const current = index === step;
         const filled = !stopped && index <= step;
-        const segment = stopped ? (index === 0 ? '#98a2b8' : '#252c42') : filled ? (current && returned ? '#f2b866' : doneColor) : '#252c42';
+        const segment = stopped ? (index === 0 ? '#98a2b8' : '#252c42') : filled ? doneColor : '#252c42';
         return (
           <li key={name} className={`min-w-0 ${current ? '' : 'max-[640px]:hidden'}`}>
             <span className="block h-[4px] rounded-[2px]" style={{ background: segment }} />

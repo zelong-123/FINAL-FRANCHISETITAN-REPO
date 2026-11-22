@@ -206,15 +206,19 @@ export function SalesTrendCombo({ rows }) {
 /* ------------------------------------------------------------------ */
 /* Production trend — units produced vs production transactions        */
 /* ------------------------------------------------------------------ */
-export function ProductionTrendCombo({ rows }) {
+export function ProductionTrendCombo({ rows, gold = false, lineStroke = '#32c997' }) {
   const data = rows || [];
   const empty = !data.some((row) => Number(row.units || 0) > 0 || Number(row.transactions || 0) > 0);
+  // The branch dashboard draws gold bars (a soft top-to-bottom gradient) and a brand-coloured line.
+  const gradientId = 'production-bar-gold';
+  const barFill = gold ? `url(#${gradientId})` : '#6687ff';
+  const legendBar = gold ? { background: 'linear-gradient(180deg, #f9d582, #c8922b)' } : undefined;
 
   return (
     <div className="chart-surface">
       <div className="chart-legend [.dashboard-page_&]:flex [.dashboard-page_&]:flex-wrap [.dashboard-page_&]:gap-[15px] [.dashboard-page_&]:p-[12px_16px_0]">
-        <span className="chart-legend-item"><i className="legend-swatch legend-bar [.dashboard-page_&]:[background:#6687ff]" /> Units produced (bars)</span>
-        <span className="chart-legend-item"><i className="legend-swatch legend-line" /> Production transactions (line)</span>
+        <span className="chart-legend-item"><i className={`legend-swatch legend-bar ${gold ? '' : '[.dashboard-page_&]:[background:#6687ff]'}`} style={legendBar} /> Units produced (bars)</span>
+        <span className="chart-legend-item"><i className="legend-swatch legend-line" style={{ background: lineStroke }} /> Production transactions (line)</span>
       </div>
       <ChartFrame height={300} empty={empty}>
         <ResponsiveContainer width="100%" height="100%">
@@ -224,8 +228,16 @@ export function ProductionTrendCombo({ rows }) {
             <YAxis yAxisId="units" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={44} />
             <YAxis yAxisId="transactions" orientation="right" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={false} tickLine={false} width={34} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
-            <Bar yAxisId="units" dataKey="units" name="Units produced" fill="#6687ff" radius={[5, 5, 0, 0]} maxBarSize={30} />
-            <Line yAxisId="transactions" dataKey="transactions" name="Production transactions" type="monotone" stroke="#32c997" strokeWidth={2.2} dot={{ r: 2.4, fill: '#32c997', strokeWidth: 0 }} activeDot={{ r: 4.5 }} />
+            {gold && (
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f9d582" />
+                  <stop offset="100%" stopColor="#c8922b" />
+                </linearGradient>
+              </defs>
+            )}
+            <Bar yAxisId="units" dataKey="units" name="Units produced" fill={barFill} radius={[5, 5, 0, 0]} maxBarSize={30} />
+            <Line yAxisId="transactions" dataKey="transactions" name="Production transactions" type="monotone" stroke={lineStroke} strokeWidth={2.2} dot={{ r: 2.4, fill: lineStroke, strokeWidth: 0 }} activeDot={{ r: 4.5 }} />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartFrame>

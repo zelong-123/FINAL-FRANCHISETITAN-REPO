@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FaMagnifyingGlass } from 'react-icons/fa6';
-import { api, downloadFile, firstValidationMessage } from '../../lib/api';
+import { api, firstValidationMessage } from '../../lib/api';
 import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
 import useCosting from '../../lib/useCosting';
@@ -12,14 +12,15 @@ const money = (value) => new Intl.NumberFormat(undefined, { style: 'currency', c
 const newKey = () => globalThis.crypto?.randomUUID?.() || `mat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const qty = (value, unit) => `${formatNumber(Number(value || 0), 3)} ${unit || ''}`.trim();
 const MATERIALS_PER_PAGE = 7;
+const COUNT_PER_PAGE = 7;
 
 const GHOST = 'ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]';
 const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] disabled:opacity-50 disabled:cursor-not-allowed';
-const CARD = 'metric-card relative min-h-[112px] flex flex-col justify-between overflow-hidden p-[16px_18px] border border-line rounded-[18px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [&>span]:text-muted [&>span]:text-[11px] [&>span]:font-[680] [&_strong]:block [&_strong]:text-[clamp(22px,_2.4vw,_30px)] [&_strong]:leading-[1.06] [&_strong]:tracking-[-.03em] [&>small]:text-muted [&>small]:text-[11px]';
+const CARD = 'metric-card relative min-h-[64px] flex items-center justify-between gap-3 overflow-hidden p-[10px_16px] border border-line rounded-[10px] [background:linear-gradient(145deg,_color-mix(in_srgb,_var(--panel-2)_96%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent))] [box-shadow:var(--shadow-sm)] [&>span]:text-muted [&>span]:text-[12.5px] [&>span]:font-[650] [&>span]:leading-[1.3] [&_strong]:block [&_strong]:flex-none [&_strong]:text-[clamp(20px,_2.1vw,_26px)] [&_strong]:leading-none [&_strong]:tracking-[-.03em] [&_strong]:text-right';
 const PANEL = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)]';
 const HEADING = 'branch-panel-heading flex items-start justify-between gap-[14px] mb-[14px] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_p]:m-[5px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.6]';
 
-/** Branch Inventory: raw materials with status against the levels Logistics set, receipts, CSV import and physical counts. */
+/** Branch Inventory: raw materials with status against the levels Logistics set, receipts and physical counts. */
 export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = false }) {
   const costing = useCosting();
   const [materials, setMaterials] = useState([]);
@@ -29,10 +30,10 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const [notice, setNotice] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState('');
+  const [sortStatus, setSortStatus] = useState('');
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -58,11 +59,15 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const tally = (...statuses) => sorted.filter((m) => statuses.includes(m.status)).length;
   const lastCount = sorted.map((m) => m.last_counted_at).filter(Boolean).sort().pop() || null;
   // Client-side pagination of the inventory table; the shared Pagination reads this meta shape.
+  // The status sort only moves the chosen status to the top; the rest keep the worst-first order.
+  const ordered = useMemo(() => (sortStatus
+    ? [...sorted].sort((a, b) => (a.status === sortStatus ? 0 : 1) - (b.status === sortStatus ? 0 : 1))
+    : sorted), [sorted, sortStatus]);
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return sorted;
-    return sorted.filter((m) => [m.name, m.variant, m.source].some((value) => String(value || '').toLowerCase().includes(term)));
-  }, [sorted, query]);
+    if (!term) return ordered;
+    return ordered.filter((m) => [m.name, m.variant, m.source].some((value) => String(value || '').toLowerCase().includes(term)));
+  }, [ordered, query]);
   const lastPage = Math.max(1, Math.ceil(filtered.length / MATERIALS_PER_PAGE));
   const currentPage = Math.min(page, lastPage);
   const pageRows = filtered.slice((currentPage - 1) * MATERIALS_PER_PAGE, currentPage * MATERIALS_PER_PAGE);
@@ -76,14 +81,14 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
 
       {sorted.length > 0 && (
         <section className="grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-3 mb-4" aria-label="Raw materials status">
-          <article className={`${CARD} ${tally('critical', 'out') ? 'border-[color:color-mix(in_srgb,var(--danger-text)_45%,var(--border))]' : ''}`}>
-            <span>Critical / no stock</span><strong className={tally('critical', 'out') ? 'text-danger-text' : 'text-text'}>{tally('critical', 'out')}</strong><small>Request supply now</small>
+          <article className={`${CARD} ${tally('critical', 'out') ? 'border-[color:color-mix(in_srgb,var(--danger-text)_45%,var(--border))]' : ''}`} title="Request supply now">
+            <span>Critical / no stock</span><strong className={tally('critical', 'out') ? 'text-danger-text' : 'text-text'}>{tally('critical', 'out')}</strong>
           </article>
-          <article className={`${CARD} ${tally('low') ? 'border-[color:color-mix(in_srgb,var(--warning-text)_45%,var(--border))]' : ''}`}>
-            <span>Low stock</span><strong className={tally('low') ? 'text-[color:var(--warning-text)]' : 'text-text'}>{tally('low')}</strong><small>Plan your next request</small>
+          <article className={`${CARD} ${tally('low') ? 'border-[color:color-mix(in_srgb,var(--warning-text)_45%,var(--border))]' : ''}`} title="Plan your next request">
+            <span>Low stock</span><strong className={tally('low') ? 'text-[color:var(--warning-text)]' : 'text-text'}>{tally('low')}</strong>
           </article>
-          <article className={CARD}><span>Normal</span><strong className="text-success-text">{tally('ok')}</strong><small>Above the low level</small></article>
-          <article className={CARD}><span>Last physical count</span><strong className="text-text">{lastCountLabel(lastCount).replace(/^Today, .*/, 'Today')}</strong><small>Count milk, cups and lids daily</small></article>
+          <article className={CARD} title="Above the low level"><span>Normal</span><strong className="text-success-text">{tally('ok')}</strong></article>
+          <article className={CARD} title="Count milk, cups and lids daily"><span>Last physical count</span><strong className="text-text">{lastCountLabel(lastCount).replace(/^Today, .*/, 'Today')}</strong></article>
         </section>
       )}
 
@@ -118,7 +123,18 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
                   className="w-full min-w-0 bg-transparent border-0 outline-none text-text text-[12px] placeholder:text-placeholder"
                 />
               </label>
-              <button type="button" className={`${GHOST} text-[12px]! p-[0_10px]!`} onClick={open(setImportOpen)}>Import Raw Materials CSV</button>
+              <select
+                value={sortStatus}
+                onChange={(event) => { setSortStatus(event.target.value); setPage(1); }}
+                aria-label="Sort by status"
+                className="min-h-[38px] px-3 py-2 border rounded-[8px] [border-color:var(--branch-accent)] [background:var(--input-bg)] text-text text-[12px] font-[600] cursor-pointer focus:[outline:0] [&>option]:[background:var(--panel)] [&>option]:text-text"
+              >
+                <option value="">Status</option>
+                <option value="ok">Normal</option>
+                <option value="low">Low stock</option>
+                <option value="critical">Critical</option>
+                <option value="out">No stock</option>
+              </select>
               <button type="button" className={GHOST} onClick={open(setReceiveOpen)}>Receive Stock</button>
               <button type="button" className={GHOST} onClick={open(setAddOpen)}>Add Material</button>
               <button type="button" className={PRIMARY} disabled={!sorted.length || countOpen} onClick={open(setCountOpen)}>Physical count</button>
@@ -127,7 +143,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
         </div>
 
         {loading && !materials.length ? <LoadingState label="Loading raw materials…" /> : materials.length === 0 ? (
-          <EmptyState label="No raw materials yet." detail="Add a material, receive a delivered supply request, or import a raw-materials CSV." />
+          <EmptyState label="No raw materials yet." detail="Add a material or receive a delivered supply request." />
         ) : (
           <div className="table-wrap overflow-x-auto [&_table]:text-[15px] [&_th]:text-[13px] [&_th]:font-[800] [&_td]:font-[600] [&_td_strong]:text-[16px] [&_td_strong]:font-[800] [&_td_small]:text-[13px] [&_td_small]:font-[600]">
             <table>
@@ -196,16 +212,6 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
         />
       )}
 
-      {importOpen && (
-        <ImportMaterialsModal
-          onClose={() => setImportOpen(false)}
-          onSaved={async (message) => {
-            setImportOpen(false);
-            setNotice(message);
-            await load(true);
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -226,6 +232,7 @@ function PhysicalCountSheet({ materials, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [key] = useState(newKey);
+  const [page, setPage] = useState(1);
   const update = (id, patch) => setRows((current) => ({ ...current, [id]: { ...(current[id] || {}), ...patch } }));
 
   const lines = materials.map((m) => {
@@ -243,6 +250,11 @@ function PhysicalCountSheet({ materials, onClose, onSaved }) {
   const missing = lines.filter((l) => l.missingReason).length;
   const invalid = lines.some((l) => l.invalid);
   const ready = counted > 0 && missing === 0 && !invalid && !saving;
+  // 7 rows per page; the save still sends every filled row, on any page.
+  const lastPage = Math.max(1, Math.ceil(lines.length / COUNT_PER_PAGE));
+  const currentPage = Math.min(page, lastPage);
+  const pageLines = lines.slice((currentPage - 1) * COUNT_PER_PAGE, currentPage * COUNT_PER_PAGE);
+  const pageMeta = { current_page: currentPage, last_page: lastPage, per_page: COUNT_PER_PAGE, total: lines.length };
 
   const save = async () => {
     setSaving(true);
@@ -271,13 +283,13 @@ function PhysicalCountSheet({ materials, onClose, onSaved }) {
         <button type="button" className={GHOST} aria-label="Close the physical count" onClick={onClose} disabled={saving}>×</button>
       </div>
       <Notice type="error">{error}</Notice>
-      <div className="table-wrap overflow-x-auto">
+      <div className="table-wrap overflow-x-auto [&_table]:text-[15px] [&_th]:text-[13px] [&_th]:font-[800] [&_td]:font-[600] [&_td_strong]:text-[16px] [&_td_strong]:font-[800] [&_td_small]:text-[13px] [&_td_small]:font-[600] [&_input]:text-[14px]">
         <table>
           <thead>
             <tr><th>Material</th><th>System</th><th>Actual count</th><th>Variance</th><th>Reason</th><th>Status after</th></tr>
           </thead>
           <tbody>
-            {lines.map(({ m, row, filled, invalid: bad, differs, missingReason, needsNote, after }) => {
+            {pageLines.map(({ m, row, filled, invalid: bad, differs, missingReason, needsNote, after }) => {
               const variance = varianceText(row.actual ?? '', m.on_hand, m.unit);
               return (
                 <tr key={m.id} className={filled ? '[background:var(--surface-subtle)]' : ''}>
@@ -330,6 +342,11 @@ function PhysicalCountSheet({ materials, onClose, onSaved }) {
           </tbody>
         </table>
       </div>
+      {lines.length > COUNT_PER_PAGE && (
+        <div className="[&_nav]:text-[15px] [&_nav]:font-[700] [&_nav_span]:text-[15px] [&_nav_span]:font-[700] [&_nav_button]:text-[15px] [&_nav_button]:font-[800] [&_nav_button]:min-h-[40px] [&_nav_button]:px-[16px]">
+          <Pagination meta={pageMeta} onPage={setPage} />
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
         <small className="text-muted" aria-live="polite">{counted} of {materials.length} counted · {missing} reason{missing === 1 ? '' : 's'} missing</small>
         <span className="flex gap-2">
@@ -588,134 +605,6 @@ function ReceiveStockModal({ branchQuery, materials, onClose, onSaved }) {
           </>
         )}
       </form>
-    </Modal>
-  );
-}
-
-function ImportMaterialsModal({ onClose, onSaved }) {
-  const costing = useCosting();
-  const [csv, setCsv] = useState('');
-  const [fileName, setFileName] = useState('');
-  const [preview, setPreview] = useState(null);
-  const [resolutions, setResolutions] = useState({});
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const readFile = async (event) => {
-    const file = event.target.files?.[0];
-    setPreview(null);
-    setCsv('');
-    setResolutions({});
-    setError('');
-    if (!file) return;
-    if (file.size > 1048576) {
-      setError('CSV must be 1 MiB or smaller.');
-      return;
-    }
-    try {
-      setCsv(new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer()));
-      setFileName(file.name);
-    } catch {
-      setError('Could not read this file as UTF-8 CSV.');
-    }
-  };
-
-  const runPreview = async (event) => {
-    event.preventDefault();
-    if (!csv) return;
-    setBusy(true);
-    setError('');
-    try {
-      const response = await api.post('/branch/workspace/materials-preview', { csv });
-      setPreview(response.data);
-      setResolutions({});
-    } catch (caught) {
-      setError(firstValidationMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const apply = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const response = await api.post('/branch/workspace/materials-import', { csv, resolutions });
-      await onSaved(`${response.data?.created || 0} new material(s) created; ${response.data?.updated || 0} row(s) received.`);
-    } catch (caught) {
-      setError(firstValidationMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const unresolved = (preview?.duplicates || []).filter((duplicate) => !['combine', 'remove'].includes(resolutions[duplicate.key]));
-
-  return (
-    <Modal
-      title="Import raw materials CSV"
-      onClose={onClose}
-      footer={(
-        <>
-          <button type="button" onClick={() => void downloadFile('/branch/workspace/materials-template', {}, 'raw_materials_template.csv')}>
-            Download CSV Template
-          </button>
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button
-            type="button"
-            className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
-            onClick={() => void apply()}
-            disabled={!preview || preview.error_count > 0 || !preview.valid_count || unresolved.length > 0 || busy}
-          >
-            {busy ? 'Working…' : 'Apply import'}
-          </button>
-        </>
-      )}
-    >
-      <Notice type="error">{error}</Notice>
-      <p className="muted-note text-muted text-[8px] leading-[1.6]">
-        New materials are created when the name, variant and unit are new. Units come from the shared unit list.
-        A material already in the file or in inventory asks for Combine or Remove before applying.
-      </p>
-      <form className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={runPreview}>
-        <Field label="CSV file" required hint={fileName || (costing ? 'material_name,variant,unit,quantity,unit_cost' : 'material_name,variant,unit,quantity')}>
-          <input type="file" accept=".csv,text/csv" onChange={readFile} />
-        </Field>
-        <button type="submit" disabled={!csv || busy}>{busy ? 'Checking…' : 'Preview import'}</button>
-      </form>
-
-      {preview && (
-        <div className="grid gap-[10px] mt-[14px] later:[&>p]:m-0 later:[&>p]:text-text-secondary [&>p]:text-[11px]">
-          <p><strong>{preview.valid_count}</strong> valid row(s) · <strong>{preview.error_count}</strong> row error(s) · <strong>{preview.duplicates?.length || 0}</strong> duplicate(s)</p>
-          {preview.errors?.length > 0 && (
-            <ul className="m-0 p-[10px_14px_10px_28px] rounded-[10px] border border-[color:color-mix(in_srgb,_#f56d7d_34%,_var(--border))] text-[#f56d7d] [background:color-mix(in_srgb,_#f56d7d_8%,_transparent)] text-[10px]">
-              {preview.errors.map((row) => <li key={`${row.line}-${row.message}`}>Line {row.line}: {row.message}</li>)}
-            </ul>
-          )}
-          {preview.duplicates?.length > 0 && (
-            <div className="grid gap-2 p-3 border border-line rounded-[12px] [background:var(--surface-subtle)] [&_h3]:m-0 [&_h3]:text-text [&_h3]:text-[11px]">
-              <h3>Duplicates need a decision</h3>
-              {preview.duplicates.map((duplicate) => (
-                <div key={duplicate.key} className="flex flex-wrap gap-[10px] items-center justify-between text-text-secondary text-[10px] [&_select]:min-h-[32px] [&_select]:p-[0_8px]">
-                  <span>
-                    {duplicate.label} · lines {duplicate.rows.map((row) => row.line).join(', ')}
-                    {duplicate.in_inventory ? ' · already in inventory' : ''}
-                  </span>
-                  <select
-                    value={resolutions[duplicate.key] || ''}
-                    onChange={(event) => setResolutions((current) => ({ ...current, [duplicate.key]: event.target.value }))}
-                    aria-label={`Resolve duplicate ${duplicate.label}`}
-                  >
-                    <option value="">Choose…</option>
-                    <option value="combine">Combine</option>
-                    <option value="remove">Remove</option>
-                  </select>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </Modal>
   );
 }
