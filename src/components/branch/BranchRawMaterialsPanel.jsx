@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FaMagnifyingGlass } from 'react-icons/fa6';
 import { api, downloadFile, firstValidationMessage } from '../../lib/api';
 import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../ApiUi';
 import { formatDate, formatNumber } from '../../lib/format';
@@ -31,6 +32,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const [importOpen, setImportOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -56,10 +58,15 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
   const tally = (...statuses) => sorted.filter((m) => statuses.includes(m.status)).length;
   const lastCount = sorted.map((m) => m.last_counted_at).filter(Boolean).sort().pop() || null;
   // Client-side pagination of the inventory table; the shared Pagination reads this meta shape.
-  const lastPage = Math.max(1, Math.ceil(sorted.length / MATERIALS_PER_PAGE));
+  const filtered = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return sorted;
+    return sorted.filter((m) => [m.name, m.variant, m.source].some((value) => String(value || '').toLowerCase().includes(term)));
+  }, [sorted, query]);
+  const lastPage = Math.max(1, Math.ceil(filtered.length / MATERIALS_PER_PAGE));
   const currentPage = Math.min(page, lastPage);
-  const pageRows = sorted.slice((currentPage - 1) * MATERIALS_PER_PAGE, currentPage * MATERIALS_PER_PAGE);
-  const pageMeta = { current_page: currentPage, last_page: lastPage, per_page: MATERIALS_PER_PAGE, total: sorted.length };
+  const pageRows = filtered.slice((currentPage - 1) * MATERIALS_PER_PAGE, currentPage * MATERIALS_PER_PAGE);
+  const pageMeta = { current_page: currentPage, last_page: lastPage, per_page: MATERIALS_PER_PAGE, total: filtered.length };
   const open = (setter) => () => { setNotice(''); setter(true); };
 
   return (
@@ -99,8 +106,19 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
             <p>{costing ? 'Branch stock of ingredients and packaging, valued at weighted-average cost.' : 'Branch stock of ingredients and packaging.'} Levels are set by Logistics.</p>
           </div>
           {!readOnly && (
-            <div className="flex flex-wrap gap-2 justify-end">
-              <button type="button" className={GHOST} onClick={open(setImportOpen)}>Import Raw Materials CSV</button>
+            <div className="flex flex-wrap gap-2 justify-end items-center">
+              <label className="flex items-center gap-2 w-[200px] max-w-full px-3 py-2 border rounded-[8px] [border-color:var(--branch-accent)] [background:var(--input-bg)] text-muted focus-within:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)]">
+                <FaMagnifyingGlass aria-hidden="true" className="flex-none text-[12px]" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => { setQuery(event.target.value); setPage(1); }}
+                  placeholder="Search materials…"
+                  aria-label="Search raw materials"
+                  className="w-full min-w-0 bg-transparent border-0 outline-none text-text text-[12px] placeholder:text-placeholder"
+                />
+              </label>
+              <button type="button" className={`${GHOST} text-[12px]! p-[0_10px]!`} onClick={open(setImportOpen)}>Import Raw Materials CSV</button>
               <button type="button" className={GHOST} onClick={open(setReceiveOpen)}>Receive Stock</button>
               <button type="button" className={GHOST} onClick={open(setAddOpen)}>Add Material</button>
               <button type="button" className={PRIMARY} disabled={!sorted.length || countOpen} onClick={open(setCountOpen)}>Physical count</button>
@@ -111,7 +129,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
         {loading && !materials.length ? <LoadingState label="Loading raw materials…" /> : materials.length === 0 ? (
           <EmptyState label="No raw materials yet." detail="Add a material, receive a delivered supply request, or import a raw-materials CSV." />
         ) : (
-          <div className="table-wrap overflow-x-auto">
+          <div className="table-wrap overflow-x-auto [&_table]:text-[15px] [&_th]:text-[13px] [&_th]:font-[800] [&_td]:font-[600] [&_td_strong]:text-[16px] [&_td_strong]:font-[800] [&_td_small]:text-[13px] [&_td_small]:font-[600]">
             <table>
               <thead>
                 <tr>
@@ -149,7 +167,7 @@ export default function BranchRawMaterialsPanel({ branchQuery = {}, preview = fa
             </table>
           </div>
         )}
-        {materials.length > 0 && <Pagination meta={pageMeta} onPage={setPage} />}
+        {materials.length > 0 && <div className="[&_nav]:text-[15px] [&_nav]:font-[700] [&_nav_span]:text-[15px] [&_nav_span]:font-[700] [&_nav_button]:text-[15px] [&_nav_button]:font-[800] [&_nav_button]:min-h-[40px] [&_nav_button]:px-[16px]"><Pagination meta={pageMeta} onPage={setPage} /></div>}
       </section>
 
       {addOpen && (

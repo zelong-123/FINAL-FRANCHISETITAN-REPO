@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FaMagnifyingGlass } from 'react-icons/fa6';
 import { api, firstValidationMessage } from '../../lib/api';
 import { EmptyState, LoadingState, Modal, Notice } from '../ApiUi';
 import ProductImage from '../ProductImage';
@@ -13,6 +14,7 @@ export default function BranchProductsPanel({ branchQuery = {}, role }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openProduct, setOpenProduct] = useState(null);
+  const [query, setQuery] = useState('');
   const isAdmin = role === 'admin';
 
   const load = useCallback(async (silent = false) => {
@@ -37,6 +39,12 @@ export default function BranchProductsPanel({ branchQuery = {}, role }) {
   }, [load]);
 
   const products = data?.products || [];
+  const visibleProducts = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return products;
+    return products.filter((product) => [product.name, product.sku, product.description]
+      .some((value) => String(value || '').toLowerCase().includes(term)));
+  }, [products, query]);
   const brandName = data?.brand?.name || 'this brand';
   const hasMaterials = Boolean(data?.has_materials);
 
@@ -44,7 +52,7 @@ export default function BranchProductsPanel({ branchQuery = {}, role }) {
     <div className="branch-products">
       <Notice type="error">{error}</Notice>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      <section className="data-panel overflow-hidden mb-[18px] p-[20px] border border-line rounded-[8px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
         <div className="branch-panel-heading flex items-start justify-between gap-[14px] mb-[14px] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_p]:m-[5px_0_0] [&_p]:text-muted [&_p]:text-[11px] [&_p]:leading-[1.6]">
           <div>
             <h2>Products</h2>
@@ -53,6 +61,19 @@ export default function BranchProductsPanel({ branchQuery = {}, role }) {
               {isAdmin ? ' Admin edits products and recipes in the Products screen.' : ' Branch users have view-only access.'}
             </p>
           </div>
+          {products.length > 0 && (
+            <label className="flex items-center gap-2 flex-none w-[240px] max-w-[45%] px-3 py-2 border rounded-[8px] [border-color:var(--branch-accent)] [background:var(--input-bg)] text-muted focus-within:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--branch-accent)_17%,_transparent)]">
+              <FaMagnifyingGlass aria-hidden="true" className="flex-none text-[12px]" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search products…"
+                aria-label="Search products"
+                className="w-full min-w-0 bg-transparent border-0 outline-none text-text text-[12px] placeholder:text-placeholder"
+              />
+            </label>
+          )}
         </div>
 
         {loading && !data ? <LoadingState label="Loading products…" /> : products.length === 0 ? (
@@ -67,31 +88,50 @@ export default function BranchProductsPanel({ branchQuery = {}, role }) {
                 This branch has no raw materials yet, so these products cannot be produced until stock is received.
               </Notice>
             )}
-            <div className="grid grid-cols-[repeat(auto-fill,_minmax(220px,_1fr))] gap-3">
-              {products.map((product) => (
+            {visibleProducts.length === 0 ? (
+              <EmptyState label={`No products match “${query.trim()}”.`} detail="Try a different name or SKU." />
+            ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] gap-4">
+              {visibleProducts.map((product) => (
                 <button
                   type="button"
                   key={product.id}
-                  className="flex items-center gap-3 p-3 text-left border border-line rounded-[14px] [background:var(--surface-subtle)] text-text cursor-pointer [transition:transform_.16s_ease,_border-color_.16s_ease] hover:[transform:translateY(-2px)] hover:border-[color:color-mix(in_srgb,_var(--branch-accent)_30%,_var(--border))]"
+                  className="grid gap-3 p-4 text-left border border-line rounded-[8px] [background:var(--surface-subtle)] text-text cursor-pointer [transition:transform_.16s_ease,_border-color_.16s_ease,_box-shadow_.16s_ease] hover:[transform:translateY(-2px)] hover:border-[color:color-mix(in_srgb,_var(--branch-accent)_40%,_var(--border))] hover:[box-shadow:var(--shadow-md)]"
                   onClick={() => setOpenProduct(product)}
                 >
-                  <span className="w-[52px] h-[52px] flex-[0_0_auto] grid place-items-center overflow-hidden rounded-[12px] text-[#fff] text-[18px] font-[800] [background:linear-gradient(145deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_65%,_#141b2e))] [&_img]:w-full [&_img]:h-full [&_img]:object-cover">
-                    <ProductImage
-                      src={product.image_url}
-                      alt={product.name}
-                      fallback={<span aria-hidden="true">{(product.name || 'P').slice(0, 1).toUpperCase()}</span>}
-                    />
-                  </span>
-                  <span className="grid gap-[3px] min-w-0 [&_strong]:text-[11px] [&_small]:text-muted [&_small]:text-[9px] [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap [&_span]:text-muted [&_span]:text-[9px] [&_span]:overflow-hidden [&_span]:text-ellipsis [&_span]:whitespace-nowrap">
-                    <strong>{product.name}</strong>
-                    <small>{product.sku}</small>
-                    <span>
-                      {formatNumber((product.ingredients || []).length)} ingredient{(product.ingredients || []).length === 1 ? '' : 's'}
+                  <span className="flex items-center gap-3 pb-3 border-b border-line">
+                    <span className="w-[76px] h-[76px] flex-none grid place-items-center overflow-hidden rounded-[6px] border border-line [&_img]:w-full [&_img]:h-full [&_img]:object-cover">
+                      <ProductImage
+                        src={product.image_url}
+                        alt={product.name}
+                        fallback={<span className="text-[18px] font-[800] text-muted" aria-hidden="true">{(product.name || 'P').slice(0, 1).toUpperCase()}</span>}
+                      />
                     </span>
+                    <span className="grid gap-1 min-w-0">
+                      <strong className="text-[16px] font-[700] leading-[1.25] break-words">{product.name}</strong>
+                      {product.description && <span className="text-[13px] text-muted break-words">{product.description}</span>}
+                      <span className="text-[12px] text-muted">{product.sku}</span>
+                    </span>
+                  </span>
+                  <span className="grid gap-2">
+                    <strong className="text-[13px] font-[700]">Recipe</strong>
+                    {(product.ingredients || []).length === 0 ? (
+                      <span className="text-[13px] text-muted">No ingredients yet.</span>
+                    ) : (
+                      <ul className="m-0 p-0 list-none grid gap-[6px]">
+                        {product.ingredients.map((ingredient) => (
+                          <li key={ingredient.product_id} className="flex items-center justify-between gap-3 text-[14px]">
+                            <span className="min-w-0 truncate">{ingredient.name}</span>
+                            <span className="flex-none text-[13px] text-muted">{formatNumber(ingredient.quantity_per_piece, 3)} {ingredient.unit}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </span>
                 </button>
               ))}
             </div>
+            )}
           </>
         )}
       </section>

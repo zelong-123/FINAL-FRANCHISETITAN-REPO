@@ -14,13 +14,20 @@ import EstimateHint from '../supply/EstimateHint';
 import BranchReceiptModal from './BranchReceiptModal';
 import { ReasonModal } from '../supply/SupplyModals';
 import { Callout, Chip, UrgencyChip } from '../supply/supplyUi';
-import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SMALL, INPUT, LABEL, qty } from '../supply/supplyStyles';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, INPUT, LABEL, qty } from '../supply/supplyStyles';
 
 const NO_PICK = { product_id: '', quantity: '' };
 const STATUS_FILTERS = [['', 'All requests'], ['open', 'Open'], ['returned', 'Returned'], ['draft', 'Drafts'], ['in_transit', 'On the way'], ['done', 'Received'], ['closed', 'Cancelled or rejected']];
 const FILTER_QUERY = { open: { view: 'active' }, returned: { status: 'returned' }, draft: { status: 'draft' }, in_transit: { tab: 'dispatched' }, done: { tab: 'completed' }, closed: { tab: 'closed' } };
 const PANEL_CLASS = 'data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] flex flex-col';
 const PANEL_HEAD = 'min-h-[64px] flex flex-wrap items-center justify-between gap-3 m-[0_20px] p-[14px_4px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--branch-accent,_var(--accent))_28%,_var(--border))] [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[16px] [&_h2]:font-[780] [&_p]:m-[2px_0_0] [&_p]:text-muted [&_p]:text-[12px]';
+const REQUESTS_PANEL = 'flex flex-col min-w-0';
+const REQUESTS_HEAD = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-[10px] pb-[14px]';
+const GHOST_FILTER = 'min-h-[44px] w-auto p-[0_12px] border border-[#2f3752] rounded-[10px] [background:transparent] text-[#e8ebf3] text-[13.5px] font-[500] cursor-pointer [color-scheme:dark] [outline:none] [&>option]:text-[#e8ebf3] [&>option]:[background:#151c2e] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[640px]:w-full';
+const CARD_CLASS = 'p-[24px] rounded-[12px] [background:#131929] max-[640px]:p-[18px]';
+const BTN_SOLID_44 = 'min-h-[44px] inline-flex items-center justify-center p-[0_16px] border-0 rounded-[10px] text-[#fff] [background:#5160ee] text-[13.5px] font-[600] cursor-pointer [transition:background_.16s_ease] hover:[background:#6573f3] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
+const BTN_TEXT_CANCEL = 'min-h-[44px] inline-flex items-center justify-center p-[0_12px] border-0 rounded-[8px] [background:transparent] text-[#ff9d9d] text-[13.5px] font-[600] cursor-pointer [transition:background_.16s_ease] hover:[background:#2a1c24] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
+const BTN_QUIET_44 = 'min-h-[44px] inline-flex items-center justify-center p-[0_14px] border border-input-line rounded-[10px] [background:transparent] text-text text-[13.5px] font-[600] cursor-pointer hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed';
 const isWeekend = (day) => Boolean(day) && [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay());
 const when = (value) => (value ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—');
 const emptyForm = (location) => ({
@@ -28,23 +35,51 @@ const emptyForm = (location) => ({
   delivery_address: location?.address || location?.name || '', contact_number: location?.contact_number || '', remarks: '',
 });
 
+// Status colors for the card: amber = Returned, green = Received, info blue = in progress, gray = stopped.
+const BADGE_TONE = {
+  returned: ['#f2b866', '#2b2417'],
+  received: ['#7fd8a8', '#1b3a30'],
+  info: ['#b9c3ff', '#26305a'],
+  muted: ['#98a2b8', '#252c42'],
+  rejected: ['#ff9d9d', '#2a1c24'],
+};
+
+function statusTone(request, step) {
+  if (request.status === 'returned') return 'returned';
+  if (request.status === 'rejected') return 'rejected';
+  if (request.status === 'cancelled' || request.status === 'draft') return 'muted';
+  return step >= 3 ? 'received' : 'info';
+}
+
+/** The badge text: one word for the stage the request is in, with the side statuses named. */
+function statusLabel(request, step) {
+  if (request.status === 'returned') return 'Returned';
+  if (request.status === 'draft') return 'Draft';
+  if (request.status === 'on_hold') return 'On hold';
+  if (request.status === 'rejected') return 'Rejected';
+  if (request.status === 'cancelled') return 'Cancelled';
+  if (request.status === 'discrepancy_review' || request.status === 'completed_with_discrepancy') return 'Received';
+  return step >= 0 ? BRANCH_STEPS[step] : 'Draft';
+}
+
 function Tracker({ request }) {
-  const { step, stopped, label } = branchStep(request.status, request.branch_received_at);
+  const { step, stopped } = branchStep(request.status, request.branch_received_at);
+  const returned = request.status === 'returned';
+  const doneColor = request.status === 'returned' ? '#f2b866' : step >= 3 ? '#7fd8a8' : '#5160ee';
   return (
-    <div>
-      <ol className="m-0 p-0 [list-style:none] grid grid-cols-4 gap-[4px]" aria-label={`Progress: ${label}`}>
-        {BRANCH_STEPS.map((name, index) => {
-          const state = stopped ? (index === 0 ? 'stopped' : 'todo') : index < step ? 'done' : index === step ? 'current' : 'todo';
-          return (
-            <li key={name} className="min-w-0">
-              <span className={`block h-[5px] rounded-[3px] ${{ done: '[background:var(--accent)]', current: '[background:var(--accent-2)] [box-shadow:0_0_6px_var(--accent-2)]', stopped: '[background:var(--danger)]', todo: '[background:var(--surface-strong)]' }[state]}`} />
-              <span className={`block mt-[4px] text-[10.5px] truncate ${state === 'todo' ? 'text-muted' : 'text-text-secondary font-[700]'}`}>{name}</span>
-            </li>
-          );
-        })}
-      </ol>
-      <div className={`mt-[3px] text-[12.5px] font-[700] ${stopped || request.status === 'returned' ? 'text-danger-text' : 'text-text'}`}>{label}</div>
-    </div>
+    <ol className="m-0 p-0 [list-style:none] grid grid-cols-4 gap-[6px]" aria-label={`Progress: ${BRANCH_STEPS[step] || 'Draft'}`}>
+      {BRANCH_STEPS.map((name, index) => {
+        const current = index === step;
+        const filled = !stopped && index <= step;
+        const segment = stopped ? (index === 0 ? '#98a2b8' : '#252c42') : filled ? (current && returned ? '#f2b866' : doneColor) : '#252c42';
+        return (
+          <li key={name} className={`min-w-0 ${current ? '' : 'max-[640px]:hidden'}`}>
+            <span className="block h-[4px] rounded-[2px]" style={{ background: segment }} />
+            <span className={`block mt-[8px] text-[13px] truncate ${current ? 'text-[#e8ebf3] font-[600]' : 'text-[#98a2b8]'}`}>{name}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -54,28 +89,50 @@ function RequestCard({ request, preview, onEdit, onCancel, onReceive }) {
   const d = request.delivery;
   const date = request.confirmed_delivery_date || request.effective_delivery_date || request.target_delivery_date;
   const received = request.branch_received_at && (request.items || []).some((i) => i.received_good !== null);
+  const { step } = branchStep(request.status, request.branch_received_at);
+  const tone = BADGE_TONE[statusTone(request, step)];
+  const items = request.items || [];
   return (
-    <article className={`p-[13px_14px] border-b border-line last:border-b-0 ${request.status === 'returned' || inTransit ? '[box-shadow:inset_3px_0_var(--accent-2)]' : ''}`} data-request={request.request_number}>
-      <header className="flex flex-wrap items-start justify-between gap-[8px]">
+    <article className={CARD_CLASS} data-request={request.request_number}>
+      <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-[10px]">
         <div className="min-w-0">
-          <strong className="block text-text text-[13px] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
-          <small className="block text-muted text-[11.5px]">Requested {formatDate(request.submitted_at || request.created_at) || '—'} · Delivery {formatDate(date) || '—'}{request.confirmed_delivery_date ? ' (confirmed)' : ''}</small>
+          <strong className="block text-[#e8ebf3] text-[15px] font-[600] [font-family:ui-monospace,SFMono-Regular,Menlo,monospace] [overflow-wrap:anywhere]">{request.request_number}</strong>
+          <small className="block mt-[6px] text-[13px] text-[#98a2b8]">Requested {formatDate(request.submitted_at || request.created_at) || '—'} · Delivery {formatDate(date) || '—'}{request.confirmed_delivery_date ? ' (confirmed)' : ''}</small>
+          {(request.urgency !== 'normal' || request.parent_request_number) && (
+            <div className="mt-[9px] flex flex-wrap gap-[6px]">
+              {request.urgency !== 'normal' && <UrgencyChip urgency={request.urgency} />}
+              {request.parent_request_number && <Chip>Backorder of {request.parent_request_number}</Chip>}
+            </div>
+          )}
         </div>
-        <span className="flex flex-wrap gap-[5px]">{request.urgency !== 'normal' && <UrgencyChip urgency={request.urgency} />}{request.parent_request_number && <Chip>Backorder of {request.parent_request_number}</Chip>}</span>
+        <span className="inline-flex items-center gap-[7px] p-[5px_11px] rounded-[999px] text-[13px] font-[600] whitespace-nowrap" style={{ color: tone[0], background: tone[1] }}>
+          <i aria-hidden="true" className="block w-[7px] h-[7px] rounded-full" style={{ background: tone[0] }} />
+          {statusLabel(request, step)}
+        </span>
       </header>
-      <div className="mt-[9px]"><Tracker request={request} /></div>
-      <ul className="m-[8px_0_0] p-0 [list-style:none] grid gap-[3px] text-[12.5px]">
-        {(request.items || []).map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 text-text-secondary">
-            <span>{item.product?.name || item.product_name_snapshot}</span>
-            <span className="text-text font-[650] whitespace-nowrap">
-              {qty(item.quantity_endorsed ?? item.quantity_requested)} {item.product?.unit || item.unit_snapshot}
-              {received && <span className="ml-[6px] text-muted font-[400]">({qty(item.received_good)} good{Number(item.received_damaged) ? `, ${qty(item.received_damaged)} damaged` : ''}{Number(item.received_short) ? `, ${qty(item.received_short)} short` : ''})</span>}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {request.status === 'returned' && <Callout><b>Returned for correction:</b> {request.returned_reason}</Callout>}
+      <div className="mt-[18px]"><Tracker request={request} /></div>
+      {request.status === 'returned' && (
+        <div className="mt-[16px] p-[14px_16px] rounded-[10px] [background:#2b2417]">
+          <p className="m-0 text-[#f2b866] text-[13px] font-[600]">Returned for correction</p>
+          <p className="m-0 mt-[4px] text-[#e8ebf3] text-[15px] leading-[1.5] [overflow-wrap:anywhere]">{request.returned_reason}</p>
+        </div>
+      )}
+      {items.length > 0 && (
+        <div className="mt-[20px]">
+          <p className="m-0 text-[#98a2b8] text-[13px] font-[600]">Items · {items.length}</p>
+          <ul className="m-0 mt-[4px] p-0 [list-style:none]">
+            {items.map((item) => (
+              <li key={item.id} className="flex items-baseline justify-between gap-3 py-[12px] border-t border-[#1f2639] text-[15px]">
+                <span className="min-w-0 text-[#e8ebf3] [overflow-wrap:anywhere]">{item.product?.name || item.product_name_snapshot}</span>
+                <span className="text-[#e8ebf3] font-[600] whitespace-nowrap text-right">
+                  {qty(item.quantity_endorsed ?? item.quantity_requested)} {item.product?.unit || item.unit_snapshot}
+                  {received && <span className="ml-[6px] text-[#98a2b8] text-[13px] font-[400]">({qty(item.received_good)} good{Number(item.received_damaged) ? `, ${qty(item.received_damaged)} damaged` : ''}{Number(item.received_short) ? `, ${qty(item.received_short)} short` : ''})</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {request.status === 'on_hold' && <Callout><b>On hold for restock</b> (expected {formatDate(request.expected_restock_date) || '—'}). {request.fulfillment_reason}</Callout>}
       {request.status === 'rejected' && <Callout tone="danger"><b>Rejected:</b> {request.rejected_reason}</Callout>}
       {request.status === 'cancelled' && <Callout tone="danger"><b>Cancelled:</b> {request.cancelled_reason}</Callout>}
@@ -89,10 +146,12 @@ function RequestCard({ request, preview, onEdit, onCancel, onReceive }) {
         </div>
       )}
       {!preview && (editable || inTransit) && (
-        <footer className="mt-[10px] flex flex-wrap justify-end gap-[8px]">
-          {editable && <button type="button" className={`${BTN_DANGER} ${BTN_SMALL}`} onClick={() => onCancel(request)}>Cancel request</button>}
-          {editable && <button type="button" className={`${request.status === 'returned' ? BTN_PRIMARY : BTN_GHOST} ${BTN_SMALL}`} onClick={() => onEdit(request)}>{request.status === 'returned' ? 'Edit and resubmit' : request.status === 'draft' ? 'Edit draft' : 'Edit'}</button>}
-          {inTransit && <button type="button" className={`${BTN_PRIMARY} ${BTN_SMALL}`} onClick={() => onReceive(request)}>Confirm receipt</button>}
+        <footer className="mt-[18px] flex flex-wrap items-center justify-end gap-[8px] max-[640px]:flex-col-reverse max-[640px]:items-stretch">
+          {editable && <button type="button" className={BTN_TEXT_CANCEL} onClick={() => onCancel(request)}>Cancel request</button>}
+          {editable && (request.status === 'returned'
+            ? <button type="button" className={BTN_SOLID_44} onClick={() => onEdit(request)}>Edit and resubmit</button>
+            : <button type="button" className={BTN_QUIET_44} onClick={() => onEdit(request)}>{request.status === 'draft' ? 'Edit draft' : 'Edit'}</button>)}
+          {inTransit && <button type="button" className={BTN_SOLID_44} onClick={() => onReceive(request)}>Confirm receipt</button>}
         </footer>
       )}
     </article>
@@ -395,10 +454,10 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
           </div>
         </section>
 
-        <section className={PANEL_CLASS}>
-          <header className={PANEL_HEAD}>
-            <div><h2>My requests</h2><p>Submitted → Approved → On the way → Received</p></div>
-            <select aria-label="Show" className={`${INPUT} !w-auto`} value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <section className={REQUESTS_PANEL}>
+          <header className={REQUESTS_HEAD}>
+            <h2 className="m-0 text-[#e8ebf3] text-[20px] font-[700]">My requests</h2>
+            <select aria-label="Show" className={GHOST_FILTER} value={filter} onChange={(e) => setFilter(e.target.value)}>
               {STATUS_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </header>
@@ -410,9 +469,12 @@ export default function BranchSupplyPanel({ branchQuery = {}, location = null, p
           )}
           {!preview && <SupplyUpdates updates={updates} requests={requests} onShow={showRequest} />}
           {remote.loading && !remote.data ? <LoadingState label="Loading requests…" /> : requests.length === 0 ? (
-            <EmptyState label={filter ? 'No requests in this view.' : 'No supply requests for this branch yet.'} detail={filter ? 'Choose another view.' : 'Add items to the list and submit your first request.'} />
+            <div className="py-[48px] flex flex-col items-center justify-center gap-[6px] text-center text-[#98a2b8]">
+              <p className="m-0 text-[15px] font-[500]">{filter ? 'No requests in this view.' : 'No requests yet.'}</p>
+              <p className="m-0 text-[13px]">{filter ? 'Choose another view.' : 'Submitted requests will appear here.'}</p>
+            </div>
           ) : (
-            <div>
+            <div className="grid gap-[18px] pb-[4px]">
               {requests.map((request) => (
                 <RequestCard key={request.id} request={request} preview={preview} onEdit={editRequest} onCancel={setCancelFor} onReceive={setReceiveFor} />
               ))}

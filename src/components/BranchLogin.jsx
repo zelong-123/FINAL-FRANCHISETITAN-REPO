@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { FaCircleExclamation, FaEnvelope, FaLock } from 'react-icons/fa6';
+import { FaCircleExclamation, FaEnvelope, FaEye, FaEyeSlash, FaLock } from 'react-icons/fa6';
 import { firstValidationMessage } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { AppLoader } from './ApiUi';
@@ -9,7 +9,7 @@ import AppIconImg from '../assets/icon.png.png';
 
 const glow = 'pointer-events-none absolute -z-10 aspect-square w-[min(37vw,460px)] rounded-full opacity-14 blur-[105px]';
 const inputWrap = 'flex min-h-12 items-center gap-[11px] rounded-xl border border-white/10 bg-[rgba(5,9,17,.78)] px-[13px] text-[#7f8aa0] transition-[border-color,box-shadow,background,color] duration-[180ms] focus-within:border-[rgba(135,151,255,.74)] focus-within:bg-[rgba(10,14,25,.96)] focus-within:text-[#adb8ff] focus-within:shadow-[0_0_0_3px_rgba(135,151,255,.13)] [&>svg]:w-3.5 [&>svg]:shrink-0';
-const input = 'min-h-[46px] w-full min-w-0 border-0 bg-transparent p-0 text-xs text-[#f3f5fb] outline-none placeholder:text-[#687287] placeholder:opacity-100 focus:shadow-none focus-visible:outline-none';
+const input = 'min-h-[46px] w-full min-w-0 border-0 bg-transparent p-0 text-xs text-[#f3f5fb] outline-none placeholder:text-[#687287] placeholder:opacity-100 focus:shadow-none focus-visible:outline-none [&:-webkit-autofill]:[-webkit-text-fill-color:#f3f5fb] [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_transparent_inset] [&:-webkit-autofill]:[transition:background-color_9999s_ease-out_0s]';
 const field = 'grid gap-2 text-[10px] font-[650] text-[#d2d8e5]';
 const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[rgba(155,170,255,.85)]';
 
@@ -20,6 +20,7 @@ export default function BranchLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [keepSignedIn, setKeepSignedIn] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   // A session signed out for being on the wrong portal arrives with a short notice.
   const [error, setError] = useState(() => location.state?.portalNotice || '');
   const [submitting, setSubmitting] = useState(false);
@@ -61,7 +62,7 @@ export default function BranchLogin() {
         <header className="flex flex-col items-start">
           <span className="mb-[26px] grid size-[42px] place-items-center rounded-[13px] border border-white/8 bg-white/[.035] max-[520px]:mb-[22px]"><img className="size-[31px] object-contain" src={AppIconImg} alt="" /></span>
           <span className="inline-flex items-center gap-[7px] text-[9px] leading-normal font-[760] tracking-[.13em] text-[#c0c8d8] uppercase">Branch Portal <span className="text-[#8797ff]" aria-hidden="true">·</span> Private Workspace</span>
-          <h1 id="branch-login-title" className="mt-3.5 mb-0 text-[clamp(25px,5vw,31px)] leading-[1.16] font-bold tracking-[-.045em] text-[#f3f5fb] max-[520px]:text-[27px]">Welcome to your Branch</h1>
+          <h1 id="branch-login-title" className="mt-3.5 mb-0 text-[clamp(25px,5vw,31px)] leading-[1.16] font-bold tracking-[-.045em] text-[#f3f5fb] max-[520px]:text-[27px]">Sign In to your Branch</h1>
           <p className="mt-[9px] mb-0 text-xs leading-[1.55] text-[#929bad]">Sign in to securely manage your assigned branch.</p>
         </header>
 
@@ -88,7 +89,10 @@ export default function BranchLogin() {
             <span>Password</span>
             <span className={inputWrap}>
               <FaLock aria-hidden="true" />
-              <input id="branch-password" className={input} type="password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+              <input id="branch-password" className={input} type={showPassword ? 'text' : 'password'} placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+              <button type="button" className="flex shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-1 text-[#7f8aa0] hover:text-[#adb8ff] [&>svg]:w-3.5" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} title={showPassword ? 'Hide password' : 'Show password'}>
+                {showPassword ? <FaEyeSlash aria-hidden="true" /> : <FaEye aria-hidden="true" />}
+              </button>
             </span>
           </label>
           <label className="-mt-px flex cursor-pointer items-center gap-[9px] text-[10px] leading-[1.4] text-[#929bad]">
