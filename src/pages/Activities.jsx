@@ -196,6 +196,16 @@ function typeProgress(activities) {
 }
 
 
+/** Adjust (Edit): the session being moved is not "busy" time for the picker. */
+const sessionIdOf = (activity) => (/^session-\d+$/.test(String(activity?.session_id ?? '')) ? Number(String(activity.session_id).slice(8)) : null);
+/** The activity's own day + start hour, so the picker always lets the current time be kept. */
+const startSlotOf = (activity) => {
+  if (!activity?.starts_at) return null;
+  const at = new Date(activity.starts_at);
+  const two = (value) => String(value).padStart(2, '0');
+  return { date: `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}`, hour: at.getHours() };
+};
+
 /**
  * Schedule / Edit form fields, in this order:
  *   1. Activity           (picked first — it decides who is eligible)
@@ -218,12 +228,17 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
   const eligible = (applicants || []).filter((item) => !blockReason(item, form.activity_type)
     && (!lockedApplicantId || String(item.id) === String(lockedApplicantId))
     && (!editing || String(item.id) === String(form.applicant_id)));
-  // Smart scheduling (new schedules): the picker, the live check and the Sessions panel only
-  // look at the applicant's assigned Sales user and the selected activity.
-  const smartOn = !editing && hasActivity && Boolean(form.applicant_id);
+  // Smart scheduling: the picker, the live check and the Sessions panel look at the applicant's
+  // assigned Sales user and the selected activity only.
+  // Adjust (editing) keeps the picker too, so the free days/hours and the occupied ones guide the
+  // move; the live check and the Sessions panel stay for new schedules only. The activity being
+  // adjusted is passed along so its own session is not counted as busy.
+  const smartOn = hasActivity && Boolean(form.applicant_id);
+  const liveOn = smartOn && !editing;
   const hours = resolvedHours(form);
   const [pickerMonth, setPickerMonth] = useState(() => monthOfDate(form.start_date));
-  const availability = useAvailability(smartOn ? form.applicant_id : null, form.activity_type, pickerMonth, hours >= 1 ? hours * 60 : null);
+  const availability = useAvailability(smartOn ? form.applicant_id : null, form.activity_type, pickerMonth, hours >= 1 ? hours * 60 : null,
+    editing ? { activityId: editing.id, sessionId: sessionIdOf(editing) } : null);
   const applicantName = byId(form.applicant_id)?.full_name || '';
   const typeLabel = titleCase(form.activity_type || '');
   const useNext = (next) => {
@@ -279,7 +294,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         </select>
       </Field>
 
-      <Field label="Applicant" full required hint={applicantHint}>
+      <Field label="Applicant" full hint={applicantHint}>
         <select
           required
           disabled={!hasActivity || fixedPerson}
@@ -291,15 +306,20 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
           {eligible.map((applicant) => <option key={applicant.id} value={applicant.id}>{applicant.full_name}</option>)}
         </select>
       </Field>
+      {smartOn && availability.data?.handler && (
+        <small className="col-span-full -mt-[6px] text-muted text-[11.5px]">
+          Showing {availability.data.handler.full_name}&apos;s {typeLabel} sessions only (the applicant&apos;s assigned Sales user).
+        </small>
+      )}
 
       <ScheduleWindowFields
         form={form}
         setForm={setForm}
         onError={onError}
-        smart={smartOn ? { availability, month: pickerMonth, setMonth: setPickerMonth, activityLabel: typeLabel } : null}
+        smart={{ locked: !form.applicant_id, availability, month: pickerMonth, setMonth: setPickerMonth, activityLabel: typeLabel, keepSlot: startSlotOf(editing) }}
       />
 
-      {smartOn && (
+      {liveOn && (
         <LiveScheduleCheck
           form={form}
           hours={hours}
@@ -315,7 +335,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         />
       )}
 
-      {smartOn && (
+      {liveOn && (
         <SessionsPanel
           applicantId={form.applicant_id}
           applicantName={applicantName}

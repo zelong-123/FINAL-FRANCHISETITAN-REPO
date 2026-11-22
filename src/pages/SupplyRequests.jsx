@@ -13,6 +13,7 @@ import useRemote from '../lib/useRemote';
 import { formatDate, formatNumber } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../components/ApiUi';
 import BranchCombobox from '../components/BranchCombobox';
+import DatePickerField from '../components/DatePickerField';
 import { rowActionLabel } from '../lib/supplyActions';
 import { supplyStatusLabel } from '../lib/supplyStatus';
 import SupplyDrawer from '../components/supply/SupplyDrawer';
@@ -172,7 +173,7 @@ function CreateRequestModal({ onClose, onCreated }) {
         </Field>
         {urgent && <Field label="Urgency reason" full required><input required minLength={5} value={form.urgency_reason} onChange={(e) => set('urgency_reason', e.target.value)} /></Field>}
         <Field label="Target delivery date" hint={earliest ? `Earliest delivery date: ${formatDate(earliest)}${urgent ? ' (urgent/critical)' : ''}. Leave blank for the earliest.` : undefined}>
-          <input type="date" min={earliest || undefined} value={form.target_delivery_date} onChange={(e) => set('target_delivery_date', e.target.value)} />
+          <DatePickerField ariaLabel="Target delivery date" min={earliest || undefined} value={form.target_delivery_date} onChange={(next) => set('target_delivery_date', next)} className="w-full" inputClassName="w-full min-w-0!" />
           {weekend && <small className="block mt-[4px] text-[color:var(--warning-text)] text-[11.5px]">Target date is a weekend. Make sure the branch can receive.</small>}
         </Field>
         <Field label="Contact number"><input value={form.contact_number} onChange={(e) => set('contact_number', e.target.value)} /></Field>
@@ -382,8 +383,8 @@ export default function SupplyRequests() {
         <select aria-label="Urgency" className={`${TOOL}`} value={filters.urgency} onChange={(e) => setFilter('urgency', e.target.value)}>
           <option value="">All urgency</option><option value="critical">Critical</option><option value="urgent">Urgent</option><option value="normal">Normal</option>
         </select>
-        <label className="flex items-center gap-[6px] text-muted text-[11.5px]">From <input aria-label="Requested from" type="date" className={`${TOOL}`} value={filters.from} onChange={(e) => setFilter('from', e.target.value)} /></label>
-        <label className="flex items-center gap-[6px] text-muted text-[11.5px]">To <input aria-label="Requested to" type="date" className={`${TOOL}`} value={filters.to} min={filters.from || undefined} onChange={(e) => setFilter('to', e.target.value)} /></label>
+        <label className="flex items-center gap-[6px] text-muted text-[11.5px]">From <DatePickerField ariaLabel="Requested from" value={filters.from} onChange={(next) => setFilter('from', next)} inputClassName={`${TOOL} w-[150px] min-w-0!`} /></label>
+        <label className="flex items-center gap-[6px] text-muted text-[11.5px]">To <DatePickerField ariaLabel="Requested to" value={filters.to} min={filters.from || undefined} onChange={(next) => setFilter('to', next)} inputClassName={`${TOOL} w-[150px] min-w-0!`} /></label>
         <select aria-label="Sort" className={`${TOOL}`} value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}>
           {SORTS.map(([key, label]) => <option key={key} value={key}>Sort: {label}</option>)}
         </select>

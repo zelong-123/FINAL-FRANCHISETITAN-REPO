@@ -1,11 +1,17 @@
 import React, { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FaCircleInfo, FaTriangleExclamation } from 'react-icons/fa6';
+import { FaArrowTrendUp, FaBoxesStacked, FaChartLine, FaCircleInfo, FaTriangleExclamation } from 'react-icons/fa6';
+
+const CARD = 'relative isolate overflow-hidden flex flex-col gap-[2px] p-[10px_14px] [background:var(--panel)] border border-line rounded-[12px] [&_span]:text-muted [&_strong]:text-[18px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px] before:content-[""] before:absolute before:top-[-34px] before:right-[-34px] before:w-[84px] before:h-[84px] before:rounded-full before:[background:radial-gradient(circle_at_30%_30%,_color-mix(in_srgb,_var(--accent)_38%,_transparent),_color-mix(in_srgb,_var(--accent-2)_12%,_transparent)_70%)] before:-z-10 before:[transition:transform_.35s_cubic-bezier(.2,_.8,_.2,_1)] hover:before:[transform:translate(-6px,_6px)_scale(1.12)]';
+const CARD_HEAD = 'flex items-center gap-2 text-accent-text [&_svg]:text-[15px] [&_svg]:flex-none';
+const CARD_LABEL = 'text-text-secondary font-[700] text-[11.5px] tracking-[.03em] uppercase';
 import { api } from '../lib/api';
 import useRemote from '../lib/useRemote';
 import useForecastLiveRefresh from '../lib/useForecastLiveRefresh';
 import { formatNumber } from '../lib/format';
-import { EmptyState, Field, LoadingState, Notice, PageHeader } from '../components/ApiUi';
+import { EmptyState, Field, LoadingState, Notice, PageHeader, Pagination } from '../components/ApiUi';
+
+const PAGE_SIZE = 10;
 
 const NOTE = 'Estimates are based on past usage to support decisions. They are not guarantees.';
 
@@ -31,6 +37,7 @@ export default function ForecastNetwork() {
   const [horizon, setHorizon] = useState(7);
   const [dips, setDips] = useState('cap');
   const [open, setOpen] = useState([]);
+  const [page, setPage] = useState(1);
 
   const remote = useRemote(
     () => api.get('/estimated-requirement/network', {
@@ -46,6 +53,11 @@ export default function ForecastNetwork() {
   const payload = remote.data?.data;
   const products = useMemo(() => payload?.products || [], [payload]);
   const unmapped = payload?.unmapped || [];
+  const pageCount = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
+  // Filters can shrink the list, so clamp the page instead of showing an empty table.
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = useMemo(() => products.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [products, currentPage]);
+  const tableMeta = { current_page: currentPage, last_page: pageCount, per_page: PAGE_SIZE, total: products.length };
 
   const totals = useMemo(() => ({
     lowCover: products.filter((row) => row.low_cover_branches > 0).length,
@@ -58,14 +70,16 @@ export default function ForecastNetwork() {
     : [...current, id]));
 
   return (
-    <div className="page-container w-[min(100%,_1640px)] m-[0_auto] p-[clamp(22px,_3vw,_38px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">
+    <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40]">
       <PageHeader
         title="Network requirement"
         subtitle="Every branch's estimated need next to the warehouse stock that has to cover it."
       />
 
-      <p className="flex items-center gap-2 m-[0_0_14px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>
-      <p className="m-[-4px_0_14px]"><Link to="/estimated-requirement" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]">← One branch at a time</Link></p>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <p className="flex items-center gap-2 m-0 text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>
+      <p className="m-0"><Link to="/estimated-requirement" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]">← One branch at a time</Link></p>
+      </div>
 
       {remote.error && <Notice type="error">{remote.error}</Notice>}
 
@@ -83,7 +97,7 @@ export default function ForecastNetwork() {
             {HORIZONS.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
           </select>
         </Field>
-        <Field label="Dips and spikes" hint="Recorded usage is never changed.">
+        <Field label="Dips and spikes">
           <select value={dips} onChange={(event) => setDips(event.target.value)}>
             <option value="cap">Cap them (default)</option>
             <option value="raw">Include them</option>
@@ -94,11 +108,11 @@ export default function ForecastNetwork() {
       {remote.loading ? <LoadingState label="Adding up the network…" /> : (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,_minmax(180px,_1fr))] gap-3 mb-4">
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Branches counted</span><strong>{formatNumber(payload?.branch_count ?? 0)}</strong></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Warehouse items covered</span><strong>{formatNumber(products.length)}</strong></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] later:[&_strong]:text-danger-text"><span>Items with a Low cover branch</span><strong>{formatNumber(totals.lowCover)}</strong><small>under {formatNumber(payload?.settings?.low_cover_days ?? 4)} days of cover</small></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_small]:text-muted [&_small]:text-[11px] [&_strong]:text-text"><span>Method mix</span><strong>{mixText(totals.mix)}</strong><small>WMA / SES / Croston</small></article>
-            <article className="flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_span]:text-muted [&_span]:text-[11.5px] [&_span]:tracking-[.03em] [&_span]:uppercase [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px]"><span>Total estimated need</span><strong>{formatNumber(totals.need, 2)}</strong><small>Across every unit shown below — read per row, not as one sum</small></article>
+            <article className={CARD}><span className={CARD_HEAD}><FaBoxesStacked aria-hidden="true" /><strong>{formatNumber(payload?.branch_count ?? 0)}</strong></span><span className={CARD_LABEL}>Branches counted</span></article>
+            <article className={CARD}><span className={CARD_HEAD}><FaBoxesStacked aria-hidden="true" /><strong>{formatNumber(products.length)}</strong></span><span className={CARD_LABEL}>Warehouse items covered</span></article>
+            <article className={`${CARD} later:[&_strong]:text-danger-text`}><span className={CARD_HEAD}><FaTriangleExclamation aria-hidden="true" /><strong>{formatNumber(totals.lowCover)}</strong></span><span className={CARD_LABEL}>Items with a Low cover branch</span><small>under {formatNumber(payload?.settings?.low_cover_days ?? 4)} days of cover</small></article>
+            <article className={CARD}><span className={CARD_HEAD}><FaChartLine aria-hidden="true" /><strong>{mixText(totals.mix)}</strong></span><span className={CARD_LABEL}>Method mix</span><small>WMA / SES / Croston</small></article>
+            <article className={CARD}><span className={CARD_HEAD}><FaArrowTrendUp aria-hidden="true" /><strong>{formatNumber(totals.need, 2)}</strong></span><span className={CARD_LABEL}>Total estimated need</span><small>Across every unit shown below — read per row, not as one sum</small></article>
           </div>
 
           <section className="p-4 mb-4 [background:var(--panel)] border border-line rounded-[14px] [&>header]:mb-3 [&_h2]:flex [&_h2]:items-center [&_h2]:gap-2 [&_h2]:m-0 [&_h2]:text-[15px] [&_h2]:text-text [&_h2_svg]:text-[color:var(--warning-text)] [&_header_p]:m-[4px_0_0] [&_header_p]:text-muted [&_header_p]:text-[12px] [&_.table-wrap]:overflow-x-auto">
@@ -125,12 +139,12 @@ export default function ForecastNetwork() {
                     </tr>
                   </thead>
                   <tbody>
-                    {products.map((row) => (
+                    {pageRows.map((row) => (
                       <Fragment key={row.product_id}>
                         <tr className={open.includes(row.product_id) ? 'is-open' : undefined}>
                           <td>
-                            <strong>{row.name}</strong>
-                            <small>{row.sku || '—'} · {formatNumber(row.materials)} material{row.materials === 1 ? '' : 's'}</small>
+                            <strong className="text-[15px] font-[800]">{row.name}</strong>
+                            <small className="text-[12.5px] font-[600]">{row.sku || '—'} · {formatNumber(row.materials)} material{row.materials === 1 ? '' : 's'}</small>
                           </td>
                           <td>{qty(row.daily_usage, row.unit)}</td>
                           <td className="fn-right text-right">{qty(row.warehouse_stock, row.unit)}</td>
@@ -177,6 +191,7 @@ export default function ForecastNetwork() {
                     ))}
                   </tbody>
                 </table>
+                <div className="[&_nav]:min-h-[52px] [&_nav]:text-[12px] [&_nav_span]:text-[12px] [&_nav_button]:text-[12px] [&_nav_button]:min-h-[38px] [&_nav_button]:px-[14px]"><Pagination meta={tableMeta} onPage={setPage} /></div>
               </div>
             )}
           </section>

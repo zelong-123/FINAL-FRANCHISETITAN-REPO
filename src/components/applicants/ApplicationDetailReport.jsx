@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FaChevronLeft, FaChevronRight, FaFileCsv, FaFileLines, FaFilePdf, FaImage, FaLock, FaPrint, FaXmark } from 'react-icons/fa6';
+import { FaChevronLeft, FaChevronRight, FaFileCsv, FaFileLines, FaFilePdf, FaImage, FaLock, FaXmark } from 'react-icons/fa6';
 import { API_BASE_URL, authToken } from '../../lib/api';
 import { downloadCsv, downloadPdf } from '../../lib/export';
 import { formatLocation, locationPlain } from '../../lib/locations';
@@ -46,7 +46,7 @@ function Badge({ tone = 'waiting', children }) {
 /** A titled card of label/value pairs; an empty value reads "—" rather than a blank. */
 function Card({ title, children, tone }) {
   return (
-    <section className={`p-[14px_16px] border rounded-[12px] [background:#141a28] break-inside-avoid ${tone === 'warn' ? 'border-[rgba(251,_191,_36,_.4)]' : 'border-[#2a3041]'}`}>
+    <section className={`p-[14px_16px] border rounded-none [background:#141a28] break-inside-avoid ${tone === 'warn' ? 'border-[rgba(251,_191,_36,_.4)]' : 'border-[#2a3041]'}`}>
       {title && <h4 className="m-[0_0_10px] text-[13px] tracking-[.06em] uppercase text-[#9aa6c4]">{title}</h4>}
       {children}
     </section>
@@ -169,7 +169,6 @@ export default function ApplicationDetailReport({ report, onClose }) {
   const [slideDir, setSlideDir] = useState(1);
   const goTo = (next) => { setSlideDir(next < index ? -1 : 1); setIndex(next); };
   const [historyPage, setHistoryPage] = useState('');
-  const [printAll, setPrintAll] = useState(false);
 
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
@@ -179,20 +178,6 @@ export default function ApplicationDetailReport({ report, onClose }) {
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = previous; };
   }, [onClose]);
 
-  // Printing: the app is hidden (body.ap-print-report) and only this report is printed.
-  useEffect(() => {
-    if (!printAll) return undefined;
-    const done = () => { document.body.classList.remove('ap-print-report'); setPrintAll(false); };
-    window.addEventListener('afterprint', done, { once: true });
-    const timer = window.setTimeout(() => window.print(), 50);
-    return () => { window.clearTimeout(timer); window.removeEventListener('afterprint', done); };
-  }, [printAll]);
-  const printPage = () => {
-    document.body.classList.add('ap-print-report');
-    window.addEventListener('afterprint', () => document.body.classList.remove('ap-print-report'), { once: true });
-    window.print();
-  };
-  const printEverything = () => { document.body.classList.add('ap-print-report'); setPrintAll(true); };
 
   const a = data?.applicant;
   const stageIndex = a ? STAGE_ORDER.indexOf(a.status) : -1;
@@ -266,7 +251,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
           {!(data.follow_ups || []).length ? <p className="m-0 text-[14px] text-[#9aa6c4]">No follow-up logged yet.</p> : (
             <ul className="m-0 p-0 [list-style:none] grid gap-2 text-[14px]">
               {data.follow_ups.map((f) => (
-                <li key={f.id} className="p-[8px_10px] border border-[#2b344c] rounded-[9px]">
+                <li key={f.id} className="p-[8px_10px] border border-[#2b344c] rounded-none">
                   <strong className="text-[#edf0fa]">{titleCase(f.outcome.replace(/_/g, ' '))}</strong> · {titleCase(f.channel.replace(/_/g, ' '))} · {when(f.contacted_at)} · {f.by_name || '—'}
                   <div>{f.notes}</div>
                   {f.next_follow_up_at && <small className="text-[#9aa6c4]">Next follow-up: {when(f.next_follow_up_at)}</small>}
@@ -452,7 +437,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
           {!shown.length && <Card><p className="m-0 text-[14px]">Nothing recorded for this stage yet.</p></Card>}
           <ol className="m-0 p-0 [list-style:none] grid gap-2">
             {shown.map((h) => (
-              <li key={h.id} className="p-[10px_12px] border border-[#2a3041] rounded-[10px] [background:#141a28] text-[14px] leading-[1.5] break-inside-avoid">
+              <li key={h.id} className="p-[10px_12px] border border-[#2a3041] rounded-none [background:#141a28] text-[14px] leading-[1.5] break-inside-avoid">
                 <div className="flex flex-wrap justify-between gap-2">
                   <strong className="text-[#edf0fa]">{h.action}</strong>
                   <span className="text-[#9aa6c4]">{when(h.at)}</span>
@@ -525,7 +510,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
     <div className="contents print:[body.ap-print-report_&]:block!">
       <div className="fixed inset-0 z-[2147482100] flex items-center justify-center p-5 [background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)] max-[640px]:p-0 print:static print:p-0 print:[background:none]" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
         <div role="dialog" aria-modal="true" aria-label="Application Detail" className="flex flex-col w-[min(980px,_100%)] h-[min(820px,_calc(100dvh_-_40px))] overflow-hidden border border-[#2a3550] rounded-[12px] [background:#0f1626] text-[#e7e9f2] text-[14px] max-[640px]:max-h-[100dvh] max-[640px]:h-[100dvh] max-[640px]:rounded-none print:max-h-none print:overflow-visible print:border-0 print:[background:none] print:**:text-black! print:**:[background:none]! print:**:border-[#bbb]!">
-          <header className="flex flex-none items-start justify-between gap-4 p-[16px_20px] border-b border-b-[#1f2842] print:hidden">
+          <header className="flex flex-none items-start justify-between gap-4 p-[16px_20px] border-b border-b-[#1f2842] [background:#070A13] print:hidden">
             <div className="min-w-0">
               <span className="block text-[#8f9bbd] text-[12px] font-[700] tracking-[.12em] uppercase">Application Detail{a ? ` · Current stage: ${a.status_label}` : ''}</span>
               <h2 className="m-[2px_0_0] text-[19px] text-[#f1f3fb]">{a ? `${a.full_name}${a.applicant_code ? ` · ${a.applicant_code}` : ''}` : 'Loading…'}</h2>
@@ -557,18 +542,12 @@ export default function ApplicationDetailReport({ report, onClose }) {
             <div key={index} className={slideDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}>
             {report?.loading && <p className="text-[15px]">Loading the Application Detail…</p>}
             {report?.error && <p className="text-[15px] text-[#ff9ca3]" role="alert">{report.error}</p>}
-            {data && !printAll && (
+            {data && (
               <>
                 {renderPrintHeader(page.label)}
                 {renderPage(page)}
               </>
             )}
-            {data && printAll && PAGES.map((item, i) => (
-              <div key={item.key} className={i > 0 ? 'print:[break-before:page] mt-6' : ''}>
-                {renderPrintHeader(item.label)}
-                {renderPage(item)}
-              </div>
-            ))}
             </div>
           </div>
           {data && (
@@ -579,8 +558,6 @@ export default function ApplicationDetailReport({ report, onClose }) {
                 <button type="button" disabled={index === PAGES.length - 1} onClick={() => goTo(index + 1)} className="footer-action-btn">Next <FaChevronRight aria-hidden="true" /></button>
               </span>
               <span className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={printPage} className="footer-action-btn"><FaPrint aria-hidden="true" /> Print this page</button>
-                <button type="button" onClick={printEverything} className="footer-action-btn">Print all pages</button>
                 <button type="button" onClick={() => exportReport('csv')} className="footer-action-btn"><FaFileCsv aria-hidden="true" /> CSV</button>
                 <button type="button" onClick={() => exportReport('pdf')} className="footer-action-btn"><FaFilePdf aria-hidden="true" /> PDF</button>
               </span>

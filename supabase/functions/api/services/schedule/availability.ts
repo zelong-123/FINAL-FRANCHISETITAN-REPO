@@ -79,7 +79,8 @@ export async function availability(db: Db, applicant: Row, type: string, month: 
 
   const days = weekdaysOf(month).map((day) => {
     const slots = slotsOf(day, type, handlerId, duration, sessions, ignore, now);
-    const mine = own.filter((s) => localDay(new Date(s.start_at)) === day).map((s) => ({
+    // The session being adjusted is ignored everywhere, including its dot: its own day stays free.
+    const mine = own.filter((s) => !ignore.includes(Number(s.id)) && localDay(new Date(s.start_at)) === day).map((s) => ({
       id: s.id, start_at: iso8601(s.start_at), end_at: iso8601(s.end_at), status: s.status, time: formatRange(new Date(s.start_at), new Date(s.end_at)),
       occupancy: occupancyLabel(Number(s.taken), capacityOf(s)),
     }));

@@ -53,6 +53,7 @@
   @keyframes qual-slide-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes cal-slide-from-right { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes cal-slide-from-left { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes inv-table-slide { from { opacity: 0; transform: translateY(-14px); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: translateY(0); clip-path: inset(0 0 0 0); } }
   @keyframes action-search-scan { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(2px, -2px); } 75% { transform: translate(-2px, 2px); } }
   @keyframes action-lift { 50% { transform: translateY(-2px); } }
   @keyframes action-tilt { 50% { transform: rotate(-8deg); } }
@@ -174,6 +175,8 @@
   *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
   @media print { body.ap-print-report #root { display: none !important; } }
 }
+
+.inv-table-slide { animation: inv-table-slide .42s cubic-bezier(.2, .8, .2, 1) both; }
 
 /* Class names built at runtime (status-${x}, classList.add). */
 @layer utilities {

@@ -16,6 +16,7 @@ import { downloadCsv, downloadPdf } from '../lib/export';
 import LocationPicker from '../components/LocationPicker';
 import { locationInput, locationPlain } from '../lib/locations';
 import LocationValue from '../components/LocationValue';
+import DatePickerField from '../components/DatePickerField';
 
 const initialForm = {
   first_name: '',
@@ -1027,8 +1028,8 @@ export default function Inquiries() {
       <Notice type="success">{success}</Notice>
       <Notice type="error">{actionError || remote.error}</Notice>
       <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_label]:text-[12px] [&_label]:font-[700] [&_input]:h-[40px] [&_input]:p-[0_10px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_input]:text-text" aria-label="Inquiry date range">
-        <label className="relative"><input type="date" aria-label="From (inquiry date)" className={`min-w-[175px] ${!dateFrom ? 'text-transparent!' : ''}`} value={dateFrom} max={dateTo || undefined} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} />{!dateFrom && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">From mm/dd/yyyy</span>}</label>
-        <label className="relative"><input type="date" aria-label="To" className={`min-w-[175px] ${!dateTo ? 'text-transparent!' : ''}`} value={dateTo} min={dateFrom || undefined} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} />{!dateTo && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">To mm/dd/yyyy</span>}</label>
+        <DatePickerField aria-label="From (inquiry date)" placeholder="From mm/dd/yyyy" value={dateFrom} max={dateTo} onChange={(next) => { setPage(1); setDateFrom(next); }} />
+        <DatePickerField aria-label="To (inquiry date)" placeholder="To mm/dd/yyyy" value={dateTo} min={dateFrom} onChange={(next) => { setPage(1); setDateTo(next); }} />
         {(dateFrom || dateTo) && (
           <button type="button" className={filterBtn} onClick={() => { setPage(1); setDateFrom(''); setDateTo(''); }}>Clear dates</button>
         )}
