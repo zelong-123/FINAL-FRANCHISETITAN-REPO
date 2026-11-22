@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FaChevronDown, FaFileCsv, FaPlus, FaTrashCan } from 'react-icons/fa6';
+import { FaBoxesStacked, FaChevronDown, FaCircleExclamation, FaCubesStacked, FaFileCsv, FaPlus, FaTrashCan, FaTriangleExclamation } from 'react-icons/fa6';
 import { api, downloadFile, firstValidationMessage } from '../lib/api';
 import { can } from '../lib/roleAccess';
 import useRemote from '../lib/useRemote';
@@ -88,6 +88,13 @@ function WarehouseInventory({ role }) {
     return response.data;
   }, [page, brandId, status, query, range, sort]);
 
+  // The table slides in only once the new data has arrived; while loading it keeps the old rows, dimmed.
+  const requestKey = `${status}|${sort}|${page}|${query}|${range}`;
+  const [shownKey, setShownKey] = useState(requestKey);
+  useEffect(() => {
+    if (!remote.loading) setShownKey(requestKey);
+  }, [remote.loading, requestKey]);
+
   // Customize Columns closes on a click outside it; the choice is remembered in this browser.
   useEffect(() => {
     if (!columnsOpen) return undefined;
@@ -138,10 +145,10 @@ function WarehouseInventory({ role }) {
 
   // The stats always describe the whole selected brand, whatever the filters show.
   const tiles = useMemo(() => (([
-    ['Total items:', summary?.total_items, 'Product lines in this brand'],
-    ['Total units', summary?.total_units, 'Units on hand'],
-    ['Low stocks', summary?.low, 'At or below reorder level'],
-    ['Critical', summary?.critical, 'At or below critical level'],
+    ['Total units', summary?.total_units, 'Units on hand', FaCubesStacked, 'var(--success)'],
+    ['Total items:', summary?.total_items, 'Product lines in this brand', FaBoxesStacked, 'var(--accent)', 'all'],
+    ['Low stocks', summary?.low, 'At or below reorder level', FaTriangleExclamation, 'var(--warning)', 'low'],
+    ['Critical', summary?.critical, 'At or below critical level', FaCircleExclamation, 'var(--danger)', 'critical'],
   ])), [summary]);
 
   const changeBrand = (value) => {
@@ -200,16 +207,35 @@ function WarehouseInventory({ role }) {
     <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] inventory-page [&_.filter-chips]:flex [&_.filter-chips]:flex-wrap [&_.filter-chips]:gap-2 [&_td_small]:block [&_td_small]:mt-[2px] [&_td_small]:text-muted later-2:[&_td_small]:text-[9px]">
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <section className="flex flex-wrap gap-[10px]" aria-label="Warehouse summary">
-          {tiles.map(([label, value, caption]) => (
-            <article
-              key={label}
-              title={caption}
-              className="inline-flex items-center justify-between gap-[18px] min-w-[148px] min-h-[42px] p-[0_14px] border-2 border-line-strong rounded-[6px] [background:#070A12]"
-            >
-              <span className="text-[color:color-mix(in_srgb,_var(--accent)_45%,_var(--text-secondary))] text-[12px] font-[650] tracking-[.05em] uppercase whitespace-nowrap">{label}</span>
-              <strong className="text-text text-[18px] font-[800] tabular-nums">{formatNumber(value ?? 0)}</strong>
-            </article>
-          ))}
+          {tiles.map(([label, value, caption, Icon, tone, filterValue]) => {
+            const body = (
+              <>
+                <span aria-hidden="true" className="relative z-1 flex-none grid place-items-center w-[34px] h-[34px] rounded-[10px] text-[15px] [color:var(--tile-tone)]"><Icon /></span>
+                <div className="relative z-1 flex flex-col min-w-0 text-left">
+                  <span className="text-text-secondary text-[12px] font-[600] whitespace-nowrap">{label}</span>
+                  <strong className="text-text text-[20px] font-[800] leading-[1.1] tabular-nums">{formatNumber(value ?? 0)}</strong>
+                </div>
+              </>
+            );
+            const cardClass = 'relative isolate overflow-hidden flex items-center gap-3 min-w-[180px] p-[9px_14px] border border-line rounded-[10px] [background:var(--panel)] after:content-[""] after:absolute after:-top-[34px] after:-right-[34px] after:w-[84px] after:h-[84px] after:rounded-full after:[background:radial-gradient(circle_at_30%_30%,_color-mix(in_srgb,_var(--tile-tone)_10%,_transparent),_color-mix(in_srgb,_var(--tile-tone)_3%,_transparent)_70%)] after:-z-10 after:[transition:transform_.35s_cubic-bezier(.2,_.8,_.2,_1)] hover:after:[transform:translate(-6px,_6px)_scale(1.12)]';
+            if (!filterValue) {
+              return <article key={label} title={caption} className={cardClass} style={{ '--tile-tone': tone }}>{body}</article>;
+            }
+            const active = filterValue === 'all' ? !status : status === filterValue;
+            return (
+              <button
+                key={label}
+                type="button"
+                title={`${caption} — click to ${active ? 'clear the filter' : `show ${titleCase(filterValue)} items`}`}
+                aria-pressed={active}
+                onClick={() => { setStatus(active || filterValue === 'all' ? '' : filterValue); setPage(1); }}
+                className={`${cardClass} cursor-pointer [transition:border-color_.16s_ease,_box-shadow_.16s_ease] hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-accent [box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_18%,_transparent)]' : ''}`}
+                style={{ '--tile-tone': tone }}
+              >
+                {body}
+              </button>
+            );
+          })}
         </section>
         <div className="flex flex-wrap items-center gap-3 ml-auto">
           {canImportExport && (
@@ -282,7 +308,7 @@ function WarehouseInventory({ role }) {
         </select>
       </div>
 
-      <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
+      <section key={shownKey} className={`${remote.loading ? 'opacity-45 [transition:opacity_.18s_ease]' : 'inv-table-slide'} data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]`}>
         {remote.loading && !remote.data ? <LoadingState /> : !items.length ? (
           <EmptyState
             label={filtered ? 'No products match the current filters.' : `No products under ${brand?.name || 'this brand'}.`}
@@ -1017,7 +1043,7 @@ function BranchInventory({ role }) {
       <Notice type="error">{actionError || remote.error}</Notice>
       <div className="toolbar flex items-center flex-wrap gap-[9px] mb-[14px] p-[10px] border border-line rounded-[15px] [background:color-mix(in_srgb,_var(--panel)_92%,_transparent)] [box-shadow:var(--shadow-sm)] [&_input]:flex-[1_1_270px] [&_select]:flex-[0_1_210px] [&_input]:min-h-[40px] [&_input]:p-[9px_11px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[11px] [&_input]:[outline:none] [&_input]:text-text [&_input]:[background:var(--input-bg)] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_select]:min-h-[40px] [&_select]:p-[9px_11px] [&_select]:border [&_select]:border-input-line [&_select]:rounded-[11px] [&_select]:[outline:none] [&_select]:text-text [&_select]:[background:var(--input-bg)] [&_select]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_input::placeholder]:text-placeholder [&_input:hover]:border-line-strong [&_select:hover]:border-line-strong later:[&_input:focus]:border-accent [&_input:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_input:focus]:[background:var(--input-focus-bg)] later:[&_select:focus]:border-accent [&_select:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_select:focus]:[background:var(--input-focus-bg)] max-[681px]:later:items-stretch max-[681px]:flex-col max-[681px]:[&_input]:w-full max-[681px]:later:[&_input]:flex-[auto] max-[681px]:[&_select]:w-full max-[681px]:later:[&_select]:flex-[auto]"><select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} aria-label="Filter stock level"><option value="">All stock levels</option>{['normal', 'low', 'critical'].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</select></div>
       <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-        {remote.loading ? <LoadingState /> : !remote.data?.data.length ? (
+        {remote.loading && !remote.data ? <LoadingState /> : !remote.data?.data.length ? (
           <EmptyState label="No inventory records match this filter." detail="Choose another stock level or verify inventory has been initialized." />
         ) : (
           <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer"><table><thead><tr><th>Product</th><th>Location</th><th>Stock</th><th>Reorder</th><th>Critical</th><th>Status</th><th>Action</th></tr></thead><tbody>

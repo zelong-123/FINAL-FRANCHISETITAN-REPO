@@ -171,9 +171,16 @@ sessionRoutes.get('/schedule-sessions/availability', gate, async (c) => {
   const v = await validate(db, c.req.query(), {
     ...pickerRules, month: ['required', /^\d{4}-(0[1-9]|1[0-2])$/], duration_minutes: ['nullable', 'integer', 'min:60', 'max:600'],
     ignore_session_id: ['nullable', 'integer'],
+    // Adjust (Edit) ignores the session the activity already sits in, so its own day/hour is not shown as busy.
+    ignore_activity_id: ['nullable', 'integer', 'min:1'],
   });
   const [applicant] = await db.query(`select * from applicants where id = $1`, [v.applicant_id]);
-  return ok(c, await availability(db, applicant, v.activity_type, v.month, v.duration_minutes ? Number(v.duration_minutes) : null, v.ignore_session_id ? Number(v.ignore_session_id) : null));
+  let ignoreSessionId = v.ignore_session_id ? Number(v.ignore_session_id) : null;
+  if (!ignoreSessionId && v.ignore_activity_id) {
+    const [seat] = await db.query(`select session_id from schedule_session_participants where activity_schedule_id = $1 limit 1`, [Number(v.ignore_activity_id)]);
+    ignoreSessionId = seat?.session_id ? Number(seat.session_id) : null;
+  }
+  return ok(c, await availability(db, applicant, v.activity_type, v.month, v.duration_minutes ? Number(v.duration_minutes) : null, ignoreSessionId));
 });
 
 /** Sessions panel: upcoming sessions of the activity by the applicant's Sales user, each joinable or with its reason. */

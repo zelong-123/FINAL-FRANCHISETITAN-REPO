@@ -10,6 +10,7 @@ import RequirementFileDrop from '../components/RequirementFileDrop';
 import LocationPicker from '../components/LocationPicker';
 import { differentFromPreferred, formatLocation, locationInput, locationPlain, suggestBranchName } from '../lib/locations';
 import LocationValue from '../components/LocationValue';
+import DatePickerField from '../components/DatePickerField';
 import {
   API_BASE_URL, api, authToken, firstValidationMessage,
 } from '../lib/api';
@@ -1827,9 +1828,10 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
     .then(() => setOpened((set) => new Set(set).add(doc.id)))
     .catch((error) => onError(error.message));
   const fileButton = (doc) => (
-    <button key={doc.id} type="button" disabled={busy} onClick={() => open(doc)} title={doc.original_name} className="inline-flex items-center gap-[8px] min-h-[36px] max-w-[340px] p-[0_12px] border-0 rounded-[8px] [background:#1c2338] hover:[background:#252d45] text-[#e8ebf3] text-[13px] cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2">
-      <FaFile aria-hidden="true" className="shrink-0 text-[#98a2b8]" />
+    <button key={doc.id} type="button" disabled={busy} onClick={() => open(doc)} title={doc.original_name} className="inline-flex items-center gap-[8px] w-full min-h-[36px] p-[7px_10px] border border-[#222F47] rounded-[8px] [background:#0B1220] hover:[background:#162136] hover:border-[#33466B] text-[#E8EDF6] text-[13px] cursor-pointer [transition:background-color_.15s_ease,_border-color_.15s_ease] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[#6AA4F8] focus-visible:outline-offset-2 motion-reduce:transition-none">
+      <FaFile aria-hidden="true" className="shrink-0 text-[#8E9BB3]" />
       <span className="min-w-0 truncate">{doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}</span>
+      <span className="ml-auto shrink-0 text-[#6AA4F8] text-[12px] font-[600]">Preview</span>
       {newFlow && isAdminRole && !doc.replaced_at && (viewed(doc)
         ? <span className="shrink-0 text-[#7fd8a8] text-[11px] font-[600]"><FaCheck aria-hidden="true" /> Viewed</span>
         : <span className="shrink-0 text-[#f2b866] text-[11px] font-[600]">Not viewed</span>)}
@@ -1840,8 +1842,8 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
     if (!list.length) return null;
     return (
       <div className="grid gap-[8px]">
-        <span className="text-[#98a2b8] text-[13px]">{label} · {list.length}</span>
-        <span className="flex flex-wrap gap-[8px]">{list.map(fileButton)}</span>
+        <span className="text-[#8E9BB3] text-[12px]">{label}</span>
+        <span className="grid gap-[8px] grid-cols-[repeat(2,_minmax(0,_1fr))] max-[560px]:grid-cols-[1fr]">{list.map(fileButton)}</span>
       </div>
     );
   };
@@ -1870,8 +1872,9 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
       )}
       {activity.status !== 'no_show' && (newFlow ? (
         <div className="grid gap-[16px] pt-[20px] border-t border-t-[#252c42]">
-          {proofGroup('Attendance proof', 'attendance_proof')}
-          {proofGroup('Brand selection document', 'brand_selection')}
+          <span className="text-[#8E9BB3] text-[12px]">Submitted by sales · review files then verify</span>
+          {proofGroup('Attendance sheet log', 'attendance_proof')}
+          {proofGroup('Brand selected form', 'brand_selection')}
         </div>
       ) : proofs.length ? (
         <div className="grid gap-[16px] pt-[20px] border-t border-t-[#252c42]">{proofGroup('Attendance proof', null)}</div>
@@ -1914,8 +1917,42 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
   );
 }
 
+/* Schedule Activity: status colors, shared button styles and the status pill. */
+const SCHEDULE_TONE = {
+  not_scheduled: { color: '#8591A8', label: 'Not scheduled' },
+  pending_admin: { color: '#E6B94D', label: 'Pending admin confirmation' },
+  scheduled: { color: '#E6B94D', label: 'Scheduled' },
+  completed: { color: '#6AA4F8', label: 'Completed' },
+  attended: { color: '#3FC79A', label: 'Completed' },
+};
+const SCHEDULE_GHOST = 'inline-flex items-center justify-center min-h-[36px] whitespace-nowrap p-[7px_14px] border border-[#222F47] rounded-[8px] [background:transparent] text-[#E8EDF6] text-[13px] font-[600] cursor-pointer [transition:background-color_.15s_ease,_border-color_.15s_ease] hover:[background:#162136] hover:border-[#33466B] focus-visible:outline-2 focus-visible:outline-[#6AA4F8] focus-visible:outline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed motion-reduce:transition-none';
+const SCHEDULE_PRIMARY = 'inline-flex items-center justify-center min-h-[36px] whitespace-nowrap p-[7px_14px] border border-transparent rounded-[8px] [background:#5B7CFA] text-[#fff] text-[13px] font-[600] cursor-pointer [transition:background-color_.15s_ease] hover:[background:#6C8BFF] focus-visible:outline-2 focus-visible:outline-[#6AA4F8] focus-visible:outline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed motion-reduce:transition-none';
+
+function SchedulePill({ color, children }) {
+  return (
+    <span
+      className="inline-flex items-center gap-[6px] whitespace-nowrap p-[3px_10px] rounded-[999px] text-[12px] font-[600]"
+      style={{ color, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, background: `color-mix(in srgb, ${color} 14%, transparent)` }}
+    >
+      <span aria-hidden="true" className="inline-block w-[6px] h-[6px] rounded-full shrink-0" style={{ background: color }} />
+      {children}
+    </span>
+  );
+}
+
+/* ---------------- Schedule Activity section (Phase 3) ----------------
+ * Two activity cards, one per tracked activity. Status is read-only here.
+ *
+ * Sales: no completion or upload controls. Completing an activity and attaching
+ * its two files happens in Session details; Sales only schedules each activity
+ * (Training unlocks after Orientation/Tasting is Completed).
+ *
+ * Admin: the submitted files are reviewed here and "Verify" only writes the
+ * modal DRAFT — Save Applicant is what records it, so closing records nothing.
+ * Older completions saved without a submission keep this draft tick too.
+ */
 function ScheduleSection({
-  editing, draft, isAdminRole, sectionRef, onPickChecked, onOpenCalendar, onView,
+  editing, draft, isAdminRole, sectionRef, onPickChecked, onOpenCalendar, onView, onScheduleActivity = null,
   busy = false, onAttended = null, onReturn = null, onError = () => {}, currentUserId = null,
 }) {
   const infoOf = (type) => editing?.activity_state?.[type] || {};
@@ -1926,83 +1963,147 @@ function ScheduleSection({
       && session.status !== 'cancelled'
       && !['removed', 'cancelled'].includes(session.attendance_status))
     .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
-  const doneCount = TRACKED_ACTIVITIES.filter((tracked) => infoOf(tracked.type).done).length;
+  const total = TRACKED_ACTIVITIES.length;
+  const verifiedCount = TRACKED_ACTIVITIES.filter((tracked) => {
+    const info = infoOf(tracked.type);
+    return Boolean(info.attended) || info.state === 'attended';
+  }).length;
+  const completedCount = TRACKED_ACTIVITIES.filter((tracked) => {
+    const info = infoOf(tracked.type);
+    return Boolean(info.attended) || info.state === 'completed' || info.state === 'attended';
+  }).length;
+  const progressDone = isAdminRole ? verifiedCount : completedCount;
+  const progressPercent = Math.round((progressDone / total) * 100);
+  const orientationCompleted = Boolean(infoOf('orientation').attended)
+    || ['completed', 'attended'].includes(infoOf('orientation').state);
 
   return (
-    <section className="ap-section [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] m-[0_0_17px] later:p-[17px] border border-[#2a3041] rounded-[13px] [background:#0C111D] [&_h3]:m-0 [&_h3]:text-[#edf0fa] later-2:[&_h3]:text-[13px] [&_h3]:font-[750] max-[721px]:later-2:p-[13px] [#update-applicant-form_&_h3]:text-[12px] later:[#update-applicant-form_&]:p-3 later:[#update-applicant-form_&]:mb-[10px] max-[721px]:later-2:[#update-applicant-form_&]:p-[11px] later:[#update-applicant-form_&]:border-[#273044] later:[#update-applicant-form_&]:rounded-[9px] later:[#update-applicant-form_&]:[background:#0C111D] [#update-applicant-form_&]:[box-shadow:none] ap-schedule-section [&.is-locked]:opacity-[.92] [&.is-locked_h3]:inline-flex [&.is-locked_h3]:items-center [&.is-locked_h3]:gap-2" ref={sectionRef}>
-      <div className="[&_h3]:m-0 [&_h3]:text-[0.78rem] [&_h3]:tracking-[0.09em] [&_h3]:uppercase flex later:items-center justify-between gap-3 later:[&_small]:text-[#9ba5bd] later:[&_small]:text-[11px] [&_small]:font-[500] [&_small]:whitespace-nowrap later:mb-[15px] [#update-applicant-form_&]:mb-[11px] pb-[10px] border-b border-[#2a3041]">
+    <section className="ap-section ap-schedule-section m-[0_0_17px] p-[18px] max-[721px]:p-[14px] border border-[#222F47] rounded-[8px] [background:#0C111D] [.ap-section+&]:[border-top:1px_solid_var(--ap-border)] [&_h3]:m-0 [&_h3]:text-[15px] [&_h3]:font-[600] [&_h3]:normal-case [&_h3]:tracking-normal [&_h3]:text-[#E8EDF6]" ref={sectionRef}>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-[10px]">
         <h3>Schedule activity</h3>
-        <small>{doneCount} of {TRACKED_ACTIVITIES.length} done</small>
+        <small className="text-[#8E9BB3] text-[12px] font-[500] whitespace-nowrap">
+          {isAdminRole ? `${verifiedCount} of ${total} verified` : `${completedCount} of ${total} done`}
+        </small>
       </div>
-      <ul className="m-0 p-0 list-none grid gap-[16px]">
+      <div
+        className="h-[4px] w-full rounded-full [background:#16213A] overflow-hidden mb-[16px]"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progressPercent}
+        aria-label={isAdminRole ? 'Verified activities' : 'Completed activities'}
+      >
+        <div className="h-full rounded-full [background:#3FC79A] [transition:width_.3s_ease] motion-reduce:transition-none" style={{ width: `${progressPercent}%` }} />
+      </div>
+      <ul className="m-0 p-0 list-none grid gap-[12px]">
         {TRACKED_ACTIVITIES.map((tracked) => {
           const info = infoOf(tracked.type);
           const state = info.state || 'not_scheduled';
           const checked = Boolean(draft.milestones[tracked.key]);
-          const saved = Boolean(info.attended) || state === 'attended';
+          const verified = Boolean(info.attended) || state === 'attended';
           const latest = latestActivityOf(editing, tracked.type);
-          // New completions are decided with the proof in view (Mark Attended / Return); the
-          // checkbox stays only for older completions recorded without proof.
+          const session = sessionOf(tracked.type);
+          // New completions are decided with the proof in view; the draft tick
+          // stays only for older completions recorded without a submission.
           const legacyCompletion = !latest?.completion_submitted_at;
-          const canMark = !saved && state === 'completed' && legacyCompletion;
-          const overdue = Boolean(info.overdue) && !saved;
-          const hasLinks = state !== 'not_scheduled' && Boolean(onOpenCalendar || onView);
+          const canMark = !verified && state === 'completed' && legacyCompletion;
+          const overdue = Boolean(info.overdue) && !verified;
+          const tone = verified ? SCHEDULE_TONE.attended : (SCHEDULE_TONE[state] || SCHEDULE_TONE.not_scheduled);
+          const hasSession = state !== 'not_scheduled';
+          // Training waits for Orientation/Tasting: the button is hidden, not disabled.
+          const gated = tracked.type === 'training' && !isAdminRole && !orientationCompleted;
+          const showPrimary = !isAdminRole && state === 'not_scheduled' && Boolean(onScheduleActivity) && !gated;
+          const [datePart, timePart] = latest?.starts_at ? splitManila(latest.starts_at) : ['', ''];
+          const metaText = hasSession && latest?.starts_at
+            ? [datePart, timePart, latest.venue].filter(Boolean).join(' · ')
+            : gated
+              ? 'Available after Orientation/Tasting is completed'
+              : 'No date set yet';
+          let note = '';
+          if (!isAdminRole && (state === 'scheduled' || state === 'pending_admin')) {
+            note = 'Completion and file uploads are handled in Session details.';
+          } else if (!isAdminRole && state === 'completed') {
+            note = verified ? 'Verified by admin.' : 'Submitted. Waiting for admin verification.';
+          } else if (isAdminRole && (state === 'scheduled' || state === 'pending_admin')) {
+            note = 'Waiting for sales to submit attendance sheet and brand form.';
+          }
           return (
-            <li key={tracked.type} className="ap-activity-row grid gap-[20px] p-[20px_24px] rounded-[12px] [background:#161c2e]" data-activity-type={tracked.type}>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="flex flex-wrap items-center gap-x-[10px] gap-y-[4px] min-w-0">
-                {saved && <span aria-hidden="true" className="inline-grid place-items-center shrink-0 w-[28px] h-[28px] rounded-full [background:#1b3a30] text-[#7fd8a8]"><FaCheck className="text-[12px]" /></span>}
-                <strong className="text-[#e8ebf3] text-[18px] font-[700]">{tracked.label}</strong>
-                {saved && <span className="text-[#7fd8a8] text-[14px] font-[600]">Attended</span>}
-                {!saved && <span className={`text-[14px] font-[600] ${overdue ? 'text-[#f2b866]' : 'text-[#98a2b8]'}`}>{overdue ? 'Overdue' : (STATE_LABELS[state] || state)}</span>}
-                {saved && <span className="text-[#98a2b8] text-[13px]">· {tracked.type === 'orientation' && latest?.proof_documents?.some((doc) => doc.type === 'brand_selection') ? 'Verified' : 'Accepted'}</span>}
-              </span>
-              {hasLinks && (
-                <span className="ap-activity-links inline-flex gap-[8px] flex-wrap">
-                  {onOpenCalendar && sessionOf(tracked.type) && (
-                    <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onOpenCalendar(sessionOf(tracked.type))}>
-                      Open in calendar
-                    </button>
-                  )}
-                  {onView && (
-                    <button type="button" className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px] small [&.ghost-button]:min-h-[32px] [&.ghost-button]:p-[0_10px] [&.ghost-button]:text-[12px]" onClick={() => onView(tracked.type)}>
-                      View
-                    </button>
-                  )}
-                </span>
-              )}
+            <li
+              key={tracked.type}
+              className="ap-activity-row grid gap-[14px] p-[16px_18px] rounded-[12px] [background:#111A2B] border border-[#222F47] [transition:border-color_.25s_ease] motion-reduce:transition-none"
+              style={{ borderLeft: `3px solid ${tone.color}` }}
+              data-activity-type={tracked.type}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-[10px_16px]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-[10px]">
+                    <strong className="text-[#E8EDF6] text-[16px] font-[600]">{tracked.label}</strong>
+                    <SchedulePill color={tone.color}>{tone.label}</SchedulePill>
+                    {verified && (
+                      <span className="inline-flex items-center gap-[5px] whitespace-nowrap p-[3px_10px] rounded-[999px] border border-[rgba(63,_199,_154,_.3)] [background:rgba(63,_199,_154,_.14)] text-[#3FC79A] text-[12px] font-[600]">
+                        <FaCheck aria-hidden="true" className="text-[10px]" /> Verified
+                      </span>
+                    )}
+                    {overdue && <span className="text-[#E6B94D] text-[12px] font-[600]">Overdue</span>}
+                  </div>
+                  <p className="m-[6px_0_0] text-[#8E9BB3] text-[13px]">{metaText}</p>
+                </div>
+                {(hasSession || showPrimary) && (
+                  <div className="ap-activity-links flex flex-wrap items-center gap-[8px]">
+                    {hasSession && onOpenCalendar && session && (
+                      <button type="button" className={SCHEDULE_GHOST} disabled={busy} onClick={() => onOpenCalendar(session)}>
+                        Open session details
+                      </button>
+                    )}
+                    {hasSession && onView && (
+                      <button type="button" className={SCHEDULE_GHOST} disabled={busy} onClick={() => onView(tracked.type)}>
+                        View in schedule
+                      </button>
+                    )}
+                    {showPrimary && (
+                      <button type="button" className={SCHEDULE_PRIMARY} disabled={busy} onClick={() => onScheduleActivity(tracked.type)}>
+                        Schedule activity
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              {isAdminRole && legacyCompletion && (
-                <button
-                  type="button"
-                  role="checkbox"
-                  aria-checked={checked}
-                  aria-disabled={!canMark}
-                  className={`ap-check${hasLinks ? '' : ' ml-auto'} shrink-0 [border:1px_solid_var(--ap-border-2)] flex items-center later:gap-[10px] min-w-0 later:p-[11px_12px] later:border later:border-[#303749] later:rounded-[11px] later:[background:#191f2e] later:text-[#d4daea] text-left later:[font-family:inherit] later:[font-weight:inherit] [font-style:inherit] later:leading-[1.4] cursor-pointer later:[transition:background_.16s_ease,_border-color_.16s_ease] later-2:hover:border-[#6258c9] later:hover:[background:#1d2335] later-3:[&.checked]:border-[rgba(37,_199,_122,_.45)] later-2:[&.checked]:[background:rgba(37,_199,_122,_.07)] [#update-applicant-form_&]:gap-2 [#update-applicant-form_&]:p-[9px_10px] [#update-applicant-form_&]:text-[11px] [#update-applicant-form_&:hover]:[background:#202a40] [&.read-only]:cursor-default [&.read-only:hover]:[background:transparent] [&.read-only:hover]:border-[rgba(226,_232,_255,_.085)] later:[#update-applicant-form_&]:border-[#252e40] later:[#update-applicant-form_&]:rounded-[7px] later:[#update-applicant-form_&]:[background:#141b29] later-2:text-[12px] disabled:cursor-not-allowed disabled:opacity-[.55] [&.is-locked]:cursor-not-allowed later:[&.is-locked]:opacity-[.8] ${checked ? ' checked [&.checklist-item]:border-[color:color-mix(in_srgb,_var(--success)_32%,_transparent)] [&.checklist-item]:[background:color-mix(in_srgb,_var(--success)_7%,_transparent)] [&.checklist-item_.checklist-box]:[background:var(--success)] [&.checklist-item_.checklist-box]:border-success [&.checklist-item_.checklist-box]:text-[#04120c] [&.checklist-item_.checklist-copy_strong]:text-text' : ''}${saved ? ' is-locked' : ''}`}
-                  disabled={!canMark}
-                  title={saved
-                    ? 'Attended is saved and locked.'
-                    : canMark
-                      ? 'Mark Attended, then Save Changes to record it.'
-                      : 'Sales must mark this activity Complete first.'}
-                  onClick={() => onPickChecked(tracked, info)}
-                >
-                  <span className="place-items-center [border:1px_solid_var(--ap-border-2)] [&_svg]:m-0 later:inline-flex later:flex-[0_0_17px] later:w-[17px] later:h-[17px] items-center justify-center later:border later:border-[#4a5268] rounded-[5px] later:text-[#071a12] later:[background:#0d1220] later:text-[10px] later:[.ap-check.checked_&]:border-[#25c77a] later:[.ap-check.checked_&]:[background:#25c77a]" aria-hidden="true">{checked && <FaCheck />}</span>
-                  Attended
-                </button>
+              {note && (
+                <div className="pt-[12px] border-t border-t-[#222F47]">
+                  <p className="m-0 text-[#8E9BB3] text-[13px] leading-[1.5]">{note}</p>
+                </div>
               )}
-              {onAttended && (
+              {isAdminRole && latest && (
                 <ActivitySubmission key={`${latest?.id}-${latest?.completion_submitted_at}`} activity={latest} isAdminRole={isAdminRole} busy={busy} onAttended={onAttended} onReturn={onReturn} onError={onError} currentUserId={currentUserId} inquiryBrandName={editing?.inquiry_brand_name} />
+              )}
+              {isAdminRole && !verified && state === 'completed' && legacyCompletion && (
+                <div className="flex flex-wrap items-center justify-between gap-[10px] pt-[12px] border-t border-t-[#222F47]">
+                  <span className="text-[#8E9BB3] text-[12px]">Verify after checking both files.</span>
+                  <button
+                    type="button"
+                    aria-pressed={checked}
+                    className={`inline-flex items-center gap-[8px] min-h-[36px] p-[7px_14px] border rounded-[8px] text-[13px] font-[600] cursor-pointer [transition:background-color_.15s_ease,_border-color_.15s_ease,_color_.15s_ease] focus-visible:outline-2 focus-visible:outline-[#6AA4F8] focus-visible:outline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed motion-reduce:transition-none ${checked ? 'border-[#3FC79A] text-[#3FC79A] [background:rgba(63,_199,_154,_.1)]' : 'border-[#222F47] text-[#E8EDF6] [background:transparent] hover:[background:#162136] hover:border-[#33466B]'}`}
+                    disabled={busy || !canMark}
+                    title={canMark ? 'Verify, then click Save changes to record it.' : 'Sales must mark this activity Complete first.'}
+                    onClick={() => onPickChecked(tracked, info)}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`inline-grid place-items-center w-[16px] h-[16px] rounded-[4px] border text-[10px] [transition:background-color_.15s_ease,_border-color_.15s_ease] motion-reduce:transition-none ${checked ? 'border-[#3FC79A] [background:#3FC79A] text-[#07120D]' : 'border-[#4A5268] [background:transparent]'}`}
+                    >
+                      {checked && <FaCheck />}
+                    </span>
+                    Verify
+                  </button>
+                </div>
               )}
             </li>
           );
         })}
       </ul>
       {isAdminRole && (
-        <p className="ap-action-reason m-[8px_0_0] text-[#8f9ab2] text-[11px] leading-[1.5] [.ap-schedule-actions_&]:m-0" role="status">
-          {doneCount === TRACKED_ACTIVITIES.length
-            ? 'Both activities are Done — Scheduled is checked.'
-            : 'Attended is recorded only when you click Save Changes.'}
+        <p className="m-[12px_0_0] text-[#8E9BB3] text-[12px] leading-[1.5]" role="status">
+          Verification is recorded only when you click Save changes.
         </p>
       )}
     </section>
@@ -3295,6 +3396,12 @@ export default function Applicants() {
     navigate('/activities', { state: { viewApplicantId: editing.id } });
   };
 
+  /** [Schedule activity]: the existing Activities page form, pre-selected for this applicant and activity. */
+  const scheduleActivityFor = (type) => {
+    if (!editing) return;
+    navigate(`/activities?applicant_id=${editing.id}&activity_type=${type}`);
+  };
+
   /**
    * Admin's "Attended" tick. It only writes the modal DRAFT — Save Applicant is
    * the single action that persists it (Section 3), so closing the modal records
@@ -3513,6 +3620,7 @@ export default function Applicants() {
                 onPickChecked={pickScheduleMilestone}
                 onOpenCalendar={openSessionInCalendar}
                 onView={viewInActivities}
+                onScheduleActivity={scheduleActivityFor}
                 busy={acting}
                 onAttended={markActivityAttended}
                 currentUserId={user?.id}
@@ -3713,8 +3821,8 @@ export default function Applicants() {
 
       {tab !== 'franchisees' && (
         <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_label]:text-[12px] [&_label]:font-[700] [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
-          <label className="relative"><input type="date" aria-label="From" className={`min-w-[175px] ${!filters.from ? 'text-transparent!' : ''}`} value={filters.from} max={filters.to || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, from: e.target.value }); }} />{!filters.from && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">From mm/dd/yyyy</span>}</label>
-          <label className="relative"><input type="date" aria-label="To" className={`min-w-[175px] ${!filters.to ? 'text-transparent!' : ''}`} value={filters.to} min={filters.from || undefined} onChange={(e) => { setPage(1); setFilters({ ...filters, to: e.target.value }); }} />{!filters.to && <span className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 text-[14px] font-normal text-placeholder">To mm/dd/yyyy</span>}</label>
+          <DatePickerField aria-label="From" placeholder="From mm/dd/yyyy" value={filters.from} max={filters.to} onChange={(next) => { setPage(1); setFilters({ ...filters, from: next }); }} />
+          <DatePickerField aria-label="To" placeholder="To mm/dd/yyyy" value={filters.to} min={filters.from} onChange={(next) => { setPage(1); setFilters({ ...filters, to: next }); }} />
           <label><span className="sr-only">Date basis</span>
             <select aria-label="Date basis" value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
               <option value="applied">Date applied</option>
@@ -4289,6 +4397,7 @@ export default function Applicants() {
                 onPickChecked={pickScheduleMilestone}
                 onOpenCalendar={openSessionInCalendar}
                 onView={viewInActivities}
+                onScheduleActivity={scheduleActivityFor}
                 busy={acting}
                 onAttended={markActivityAttended}
                 currentUserId={user?.id}

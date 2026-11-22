@@ -14,6 +14,7 @@ import {
 import { closesMinutes, isWorkingDate, lastStartMinutes, minutesLabel } from '../lib/scheduleConfig';
 import useScheduleConfig from '../lib/useScheduleConfig';
 import { SmartStartPicker } from './schedule/SmartSchedule';
+import DatePickerField from './DatePickerField';
 
 /**
  * Starts (date + hour + minute), Duration (whole hours + Custom), Venue and the
@@ -88,6 +89,29 @@ export default function ScheduleWindowFields({ form, setForm, onError, smart = n
     updateStart({ start_date: date, ...(hour !== undefined ? { start_hour: hour, start_minute: 0 } : {}) });
   };
 
+  const durationField = (
+    <div>
+      <label htmlFor="schedule-duration" className="block text-muted text-[13px] font-[600] mb-[6px]">Duration</label>
+      <div className="flex items-center gap-3">          <select
+          id="schedule-duration"
+          aria-required="true"
+          disabled={smart?.locked}
+          className="w-[120px] h-[44px] !m-0 [background:#0a0e1a] border border-[#2f3752] rounded-[8px] text-text text-[15px] px-[10px]"
+          value={form.duration_choice}
+          onChange={(event) => changeDuration(event.target.value)}
+        >
+          {presets.map((preset) => (
+            <option key={preset} value={String(preset)}>{`${preset} hr${preset === 1 ? '' : 's'}`}</option>
+          ))}
+          {customAllowed && <option value="custom">Custom</option>}
+        </select>
+        <p className="m-0 text-[13px] text-muted whitespace-nowrap" role="status">
+          Ends at <strong className="text-text">{endTimeLabel(form)}</strong>
+        </p>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {smart ? (
@@ -98,24 +122,27 @@ export default function ScheduleWindowFields({ form, setForm, onError, smart = n
           form={form}
           onPick={pickSmart}
           activityLabel={smart.activityLabel}
+          keepSlot={smart.keepSlot ?? null}
+          locked={Boolean(smart.locked)}
+          durationField={durationField}
         />
       ) : (
       <Field label="Starts" required full hint={`${window_.days_label} only. The last valid start time is ${lastStartLabel}.`}>
         <div className="grid grid-cols-[minmax(140px,_1.1fr)_minmax(110px,_0.8fr)_minmax(82px,_0.5fr)] gap-2">
-          <input
+          <DatePickerField
             required
-            type="date"
-            aria-label="Activity date"
+            ariaLabel="Activity date"
             min={minDate}
             value={form.start_date}
-            onChange={(event) => {
-              const value = event.target.value;
+            onChange={(value) => {
               if (value && !isWorkingDate(value)) {
                 onError(`Activities can only be scheduled ${window_.days_label}.`);
                 return;
               }
               updateStart({ start_date: value });
             }}
+            className="w-full"
+            inputClassName="w-full min-w-0!"
           />
           <select
             aria-label="Start hour"
@@ -136,7 +163,7 @@ export default function ScheduleWindowFields({ form, setForm, onError, smart = n
       </Field>
       )}
 
-      <Field label="Duration" required full hint={`Whole hours only — no minutes. The end time is calculated and never passes ${closeLabel}.`}>
+      {!smart && <Field label="Duration" required full hint={`Whole hours only — no minutes. The end time is calculated and never passes ${closeLabel}.`}>
         <div className="flex items-center gap-2 flex-wrap [&_input[type='number']]:max-w-[120px]">
           <select
             aria-label="Duration"
@@ -184,7 +211,7 @@ export default function ScheduleWindowFields({ form, setForm, onError, smart = n
         <p className="m-[8px_0_0] text-[12.5px] text-[color:var(--text-muted,_#9aa4b2)] [&_strong]:text-[color:var(--text,_#e8eef8)]" role="status">
           Ends at <strong>{endTimeLabel(form)}</strong>
         </p>
-      </Field>
+      </Field>}
 
       <Field label="Venue" full>
         <select

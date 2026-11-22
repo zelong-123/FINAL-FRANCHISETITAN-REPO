@@ -1,9 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowDownWideShort,
+  FaArrowTrendUp,
   FaArrowUpWideShort,
+  FaBoxesStacked,
+  FaCalendarDays,
+  FaCalendarXmark,
   FaChartLine,
   FaCircleInfo,
+  FaClockRotateLeft,
   FaGear,
   FaPlus,
   FaRotateLeft,
@@ -25,12 +30,10 @@ import {
 } from 'recharts';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
-import useDebouncedValue from '../lib/useDebouncedValue';
 import useForecastLiveRefresh from '../lib/useForecastLiveRefresh';
 import { formatNumber } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
-import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components/ApiUi';
-import ForecastingSections from '../components/analytics/ForecastingSections';
+import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, Pagination } from '../components/ApiUi';
 import BranchCombobox from '../components/BranchCombobox';
 
 // Estimated Requirement, daily model. Descriptive = what happened; Predictive = what to order. Estimates are
@@ -49,11 +52,13 @@ const DAY_LABEL = {
 };
 
 const TABLE_WRAP = 'table-wrap overflow-x-auto';
+const TABLE_PAGE_SIZE = 7;
 const TABLE = 'er-table w-full [border-collapse:collapse] text-[12.5px] [&_thead_th]:text-left [&_thead_th]:p-[8px_10px] [&_thead_th]:text-muted [&_thead_th]:font-[500] [&_thead_th]:text-[11.5px] [&_thead_th]:border-b [&_thead_th]:border-b-line [&_thead_th]:whitespace-nowrap [&_.er-th-right]:text-right [&_tbody_td]:p-[10px] [&_tbody_td]:border-b [&_tbody_td]:border-b-line [&_tbody_td]:text-text-secondary [&_tbody_td]:[vertical-align:middle] [&_td_strong]:text-text [&_td_strong]:font-[600] [&_td_strong]:text-[length:inherit] [&_td_strong]:leading-[inherit] [&_td_b]:text-[length:inherit] [&_td_b]:leading-[inherit]';
 const TAG = 'er-tag inline-flex items-center p-[2px_8px] rounded-[999px] text-[11px] font-[600] border border-line-strong text-text-secondary [background:var(--surface-subtle)] whitespace-nowrap [.er-tag+&]:ml-[6px]';
 const METHOD_TAG = 'inline-flex items-center p-[2px_9px] rounded-[999px] text-[11px] font-[700] border border-[color:color-mix(in_srgb,_var(--accent)_45%,_transparent)] [background:color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent-text whitespace-nowrap';
-const CARD = 'flex flex-col gap-[6px] p-4 [background:var(--panel)] border border-line rounded-[14px] [&_strong]:text-[26px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11.5px]';
-const CARD_LABEL = 'text-muted text-[11.5px] tracking-[.03em] uppercase';
+const CARD = 'relative isolate overflow-hidden flex flex-col gap-[2px] p-[10px_14px] [background:var(--panel)] border border-line rounded-[12px] [&_strong]:text-[18px] [&_strong]:leading-[1.1] [&_strong]:text-text [&_small]:text-muted [&_small]:text-[11px] before:content-[""] before:absolute before:top-[-34px] before:right-[-34px] before:w-[84px] before:h-[84px] before:rounded-full before:[background:radial-gradient(circle_at_30%_30%,_color-mix(in_srgb,_var(--accent)_38%,_transparent),_color-mix(in_srgb,_var(--accent-2)_12%,_transparent)_70%)] before:-z-10 before:[transition:transform_.35s_cubic-bezier(.2,_.8,_.2,_1)] hover:before:[transform:translate(-6px,_6px)_scale(1.12)]';
+const CARD_HEAD = 'flex items-center gap-2 text-accent-text [&_svg]:text-[15px] [&_svg]:flex-none';
+const CARD_LABEL = 'text-text-secondary font-[700] text-[11.5px] tracking-[.03em] uppercase';
 const GHOST = 'ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]';
 const PRIMARY = 'primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] disabled:opacity-60';
 const SECTION = 'mt-[18px] [&_h3]:m-[0_0_8px] [&_h3]:text-[13px] [&_h3]:text-text';
@@ -94,14 +99,14 @@ function SortHeader({ label, sortKey, sort, onSort, align = 'left', sub }) {
     <th className={align === 'right' ? 'er-th-right' : undefined}>
       <button
         type="button"
-        className={`inline-flex items-center gap-[5px] [background:none] border-0 p-0 text-[color:inherit] later:[font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] cursor-pointer [&_svg]:opacity-[.35] [&_svg]:text-[10px] [&.is-active]:text-text-secondary [&.is-active_svg]:opacity-[1] [&.is-active_svg]:text-accent-text later:hover:text-text ${active ? ' is-active' : ''}`}
+        className={`inline-flex items-center gap-[5px] [background:none] border-0 p-0 text-[color:inherit] later:[font-family:inherit] text-[13px] font-[700] [line-height:inherit] cursor-pointer [&_svg]:opacity-[.35] [&_svg]:text-[11px] [&.is-active]:text-text-secondary [&.is-active_svg]:opacity-[1] [&.is-active_svg]:text-accent-text later:hover:text-text ${active ? ' is-active' : ''}`}
         onClick={() => onSort(sortKey)}
         aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
       >
         {label}
         <Icon aria-hidden="true" />
       </button>
-      {sub && <small className="block text-muted text-[10.5px] font-[400]">{sub}</small>}
+      {sub && <small className="block text-muted text-[11px] font-[600] uppercase">{sub}</small>}
     </th>
   );
 }
@@ -118,11 +123,11 @@ function DescriptiveCards({ summary }) {
   const left = summary.days_excluded || {};
   const split = [left.closed ? `${left.closed} closed` : null, left.excluded ? `${left.excluded} excluded` : null, left.no_records ? `${left.no_records} no records` : null].filter(Boolean).join(' · ');
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,_minmax(190px,_1fr))] gap-3 mb-4">
-      <article className={CARD}><span className={CARD_LABEL}>Items tracked</span><strong>{formatNumber(summary.items_tracked)}</strong><small>raw materials</small></article>
-      <article className={CARD}><span className={CARD_LABEL}>Stale counts</span><strong>{formatNumber(summary.stale_counts)}</strong><small>counted {formatNumber(summary.stale_count_days)}+ days ago, or never</small></article>
-      <article className={CARD}><span className={CARD_LABEL}>Avg zero-usage days</span><strong>{summary.avg_zero_days_percent === null ? '—' : `${formatNumber(summary.avg_zero_days_percent, 0)}%`}</strong><small>across items</small></article>
-      <article className={CARD}><span className={CARD_LABEL}>Days excluded</span><strong>{formatNumber(left.total ?? 0)}</strong><small>{split || 'none in the window'}</small></article>
+    <div className="grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-2 mb-3">
+      <article className={CARD}><span className={CARD_HEAD}><FaBoxesStacked aria-hidden="true" /><strong>{formatNumber(summary.items_tracked)}</strong></span><span className={CARD_LABEL}>Items tracked</span><small>raw materials</small></article>
+      <article className={CARD}><span className={CARD_HEAD}><FaClockRotateLeft aria-hidden="true" /><strong>{formatNumber(summary.stale_counts)}</strong></span><span className={CARD_LABEL}>Stale counts</span><small>counted {formatNumber(summary.stale_count_days)}+ days ago, or never</small></article>
+      <article className={CARD}><span className={CARD_HEAD}><FaCalendarDays aria-hidden="true" /><strong>{summary.avg_zero_days_percent === null ? '—' : `${formatNumber(summary.avg_zero_days_percent, 0)}%`}</strong></span><span className={CARD_LABEL}>Avg zero-usage days</span><small>across items</small></article>
+      <article className={CARD}><span className={CARD_HEAD}><FaCalendarXmark aria-hidden="true" /><strong>{formatNumber(left.total ?? 0)}</strong></span><span className={CARD_LABEL}>Days excluded</span><small>{split || 'none in the window'}</small></article>
     </div>
   );
 }
@@ -131,12 +136,12 @@ function PredictiveCards({ summary }) {
   if (!summary) return null;
   const mix = summary.method_mix || {};
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-3 mb-4">
-      <article className={CARD}><span className={CARD_LABEL}>Items tracked</span><strong>{formatNumber(summary.items_tracked)}</strong><small>raw materials</small></article>
-      <article className={`${CARD} later:[&_strong]:text-danger-text`}><span className={CARD_LABEL}>Low cover</span><strong>{formatNumber(summary.low_cover)}</strong><small>under {formatNumber(summary.low_cover_days)} days</small></article>
-      <article className={`${CARD} later-2:[&_strong]:text-[color:var(--warning-text)]`}><span className={CARD_LABEL}>Overstocked</span><strong>{formatNumber(summary.overstocked)}</strong><small>over {formatNumber(summary.overstock_days)} days</small></article>
-      <article className={`${CARD} later-3:[&_strong]:text-success-text`}><span className={CARD_LABEL}>Reorders suggested</span><strong>{formatNumber(summary.reorders_suggested)}</strong><small>covers {formatNumber(summary.cover_days)} days</small></article>
-      <article className={CARD}><span className={CARD_LABEL}>Method mix</span><strong>{`${mix.wma ?? 0} / ${mix.ses ?? 0} / ${mix.croston ?? 0}`}</strong><small>WMA / SES / Croston</small></article>
+    <div className="grid grid-cols-[repeat(auto-fit,_minmax(150px,_1fr))] gap-2 mb-3">
+      <article className={CARD}><span className={CARD_HEAD}><FaBoxesStacked aria-hidden="true" /><strong>{formatNumber(summary.items_tracked)}</strong></span><span className={CARD_LABEL}>Items tracked</span><small>raw materials</small></article>
+      <article className={`${CARD} later:[&_strong]:text-danger-text`}><span className={CARD_HEAD}><FaTriangleExclamation aria-hidden="true" /><strong>{formatNumber(summary.low_cover)}</strong></span><span className={CARD_LABEL}>Low cover</span><small>under {formatNumber(summary.low_cover_days)} days</small></article>
+      <article className={`${CARD} later-2:[&_strong]:text-[color:var(--warning-text)]`}><span className={CARD_HEAD}><FaBoxesStacked aria-hidden="true" /><strong>{formatNumber(summary.overstocked)}</strong></span><span className={CARD_LABEL}>Overstocked</span><small>over {formatNumber(summary.overstock_days)} days</small></article>
+      <article className={`${CARD} later-3:[&_strong]:text-success-text`}><span className={CARD_HEAD}><FaArrowTrendUp aria-hidden="true" /><strong>{formatNumber(summary.reorders_suggested)}</strong></span><span className={CARD_LABEL}>Reorders suggested</span><small>covers {formatNumber(summary.cover_days)} days</small></article>
+      <article className={CARD}><span className={CARD_HEAD}><FaChartLine aria-hidden="true" /><strong>{`${mix.wma ?? 0} / ${mix.ses ?? 0} / ${mix.croston ?? 0}`}</strong></span><span className={CARD_LABEL}>Method mix</span><small>WMA / SES / Croston</small></article>
     </div>
   );
 }
@@ -184,27 +189,57 @@ function DayTooltip({ active, payload, item }) {
   );
 }
 
+// Pill shown at the top of the "Today" reference line.
+function TodayTag({ viewBox, text }) {
+  const x = viewBox?.x ?? 0;
+  const y = viewBox?.y ?? 0;
+  const width = text.length * 6.5 + 18;
+  return (
+    <g>
+      <rect x={x - width / 2} y={y - 12} width={width} height={20} rx={4} style={{ fill: 'color-mix(in srgb, var(--accent) 16%, transparent)', stroke: 'var(--accent)', strokeOpacity: 0.7 }} />
+      <text x={x} y={y + 2} textAnchor="middle" style={{ fill: 'var(--accent-text)', fontSize: 11, fontWeight: 700 }}>{text}</text>
+    </g>
+  );
+}
+
 function UsageChart({ detail, predictive }) {
   const item = detail.item;
   const rows = chartRows(detail, predictive);
   const max = Math.max(1, ...rows.map((r) => Math.max(r.usage ?? 0, r.avg7 ?? 0, r.forecast ?? 0)));
   const data = rows.map((r) => ({ ...r, gap: r.gap ? max : null }));
   const methodLabel = item.method_label ? `Forecast (${item.method_label})` : 'Forecast';
+  const minOffset = Math.min(0, ...rows.map((r) => r.offset));
+  const ticks = [];
+  for (let v = Math.floor(minOffset / 7) * 7; v <= 0; v += 7) ticks.push(v);
+  const todayText = predictive && item.ready ? 'Today | Forecast' : 'Today';
   return (
     <div className="h-[300px] m-[10px_0_4px]" role="img" aria-label={`Daily usage of ${item.name}${predictive && item.ready ? ' with the forecast' : ''}`}>
+      <svg width="0" height="0" className="absolute" aria-hidden="true">
+        <defs>
+          <pattern id="usage-gap-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="7" height="7" style={{ fill: 'var(--surface-strong)', fillOpacity: 0.45 }} />
+            <line x1="0" y1="0" x2="0" y2="7" strokeWidth="2.5" style={{ stroke: 'var(--muted)', strokeOpacity: 0.55 }} />
+          </pattern>
+          <linearGradient id="usage-bar-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: 'var(--muted)', stopOpacity: 0.95 }} />
+            <stop offset="1" style={{ stopColor: 'var(--muted)', stopOpacity: 0.35 }} />
+          </linearGradient>
+        </defs>
+      </svg>
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 18, left: 0 }} barCategoryGap="12%">
-          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="offset" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(v) => (v > 0 ? `+${v}` : String(v))} tick={{ fill: 'var(--muted)', fontSize: 11 }}
-            label={{ value: 'Days from today', position: 'insideBottom', offset: -10, fill: 'var(--muted)', fontSize: 11 }} allowDecimals={false} />
-          <YAxis tick={{ fill: 'var(--muted)', fontSize: 11 }} width={44} domain={[0, 'auto']} />
+        <ComposedChart data={data} margin={{ top: 22, right: 22, bottom: 18, left: 0 }} barCategoryGap="6%">
+          <CartesianGrid stroke="var(--border)" strokeDasharray="3 4" vertical={false} />
+          <XAxis dataKey="offset" type="number" domain={['dataMin', 'dataMax']} ticks={ticks} tickFormatter={(v) => (v > 0 ? `+${v}` : String(v))} tick={{ fill: 'var(--text-secondary)', fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false}
+            label={{ value: 'Days from today', position: 'insideBottom', offset: -10, fill: 'var(--muted)', fontSize: 12 }} allowDecimals={false} />
+          <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 12, fontWeight: 600 }} width={44} domain={[0, 'auto']} axisLine={false} tickLine={false} />
           <Tooltip content={<DayTooltip item={item} />} />
-          <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, color: 'var(--text-secondary)' }} />
-          <Bar dataKey="gap" name="Left out (closed, excluded, no records)" fill="var(--surface-strong)" fillOpacity={0.55} isAnimationActive={false} legendType="square" />
-          <Bar dataKey="usage" name="Actual daily usage" fill="var(--muted)" fillOpacity={0.55} isAnimationActive={false} />
-          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-          {predictive && item.ready && <Line dataKey="forecast" name={methodLabel} stroke="var(--warning-text)" strokeWidth={2} strokeDasharray="6 4" dot={false} isAnimationActive={false} />}
-          <ReferenceLine x={0} stroke="var(--muted)" strokeDasharray="2 3" label={{ value: predictive && item.ready ? 'Today | Forecast' : 'Today', position: 'top', fill: 'var(--muted)', fontSize: 11 }} />
+          <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }} />
+          <Bar dataKey="gap" name="Left out (closed, excluded, no records)" fill="url(#usage-gap-hatch)" isAnimationActive={false} legendType="square" />
+          <Bar dataKey="usage" name="Actual daily usage" fill="url(#usage-bar-grad)" isAnimationActive={false} />
+          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={8} strokeOpacity={0.18} dot={false} legendType="none" connectNulls isAnimationActive={false} />
+          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
+          {predictive && item.ready && <Line dataKey="forecast" name={methodLabel} stroke="var(--warning-text)" strokeWidth={2.5} strokeDasharray="6 4" dot={false} isAnimationActive={false} />}
+          <ReferenceLine x={0} stroke="var(--accent)" strokeOpacity={0.6} strokeDasharray="2 3" label={<TodayTag text={todayText} />} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -658,17 +693,14 @@ export default function EstimatedRequirement({ embedded = false }) {
   const [openingBusy, setOpeningBusy] = useState(false);
   const [openingError, setOpeningError] = useState('');
 
-  const debouncedSearch = useDebouncedValue(search, 300);
-
   const remote = useRemote(
     () => api.get('/estimated-requirement', {
       location_id: locationId || undefined,
       brand_id: brandId || undefined,
       horizon,
       dips,
-      search: debouncedSearch || undefined,
     }),
-    [locationId, brandId, horizon, dips, debouncedSearch],
+    [locationId, brandId, horizon, dips],
   );
 
   const payload = remote.data?.data;
@@ -717,13 +749,30 @@ export default function EstimatedRequirement({ embedded = false }) {
       }
     };
     const direction = sort.dir === 'asc' ? 1 : -1;
-    return [...items].sort((a, b) => {
+    const needle = search.trim().toLowerCase();
+    const matches = needle
+      ? items.filter((item) => `${item.name} ${item.variant ?? ''} ${item.brand_name ?? ''}`.toLowerCase().includes(needle))
+      : items;
+    return [...matches].sort((a, b) => {
       const left = value(a);
       const right = value(b);
       if (left === right) return String(a.name).localeCompare(String(b.name));
       return left > right ? direction : -direction;
     });
-  }, [items, sort]);
+  }, [items, sort, search]);
+
+  // Table pages of 7 rows; back to page 1 whenever the list itself changes.
+  const [page, setPage] = useState(1);
+  const [pageDir, setPageDir] = useState(1);
+  useEffect(() => { setPage(1); }, [view, sort, search, locationId, horizon, dips]);
+  const changePage = (next) => {
+    setPageDir(next >= currentPage ? 1 : -1);
+    setPage(next);
+  };
+  const pageCount = Math.max(1, Math.ceil(sortedItems.length / TABLE_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedItems = sortedItems.slice((currentPage - 1) * TABLE_PAGE_SIZE, currentPage * TABLE_PAGE_SIZE);
+  const tableMeta = { current_page: currentPage, per_page: TABLE_PAGE_SIZE, total: sortedItems.length, last_page: pageCount };
 
   const switchView = (next) => {
     setView(next);
@@ -796,18 +845,20 @@ export default function EstimatedRequirement({ embedded = false }) {
     <>
       {!embedded && <PageHeader title="Analytics and Forecasting" subtitle="Usage-based demand and supply estimates" />}
 
-      <p className="er-note-inline flex items-center gap-2 m-[0_0_14px] text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <p className="er-note-inline flex items-center gap-2 m-0 text-muted text-[12.5px] [&_svg]:text-accent-text [&_svg]:flex-none"><FaCircleInfo aria-hidden="true" /> {payload?.note || NOTE}</p>
 
       {canExclude && !embedded && (
-        <p className="m-[-4px_0_14px] flex flex-wrap gap-2 [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:p-[7px_12px] [&_a]:border [&_a]:border-line-strong [&_a]:rounded-[10px] [&_a]:text-accent-text [&_a]:text-[12.5px] [&_a]:font-[600] [&_a]:[text-decoration:none] [&_a:hover]:[background:var(--hover)]">
-          <Link to="/estimated-requirement/network">Open network view: all branches vs warehouse stock →</Link>
+        <div className="flex flex-wrap items-center gap-2 [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:min-h-[38px] [&_a]:p-[0_14px] [&_a]:border [&_a]:border-line-strong [&_a]:rounded-[10px] [&_a]:text-accent-text [&_a]:text-[13px] [&_a]:font-[650] [&_a]:[text-decoration:none] [&_a:hover]:[background:var(--hover)]">
+          <Link to="/estimated-requirement/network">Network view →</Link>
           <button type="button" className={GHOST} onClick={() => setSettingsOpen(true)}><FaGear aria-hidden="true" /> Forecast settings</button>
-        </p>
+        </div>
       )}
+      </div>
 
       {remote.error && <Notice type="error">{remote.error}</Notice>}
 
-      <div className="er-filters grid grid-cols-[repeat(auto-fit,_minmax(190px,_1fr))] gap-3 p-[14px] mb-4 [background:var(--panel)] border border-line rounded-[14px]">
+      <div className="er-filters grid grid-cols-[repeat(auto-fit,_minmax(170px,_1fr))] gap-3 p-[12px] mb-3 [background:var(--panel)] border border-line rounded-[14px]">
         {!isFranchisee && (
           <>
             <Field label="Branch">
@@ -835,20 +886,12 @@ export default function EstimatedRequirement({ embedded = false }) {
             {HORIZONS.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
           </select>
         </Field>
-        <Field label="Dips and spikes" hint="Your recorded usage is never changed.">
+        <Field label="Dips and spikes">
           <select value={dips} onChange={(event) => setDips(event.target.value)}>
             <option value="cap">Cap them (default)</option>
             <option value="raw">Include them</option>
           </select>
         </Field>
-        <Field label="Find an item">
-          <input type="search" value={search} placeholder="Material or variant…" onChange={(event) => setSearch(event.target.value)} />
-        </Field>
-        <div className="flex items-end gap-2" role="tablist" aria-label="View">
-          {[['descriptive', 'Descriptive'], ['predictive', 'Predictive']].map(([key, label]) => (
-            <button key={key} type="button" role="tab" aria-selected={view === key} className={`${GHOST} flex-1 ${view === key ? 'later:border-accent! later:text-text! later:[background:var(--hover)]!' : ''}`} onClick={() => switchView(key)}>{label}</button>
-          ))}
-        </div>
       </div>
 
       {location?.opening_date_needed && (
@@ -878,7 +921,7 @@ export default function EstimatedRequirement({ embedded = false }) {
           {predictive ? <PredictiveCards summary={summary} /> : <DescriptiveCards summary={summary} />}
 
           <section className="p-4 mb-4 [background:var(--panel)] border border-line rounded-[14px] [&>header]:mb-3 [&_h2]:m-0 [&_h2]:text-[15px] [&_h2]:text-text [&_header_p]:m-[4px_0_0] [&_header_p]:text-muted [&_header_p]:text-[12px]">
-            <header className="flex justify-between gap-3 items-start">
+            <header className="flex flex-wrap justify-between gap-3 items-center">
               <div>
                 <h2>{location.name}</h2>
                 <p>
@@ -887,11 +930,20 @@ export default function EstimatedRequirement({ embedded = false }) {
                   {' '}<b className="text-text-secondary font-[600]">{summary?.freshness}</b>
                 </p>
               </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex gap-1" role="tablist" aria-label="View">
+                  {[['descriptive', 'Descriptive'], ['predictive', 'Predictive']].map(([key, label]) => (
+                    <button key={key} type="button" role="tab" aria-selected={view === key} className={`${GHOST} min-h-[34px] ${view === key ? 'later:border-accent! later:text-text! later:[background:var(--hover)]!' : ''}`} onClick={() => switchView(key)}>{label}</button>
+                  ))}
+                </div>
+                <input type="search" aria-label="Find an item" className="w-[220px] max-w-full shrink-0 h-[34px] p-[0_12px] text-[13px] rounded-[9px] border border-line-strong [background:var(--bg-elevated)] text-text placeholder:text-placeholder outline-none hover:border-accent focus:border-accent" value={search} placeholder="Find an item…" onChange={(event) => setSearch(event.target.value)} />
+              </div>
             </header>
 
             {sortedItems.length === 0 ? (
               <EmptyState label="No tracked raw material yet." detail="Add materials and record production for this branch." />
             ) : (
+              <div key={`page-${currentPage}-${view}`} className={`overflow-hidden ${pageDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}`}>
               <div className={TABLE_WRAP}>
                 <table className={TABLE}>
                   <thead>
@@ -918,7 +970,7 @@ export default function EstimatedRequirement({ embedded = false }) {
                     )}
                   </thead>
                   <tbody>
-                    {sortedItems.map((item) => (predictive ? (
+                    {pagedItems.map((item) => (predictive ? (
                       <tr {...rowProps(item)}>
                         {nameCell(item)}
                         <td className="text-right whitespace-nowrap">
@@ -948,7 +1000,9 @@ export default function EstimatedRequirement({ embedded = false }) {
                   </tbody>
                 </table>
               </div>
+              </div>
             )}
+            {sortedItems.length > 0 && <div className="[&_nav]:min-h-[52px] [&_nav]:text-[12px] [&_nav_span]:text-[12px] [&_nav_button]:text-[12px] [&_nav_button]:min-h-[38px] [&_nav_button]:px-[14px]"><Pagination meta={tableMeta} onPage={changePage} /></div>}
             {selected === null && sortedItems.length > 0 && (
               <p className="text-muted text-[12px] m-[10px_0_0]"><FaChartLine aria-hidden="true" className="inline mr-1 text-accent-text" />Select an item in the table to see its chart.</p>
             )}
@@ -969,6 +1023,7 @@ export default function EstimatedRequirement({ embedded = false }) {
             />
           )}
 
+          <div className="flex flex-wrap items-stretch gap-4 [&>section]:flex-1 [&>section]:basis-0 [&>section]:min-w-[300px] [&>section]:mb-0 [&>section]:h-auto">
           {canCreateClosure && (
             <ClosuresPanel
               locationId={location.id}
@@ -987,6 +1042,7 @@ export default function EstimatedRequirement({ embedded = false }) {
               onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
             />
           )}
+          </div>
         </>
       )}
 
@@ -1002,5 +1058,5 @@ export default function EstimatedRequirement({ embedded = false }) {
 
   return embedded
     ? <div className="block [&_.er-note-inline]:mt-0">{body}</div>
-    : <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px]">{body}<ForecastingSections role={role} /></div>;
+    : <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px]">{body}</div>;
 }
