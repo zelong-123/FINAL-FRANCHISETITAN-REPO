@@ -25,7 +25,7 @@ function load(locationId, productId) {
   return promise;
 }
 
-export default function EstimateHint({ locationId, productId }) {
+export default function EstimateHint({ locationId, productId, plain = false }) {
   const [state, setState] = useState({ key: '', data: null });
   const key = locationId && productId ? `${locationId}:${productId}` : '';
 
@@ -59,8 +59,14 @@ export default function EstimateHint({ locationId, productId }) {
   }
 
   return (
-    <small className="col-span-full basis-[100%] flex flex-wrap items-center gap-[6px] -mt-[2px] text-muted text-[11.5px] leading-[1.4] [&_svg]:text-accent-text [&_svg]:flex-none" role="note" title="Estimates are based on past usage to support decisions. They are not guarantees.">
-      <FaChartLine aria-hidden="true" /> {text} <span className="p-[1px_7px] rounded-[999px] border border-line-strong [background:var(--surface-subtle)] text-text-secondary text-[10.5px] font-[600]">Estimate only — not filled in</span>
+    <small
+      className={plain
+        ? 'flex flex-wrap items-center gap-[6px] text-muted text-[11.5px] leading-[1.5] [&_svg]:text-accent-text [&_svg]:flex-none'
+        : 'col-span-full basis-[100%] flex flex-wrap items-center gap-[6px] -mt-[2px] text-muted text-[11.5px] leading-[1.4] [&_svg]:text-accent-text [&_svg]:flex-none'}
+      role="note"
+      title="Estimates are based on past usage to support decisions. They are not guarantees."
+    >
+      <FaChartLine aria-hidden="true" /> {text} {!plain && <span className="p-[1px_7px] rounded-[999px] border border-line-strong [background:var(--surface-subtle)] text-text-secondary text-[10.5px] font-[600]">Estimate only — not filled in</span>}
     </small>
   );
 }

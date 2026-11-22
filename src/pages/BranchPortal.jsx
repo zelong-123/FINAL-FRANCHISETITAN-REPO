@@ -171,7 +171,7 @@ function BranchPortal({ preview = false }) {
           {logo && <img src={logo} alt={`${location.brand.name} logo`} className="ml-auto h-[60px] w-auto max-w-[240px] object-contain max-[761px]:h-[40px]" />}
         </header>
 
-        <main className="flex-1 min-w-0 p-[22px_28px] max-[761px]:later:p-4">
+        <main className={`flex-1 min-w-0 max-[761px]:later:p-4 ${view === 'supply' ? 'p-[10px_12px]' : 'p-[22px_28px]'}`}>
           <Notice type="error">{error}</Notice>
           {loading && !workspace ? <LoadingState label="Loading your branch workspace…" /> : !workspace ? (
             <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
