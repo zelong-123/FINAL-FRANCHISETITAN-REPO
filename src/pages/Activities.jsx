@@ -294,7 +294,7 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
         </select>
       </Field>
 
-      <Field label="Applicant" full required hint={applicantHint}>
+      <Field label="Applicant" full hint={applicantHint}>
         <select
           required
           disabled={!hasActivity || fixedPerson}
@@ -306,6 +306,11 @@ function ActivityFormFields({ form, setForm, applicants, highlightApplicant, blo
           {eligible.map((applicant) => <option key={applicant.id} value={applicant.id}>{applicant.full_name}</option>)}
         </select>
       </Field>
+      {smartOn && availability.data?.handler && (
+        <small className="col-span-full -mt-[6px] text-muted text-[11.5px]">
+          Showing {availability.data.handler.full_name}&apos;s {typeLabel} sessions only (the applicant&apos;s assigned Sales user).
+        </small>
+      )}
 
       <ScheduleWindowFields
         form={form}

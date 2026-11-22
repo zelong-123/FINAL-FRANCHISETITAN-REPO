@@ -46,11 +46,6 @@ export function SmartStartPicker({ availability, month, setMonth, form, onPick, 
     <div className="col-span-full grid gap-[10px]" data-testid="smart-start-picker">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className={sectionLabel}>Date</span>
-        {data?.handler && (
-          <small className="text-muted text-[11.5px]">
-            Showing {data.handler.full_name}&apos;s {activityLabel} sessions only (the applicant&apos;s assigned Sales user).
-          </small>
-        )}
       </div>
       {error && <p className="m-0 text-danger text-[12.5px]" role="alert">{error}</p>}
       {data && !data.handler && <p className="m-0 text-danger text-[12.5px]" role="alert">This applicant has no assigned Sales user. Assign one before scheduling.</p>}

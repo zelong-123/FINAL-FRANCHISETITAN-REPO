@@ -55,8 +55,8 @@ Goal: overall UI + basic function fixes across the whole system, guided by the u
 - Schedule activity modal (Activities > Schedule) + Edit modal: the new picker (calendar, slots, Duration, live summary chip) is wired into both. STOPPED HERE: the code compiles (npm run build exit 0) but nothing is browser-checked yet.
 - Next steps, in order:
   1. User refreshes and checks: Schedule activity shows the calendar; days, slots, Next available and Duration stay locked until an applicant is picked; Edit modal still works.
-  2. Remove the red asterisk from the Applicant label (src/pages/Activities.jsx, the `Field label="Applicant"` around line 300) in both modals.
-  3. Move the "Showing Sales User's ... sessions only" text (SmartSchedule.jsx, header row of SmartStartPicker) under the Applicant select, not in the Date header row.
+  2. DONE: removed the red asterisk from the Applicant label (src/pages/Activities.jsx).
+  3. DONE: moved the "Showing Sales User's ... sessions only" text under the Applicant select (src/pages/Activities.jsx); removed it from the Date header row (src/components/schedule/SmartSchedule.jsx). npm run build exit 0. Not browser-checked.
   4. Restyle the footer (New schedule summary + Cancel + solid Save activity) to match the design guide.
   5. Check layout under 640px and keyboard/aria.
 
@@ -72,6 +72,7 @@ Goal: overall UI + basic function fixes across the whole system, guided by the u
 - This backend change is NOT deployed yet (no `deploy:api` until you say "merged"); the frontend works without it thanks to the keep-current-slot behaviour described above.
 
 ## Notes / questions for me
+- Live API banner ("Live API is older than this app"): live API is at 08b1c58 (API tree ea16126); this branch's API tree is 48e97a0 because of the uncommitted-to-live `ignore_activity_id` change in supabase/functions/api (routes/scheduleSessions.ts, services/schedule/availability.ts). Fix = `npm run deploy:api`, which Rules allow only after you say "merged". Alternative (your call): revert those two API files locally, which would make the banner go away but drops the Adjust-modal availability fix. Not done yet.
 - "Verify" for a NEW-style submission (Orientation/Tasting with brand-selection file) is still the existing ActivitySubmission button that posts `/activities/:id/attended` immediately. Making it draft-only would change approval logic, so I left it as-is; only the older no-file completions use the new draft "Verify" toggle that is saved by SAVE CHANGES. If you want both to save only through SAVE CHANGES, that is approval logic → route to Claude Code.
 - Sales "Schedule activity" reuses the existing Activities page form via the deep link `/activities?applicant_id=…&activity_type=…` (that page pre-selects the applicant and activity). No new API.
 - Modal footer Save Changes already disables itself when there are no unsaved changes — unchanged.
