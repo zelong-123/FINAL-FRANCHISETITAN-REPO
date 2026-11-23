@@ -57,7 +57,7 @@ Last updated: 2026-11-23 (session setup)
 
 - Inquiries (all roles) → **less dead space at the top**: the gap between the date-range row and the toolbar is one flex gap (`12px`) instead of the old margin-plus-gap stack, and the page's top padding drops from `14px` to `8px`, so the filters, toolbar and table all sit ~20px higher. `src/pages/Inquiries.jsx`
 
-- Inquiries (all roles) → **Source and Date columns are bold**: both used to render at 350 weight next to the 400/600 body text and read as faint, especially the date. They are now 600 in every row. `src/tailwind.css`
+- Inquiries (all roles) → **Source and Date columns are bold**: the 350 weight came from the row's own `nth-child(4)` / `nth-child(5)` utilities (each `!important`), so a page-level CSS rule could not win the specificity fight. The row utilities themselves are now `font-[600]!`, so both columns render at 600 in every row. `src/pages/Inquiries.jsx`
 
 ## In progress
 - Nothing half-done. Waiting for the next request.

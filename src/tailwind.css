@@ -757,12 +757,6 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   padding-right: 20px;
 }
 
-/* Source and Date read as supporting facts, but at 350 they looked faint: bold both columns. */
-.inquiries-page .table-wrap tbody td:nth-child(4),
-.inquiries-page .table-wrap tbody td:nth-child(5) {
-  font-weight: 600 !important;
-}
-
 /* Tablets and narrow browser zoom: toolbars wrap and fields take full rows. */
 @media (max-width: 900px) {
   .applicant-pipeline-page .unified-toolbar-container,
