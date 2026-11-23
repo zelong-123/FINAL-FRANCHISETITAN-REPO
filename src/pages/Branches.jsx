@@ -527,7 +527,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                   <tr>
                     <td
                       colSpan={6 + (costing ? 2 : 0) + (role === 'logistics' ? 1 : 0)}
-                      style={{ height: 220, verticalAlign: 'middle', borderBottom: 0 }}
+                      style={{ height: INVENTORY_PER_PAGE * 60, verticalAlign: 'middle', borderBottom: 0 }}
                       className="text-center"
                     >
                       <p className="m-0 text-text text-[15px] font-[740]">No materials found</p>
