@@ -63,6 +63,8 @@ Last updated: 2026-11-23 (session setup)
 - Applicants → Franchisees → **Status column removed** (header and cell). `franchisees.franchise_status` is always `'active'` — nothing in the app ever writes another value — so the pill only repeated "Active". Real account state lives in Users; the Admin-only "Create Account" button that used to sit in that cell now sits under the owner's email in the Owner column.
 - Applicants → Franchisees → **readable table type**: body cells 13.5px / weight 500, business name 16px / 730, secondary line 12px, headers 10.5px, and taller rows. `src/pages/Applicants.jsx`, `src/tailwind.css`
 
+- Applicants → Pipeline (and the other filter tabs) → **compact date range**: `From` / `To` no longer reserve 175px around a long placeholder — 140px, short placeholders (`From`, `To`), and the box only shows the value. `DatePickerField` got two opt-in props used only here: `pickerOnly` (read-only input, opens the calendar on click) and `clearable` (an X inside the field that empties that date). The separate "Clear filters" button is gone; Brand / Assigned Sales / Date basis still reset from their own placeholder options. `src/components/DatePickerField.jsx`, `src/pages/Applicants.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 

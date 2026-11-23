@@ -3830,8 +3830,10 @@ export default function Applicants() {
 
       {tab !== 'franchisees' && (
         <div className="flex flex-wrap items-end gap-[10px] m-[0_0_14px] text-[14px] [&_label]:grid [&_label]:gap-1 [&_label]:text-muted [&_label]:text-[12px] [&_label]:font-[700] [&_input]:h-[40px] [&_select]:h-[40px] [&_input]:p-[0_10px] [&_select]:p-[0_10px] [&_input]:border [&_select]:border [&_input]:border-input-line [&_select]:border-input-line [&_input]:rounded-[10px] [&_select]:rounded-[10px] [&_input]:[background:var(--input-bg)] [&_select]:[background:var(--input-bg)] [&_input]:text-text [&_select]:text-text" aria-label="Date range and filters">
-          <DatePickerField aria-label="From" placeholder="From mm/dd/yyyy" value={filters.from} max={filters.to} onChange={(next) => { setPage(1); setFilters({ ...filters, from: next }); }} />
-          <DatePickerField aria-label="To" placeholder="To mm/dd/yyyy" value={filters.to} min={filters.from} onChange={(next) => { setPage(1); setFilters({ ...filters, to: next }); }} />
+          {/* Calendar-only fields: the date comes from the popup, and the in-field X
+             empties it, so a separate "Clear filters" button is not needed. */}
+          <DatePickerField aria-label="From" placeholder="From" pickerOnly clearable inputClassName="w-[140px]! min-w-[140px]!" value={filters.from} max={filters.to} onChange={(next) => { setPage(1); setFilters({ ...filters, from: next }); }} />
+          <DatePickerField aria-label="To" placeholder="To" pickerOnly clearable inputClassName="w-[140px]! min-w-[140px]!" value={filters.to} min={filters.from} onChange={(next) => { setPage(1); setFilters({ ...filters, to: next }); }} />
           <label><span className="sr-only">Date basis</span>
             <select aria-label="Date basis" value={filters.date_basis} onChange={(e) => { setPage(1); setFilters({ ...filters, date_basis: e.target.value }); }}>
               <option value="applied">Date applied</option>
@@ -3854,9 +3856,6 @@ export default function Applicants() {
               <option value="unassigned">Unassigned</option>
             </select>
           </label>
-          {(filters.from || filters.to || filters.brand_id || filters.assigned_sales_user_id) && (
-            <button type="button" onClick={() => { setPage(1); setFilters({ from: '', to: '', date_basis: 'applied', brand_id: '', assigned_sales_user_id: '' }); }}>Clear filters</button>
-          )}
           {tab === 'pipeline' && (
             <div className="relative" ref={pipelineColumnsRef}>
               <button

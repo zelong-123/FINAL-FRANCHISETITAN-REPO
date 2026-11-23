@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FaChevronLeft, FaChevronRight, FaRegCalendarDays } from 'react-icons/fa6';
+import { FaChevronLeft, FaChevronRight, FaRegCalendarDays, FaXmark } from 'react-icons/fa6';
 
 // Panel size and rough height (used to flip the popup up near the bottom of the window).
 const PANEL_WIDTH = 252;
@@ -45,7 +45,10 @@ const RESET = 'min-h-0! h-auto! p-0! rounded-none! shadow-none! appearance-none!
 // Master Schedule "Custom" calendar nav: chevron in a bordered rounded square.
 const NAV_BUTTON = `grid place-items-center w-[30px] h-[30px] p-0! min-h-0! rounded-none! appearance-none! [font-family:inherit]! border! border-[#2A3650]! [background:transparent]! text-[#C9D1E0]! shadow-none! [transition:background_.15s_ease,_border-color_.15s_ease,_color_.15s_ease] hover:text-[#fff]! hover:border-[#5B7FC4]! hover:[background:#2B3F6B]! light:border-line! light:text-muted! light:hover:text-text! light:hover:[background:var(--hover)]!`;
 
-const ICON_BUTTON = `absolute right-[5px] top-1/2 -translate-y-1/2 grid place-items-center w-[26px] h-[26px] p-0! min-h-0! appearance-none! border-0! rounded-none! [background:transparent]! text-[#8591A8]! shadow-none! [transition:color_.15s_ease] hover:text-[#eef2fb]! light:text-muted! light:hover:text-text!`;
+const ICON_BUTTON = `absolute right-[3px] top-1/2 -translate-y-1/2 grid place-items-center w-[24px] h-[24px] p-0! min-h-0! appearance-none! border-0! rounded-none! [background:transparent]! text-[#8591A8]! shadow-none! [transition:color_.15s_ease] hover:text-[#eef2fb]! light:text-muted! light:hover:text-text!`;
+
+// Sits just inside the calendar icon and empties the field without opening the popup.
+const CLEAR_BUTTON = `absolute right-[28px] top-1/2 -translate-y-1/2 grid place-items-center w-[20px] h-[20px] p-0! min-h-0! appearance-none! border border-transparent! rounded-[6px]! [background:transparent]! text-[#8591A8]! shadow-none! [transition:color_.15s_ease,_background_.15s_ease] hover:text-[#eef2fb]! hover:[background:rgba(255,_255,_255,_.08)]! light:text-muted! light:hover:text-text! light:hover:[background:var(--hover)]!`;
 
 const DAY_CELL = 'w-full h-[40px] p-0! min-h-0! rounded-none! appearance-none! [font-family:inherit]! [background:transparent]! [border-top:0]! [border-left:0]! [border-right:0]! [border-bottom:1px_solid_#17203A]! text-[15px]! font-[700]! tabular-nums [transition:box-shadow_.15s_ease,_color_.15s_ease] light:[background:transparent]! light:[border-bottom-color:var(--border)]!';
 
@@ -63,6 +66,10 @@ export default function DatePickerField({
   className = '',
   inputClassName = '',
   required = false,
+  // Calendar-only fields are read from the popup: the text never accepts typing.
+  pickerOnly = false,
+  // Shows an in-field X that empties the value (used by compact filters).
+  clearable = false,
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => displayOf(value));
@@ -156,22 +163,36 @@ export default function DatePickerField({
         inputMode="numeric"
         autoComplete="off"
         required={required}
+        readOnly={pickerOnly}
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         placeholder={placeholder}
-        className={`min-w-[175px] pr-[34px]! [color-scheme:dark] placeholder:text-placeholder ${inputClassName}`}
+        className={`min-w-[175px] ${clearable ? 'pr-[52px]!' : 'pr-[34px]!'} ${pickerOnly ? 'cursor-pointer' : ''} [color-scheme:dark] placeholder:text-placeholder ${inputClassName}`}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commitDraft}
+        onChange={pickerOnly ? undefined : (event) => setDraft(event.target.value)}
+        onBlur={pickerOnly ? undefined : commitDraft}
+        onClick={pickerOnly ? () => setOpen(true) : undefined}
         onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            commitDraft();
-            setOpen(false);
-          }
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          if (!pickerOnly) commitDraft();
+          setOpen(false);
         }}
       />
+      {clearable && value && (
+        <button
+          type="button"
+          aria-label={ariaLabel ? `Clear ${ariaLabel}` : 'Clear date'}
+          onClick={() => {
+            setDraft('');
+            onChange?.('');
+          }}
+          className={CLEAR_BUTTON}
+        >
+          <FaXmark aria-hidden="true" className="text-[11px]" />
+        </button>
+      )}
       <button
         type="button"
         aria-label={ariaLabel ? `Open calendar for ${ariaLabel}` : 'Open calendar'}
