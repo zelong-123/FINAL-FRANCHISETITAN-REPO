@@ -142,7 +142,7 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
   return (
     <div
       id={`branch-card-${branch.id}`}
-      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[20px_20px_20px_36px] [background:#161E30] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[auto_-30%_-70%_35%] [&::after]:h-[150px] [&::after]:rounded-[50%] [&::after]:[background:radial-gradient(circle,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_16%,_transparent),_transparent_66%)] [&::after]:opacity-[.65] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] [&::after]:hidden ${active ? ' is-active' : ''}`}
+      className={`bp-card relative scroll-mt-[96px] gap-2 overflow-hidden [border:1px_solid_color-mix(in_srgb,_var(--text)_13%,_transparent)] rounded-[14px_14px_14px_22px] [background:linear-gradient(148deg,_color-mix(in_srgb,_var(--panel)_80%,_transparent)_0%,_color-mix(in_srgb,_var(--panel)_52%,_transparent)_58%,_color-mix(in_srgb,_var(--panel)_68%,_transparent)_100%)] [backdrop-filter:blur(16px)_saturate(1.35)] [box-shadow:inset_0_1px_0_color-mix(in_srgb,_var(--text)_11%,_transparent),_0_12px_30px_-20px_rgba(0,0,0,.6)] cursor-pointer [transition:border-color_.22s_ease,_transform_.22s_ease,_box-shadow_.22s_ease,_background_.22s_ease] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[0_0_auto_0] [&::after]:h-[62%] [&::after]:[background:linear-gradient(162deg,_color-mix(in_srgb,_var(--text)_9%,_transparent),_transparent_64%)] [&::after]:opacity-[.9] [&::after]:pointer-events-none hover:[transform:translateY(-2px)] hover:border-line-strong hover:[background:linear-gradient(148deg,_color-mix(in_srgb,_var(--panel)_90%,_transparent)_0%,_color-mix(in_srgb,_var(--panel)_64%,_transparent)_58%,_color-mix(in_srgb,_var(--panel)_78%,_transparent)_100%)] hover:[box-shadow:inset_0_1px_0_color-mix(in_srgb,_var(--text)_16%,_transparent),_0_18px_40px_-22px_rgba(0,0,0,.55),var(--shadow-md)] focus-visible:[outline:2px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_60%,_transparent)] focus-visible:[outline-offset:2px] later:[&.is-active]:border-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_55%,_var(--border))] max-[761px]:later:min-h-[164px] motion-reduce:later:[transition:none] later:grid-cols-[minmax(0,_1fr)] later-2:min-h-0 later:flex flex-col later:p-[18px] ${active ? ' is-active' : ''}`}
       data-highlighted={highlighted || undefined}
       style={{ '--brand-color': brand.color, ...(highlighted ? { outline: '2px solid var(--accent)', outlineOffset: '3px', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent) 24%, transparent)' } : {}) }}
       role="button"
@@ -222,10 +222,10 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
  * Branch sections (half + full view). `inventory` is the branch's own
  * raw-material ledger: the same rows the branch portal reads.
  * ------------------------------------------------------------------ */
-function Section({ title, meta, className = '', children }) {
+function Section({ title, meta, className = '', titleClassName = '', children }) {
   return (                    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
       <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
-        <h2>{title}</h2>
+        <h2 className={titleClassName}>{title}</h2>
         {meta && <span>{meta}</span>}
       </div>
       {children ? <div className="p-0 later:[.bp-full-grid_.bp-sec-deliveries_&]:max-h-[none] later:[.bp-full-grid_.bp-sec-deliveries_&]:overflow-visible">{children}</div> : null}
@@ -310,6 +310,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
     <>
       <Section
         title="Branch Inventory"
+        titleClassName="uppercase tracking-[.06em]!"
         className="bp-sec-inventory [grid-area:inventory]"
         meta={(
           <span className="inline-flex items-center gap-[12px]">
@@ -391,7 +392,13 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
             </table>
           </div>
         )}
-        {inventory.length > 0 && <Pagination meta={invMeta} onPage={goToInventoryPage} />}
+        {inventory.length > 0 && (
+          <Pagination
+            meta={invMeta}
+            onPage={goToInventoryPage}
+            className="[&_button]:min-h-[42px]! [&_button]:p-[0_16px]! [&_button]:text-[13px]! [&_.pagination-summary]:text-[13px]! [&>div>span]:text-[13px]! [&>div]:gap-[11px]! [&>div>span]:min-w-[118px]!"
+          />
+        )}
       </Section>
 
       <Section
@@ -913,13 +920,118 @@ function AlertList({ kind, closing = false, items, branches, newCount, marking, 
   );
 }
 
+/**
+ * Branch lookup used in place of the free-text search: a searchable dropdown of the active branches.
+ * Typing filters the options; picking one narrows the card grid to that branch.
+ * An × inside the field clears the typed text (and the picked branch).
+ */
+function BranchLookup({ branches, value, onChange, placeholder = 'Search branches, locations or brands' }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef(null);
+  const listRef = useRef(null);
+  const listId = 'bp-branch-lookup-list';
+  const selected = branches.find((branch) => String(branch.id) === String(value));
+
+  const options = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return branches;
+    return branches.filter((branch) => [branch.name, branch.location_label, branch.brand?.name, branch.preferred_branch_type]
+      .filter(Boolean).join(' ').toLowerCase().includes(needle));
+  }, [branches, query]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event) => {
+      if (!wrapRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  useEffect(() => { listRef.current?.children[active]?.scrollIntoView?.({ block: 'nearest' }); }, [active]);
+
+  const pick = (option) => {
+    setQuery('');
+    setOpen(false);
+    onChange(option ? String(option.id) : '');
+  };
+  const clear = () => { setQuery(''); setActive(0); onChange(''); };
+  const onKeyDown = (event) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setActive((i) => Math.min(i + 1, Math.max(options.length - 1, 0))); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setActive((i) => Math.max(i - 1, 0)); }
+    else if (event.key === 'Enter') { event.preventDefault(); if (open && options[active]) pick(options[active]); }
+    else if (event.key === 'Escape' && open) { event.stopPropagation(); setOpen(false); setQuery(''); }
+  };
+
+  return (
+    <span className="relative block flex-[1_1_auto] min-w-0" ref={wrapRef}>
+      <input
+        type="text"
+        className="w-full"
+        role="combobox"
+        aria-label="Search branches"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        autoComplete="off"
+        value={open ? query : (selected?.name || '')}
+        placeholder={selected?.name || placeholder}
+        style={{ paddingRight: 40 }}
+        onFocus={() => { setOpen(true); setQuery(''); setActive(0); }}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); setActive(0); }}
+        onKeyDown={onKeyDown}
+      />
+      {(query || value) && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          title="Clear search"
+          className="absolute right-[8px] top-[50%] [transform:translateY(-50%)] z-2 inline-grid place-items-center w-[24px] h-[24px] p-0 border-0 rounded-[7px] [background:transparent] text-muted cursor-pointer [transition:color_.15s_ease,_background_.15s_ease] hover:text-text hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={clear}
+        >
+          <FaXmark aria-hidden="true" />
+        </button>
+      )}
+      {open && (
+        <ul
+          id={listId}
+          ref={listRef}
+          role="listbox"
+          aria-label="Branches"
+          className="absolute top-[calc(100%_+_4px)] left-0 right-0 z-30 m-0 p-1 [list-style:none] max-h-[280px] overflow-y-auto [background:var(--panel)] border border-line-strong rounded-[10px] [box-shadow:var(--shadow-md)]"
+        >
+          {options.length ? options.map((branch, index) => (
+            <li
+              key={branch.id}
+              role="option"
+              aria-selected={String(branch.id) === String(value)}
+              className={`p-[8px_11px] rounded-[7px] cursor-pointer text-[13px] text-text hover:[background:var(--hover)] ${index === active ? '[background:var(--hover)]' : ''} ${String(branch.id) === String(value) ? 'font-[700]' : ''}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActive(index)}
+              onClick={() => pick(branch)}
+            >
+              {branch.name}
+              <small className="block text-muted text-[11.5px] font-[400]">
+                {[branch.location_label, branch.brand?.name].filter(Boolean).join(' · ') || 'Branch'}
+              </small>
+            </li>
+          )) : <li className="p-[8px_11px] text-[13px] text-muted" role="option" aria-disabled="true" aria-selected="false">No branch matches</li>}
+        </ul>
+      )}
+    </span>
+  );
+}
+
 export default function Branches() {
   const { role } = useAuth();
   const navigate = useNavigate();
   // 'default' (list) | 'half' (list + panel) | 'full' (five sections only)
   const [view, setView] = useState('default');
   const [selectedId, setSelectedId] = useState(null);
-  const [search, setSearch] = useState('');
+  const [branchPick, setBranchPick] = useState('');
   const [brandFilter, setBrandFilter] = useState('');
   // Half view: 6 cards per page; a card picked from a lower page is pinned to the first slot.
   const LIST_PER_PAGE = 6;
@@ -959,22 +1071,20 @@ export default function Branches() {
 
   const selected = branches.find((branch) => Number(branch.id) === Number(selectedId)) || null;
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const visible = (showDemo ? branches : branches.filter((branch) => !branch.is_demo))
-      .filter((branch) => !brandFilter || brandKeyOf(branch) === brandFilter);
-    if (!term) return visible;
-    return visible.filter((branch) => [
-      branch.name,
-      branch.location_label,
-      branch.branch_code,
-      branch.city,
-      branch.province,
-      branch.address,
-      branch.brand?.name,
-      branch.preferred_branch_type,
-    ].filter(Boolean).join(' ').toLowerCase().includes(term));
-  }, [branches, search, showDemo, brandFilter]);
+  const visibleBranches = useMemo(() => (showDemo ? branches : branches.filter((branch) => !branch.is_demo))
+    .filter((branch) => !brandFilter || brandKeyOf(branch) === brandFilter), [branches, showDemo, brandFilter]);
+
+  // The branch lookup only offers active (non-archived) branches.
+  const lookupBranches = useMemo(() => visibleBranches.filter((branch) => !branch.archived_at), [visibleBranches]);
+
+  const filtered = useMemo(() => (branchPick
+    ? visibleBranches.filter((branch) => String(branch.id) === String(branchPick))
+    : visibleBranches), [visibleBranches, branchPick]);
+
+  // Drop a picked branch that no longer exists after a reload.
+  useEffect(() => {
+    if (branchPick && !branches.some((branch) => String(branch.id) === String(branchPick))) setBranchPick('');
+  }, [branches, branchPick]);
 
   const pinnedFirst = useMemo(() => {
     const pinned = filtered.find((branch) => Number(branch.id) === Number(pinnedId));
@@ -1143,7 +1253,7 @@ export default function Branches() {
     if (!branch) return;
     // Make sure the card is in the list: clear a search that hides it, show demo branches if needed.
     if (!filtered.some((b) => Number(b.id) === Number(id))) {
-      if (search) setSearch('');
+      if (branchPick) setBranchPick('');
       if (branch.is_demo && !showDemo) setShowDemo(true);
     }
     // Open the branch in half view, pinned to the first slot like a normal card click.
@@ -1254,7 +1364,7 @@ export default function Branches() {
 
           {view === 'full' ? (
             <section className="mt-[-30px] [animation:bpFadeUp_.3s_var(--bp-ease)_both] motion-reduce:later:[animation:none] [container-type:inline-size] [container-name:bp-full] min-w-0" aria-label="Branch overview">
-              <header className="relative flex items-center justify-between gap-4 mb-3 min-h-[76px] p-[10px_18px] overflow-hidden border-0 rounded-[16px] [background:var(--bp-surface)] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[0_0_0_auto] [&::after]:w-[46%] [&::after]:[background:linear-gradient(270deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_44%,_transparent),_transparent_88%)] [&::after]:pointer-events-none max-[761px]:flex-wrap max-[761px]:later:gap-2 max-[761px]:later:[&::after]:w-[60%] max-[761px]:[&::after]:opacity-[.7]" style={{ '--brand-color': getBrand(selected).color }}>
+              <header className="relative flex items-center justify-between gap-4 mb-3 min-h-[76px] p-[10px_18px] overflow-hidden rounded-[14px] [border:1px_solid_color-mix(in_srgb,_var(--brand-color,_var(--accent))_45%,_var(--bp-border))] [background:linear-gradient(108deg,_color-mix(in_srgb,_var(--panel)_76%,_transparent)_0%,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_24%,_color-mix(in_srgb,_var(--panel)_70%,_transparent))_56%,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_54%,_color-mix(in_srgb,_var(--panel)_64%,_transparent))_100%)] [backdrop-filter:blur(18px)_saturate(1.45)] [box-shadow:inset_0_1px_0_color-mix(in_srgb,_var(--text)_15%,_transparent),_0_16px_38px_-26px_rgba(0,0,0,.65)] [&::after]:[content:''] [&::after]:absolute [&::after]:inset-[0_0_0_auto] [&::after]:w-[54%] [&::after]:[background:linear-gradient(270deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_76%,_transparent),_transparent_92%)] [&::after]:pointer-events-none max-[761px]:flex-wrap max-[761px]:later:gap-2 max-[761px]:later:[&::after]:w-[66%] max-[761px]:[&::after]:opacity-[.75]" style={{ '--brand-color': getBrand(selected).color }}>
                 <div className="relative z-1 flex items-center gap-2 min-w-0">
                   <button
                     type="button"
@@ -1287,8 +1397,20 @@ export default function Branches() {
                     <FaAngleRight aria-hidden="true" />
                   </button>
                 </div>
-                <div className="relative z-1 flex-none pr-[6px] later-2:[&_span]:text-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_68%,_white)] later-3:[&_span]:text-[15px] later-2:[&_span]:font-[820] later:[&_span]:tracking-[.12em] [&_span]:uppercase">
-                  <span>{brandLabelOf(selected)}</span>
+                <div className="relative z-1 flex-none pr-[6px] flex items-center">
+                  {getBrand(selected).logo
+                    ? (
+                      <img
+                        src={getBrand(selected).logo}
+                        alt={brandLabelOf(selected)}
+                        title={brandLabelOf(selected)}
+                        draggable="false"
+                        className={`block w-auto object-contain [filter:drop-shadow(0_1px_3px_rgba(0,0,0,.3))] ${brandKeyOf(selected) === 'kkopi' ? 'h-[56px] max-w-[240px]' : 'h-[48px] max-w-[210px]'}`}
+                      />
+                    )
+                    : (
+                      <span className="text-[color:color-mix(in_srgb,_var(--brand-color,_var(--accent))_20%,_white)] text-[15px] font-[820] tracking-[.12em] uppercase">{brandLabelOf(selected)}</span>
+                    )}
                 </div>
               </header>
 
@@ -1298,9 +1420,12 @@ export default function Branches() {
             </section>
           ) : (
             <div className={`bp-body grid grid-cols-[minmax(0,_1fr)_0px] [align-items:start] gap-0 [transition:grid-template-columns_.32s_var(--bp-ease),_gap_.32s_var(--bp-ease)] [&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(340px,_440px)] [&.is-open]:gap-4 max-[1181px]:later:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:gap-[14px] max-[1181px]:later:[&.is-open]:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:[&.is-open]:gap-[14px] motion-reduce:later:[transition:none] min-[1181px]:later-2:[&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(400px,_38%)] ${view === 'half' ? ' is-open' : ''}${panelClosing ? ' is-closing' : ''}`}>
-              <section className="data-panel overflow-hidden mb-[18px] min-[1182px]:mb-0 border border-line rounded-[19px] [background:#0A0E19] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
-                <div className="bp-list-head flex flex-wrap items-center justify-between gap-[12px_20px] p-[14px_18px] border-b border-b-line later-2:[&_h2]:m-0 [&_h2]:text-text later-2:[&_h2]:text-[20px] later:[&_h2]:font-[760] later-2:[&_h2]:tracking-[-.015em]">
-                  <h2 id="bp-list-title">Branches</h2>
+              <section className="data-panel overflow-hidden mb-[18px] min-[1182px]:mb-0 border border-line rounded-[12px] [background:#0A0E19] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
+                <div className="bp-list-head flex flex-wrap items-center justify-between gap-[12px_20px] p-[14px_18px] border-b border-b-line later-2:[&_h2]:m-0 [&_h2]:text-text later-2:[&_h2]:text-[20px] later:[&_h2]:font-[760] later-2:[&_h2]:tracking-[.06em]">
+                  <div className="min-w-0 flex flex-col">
+                    <h2 id="bp-list-title" className="uppercase">Branches</h2>
+                    <small className="text-muted text-[12px] [letter-spacing:0] normal-case">{filtered.length} of {branches.length} branches</small>
+                  </div>
                   <div className="flex items-center gap-3 mb-[14px] [&_select]:min-h-[40px] [&_select]:p-[0_12px] [&_select]:border [&_select]:border-line-strong [&_select]:rounded-[12px] [&_select]:[background:var(--panel)] [&_select]:text-text [&_select]:text-[14px] [&_select]:font-[600] [&_select]:cursor-pointer [&_input]:flex-[1_1_auto] [&_input]:min-w-0 [&_input]:min-h-[40px] [&_input]:p-[9px_13px] [&_input]:border [&_input]:border-input-line [&_input]:rounded-[12px] [&_input]:[outline:none] [&_input]:text-text [&_input]:[background:var(--input-bg)] [&_input]:[transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] [&_input::placeholder]:text-placeholder [&_input:hover]:border-line-strong later:[&_input:focus]:border-accent [&_input:focus]:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] [&_input:focus]:[background:var(--input-focus-bg)] [&_small]:flex-none [&_small]:text-muted later:[&_small]:text-[10px] [&_small]:whitespace-nowrap max-[761px]:flex-wrap max-[761px]:[&_small]:w-full [.bp-list-head_&]:flex-[1_1_260px] [.bp-list-head_&]:max-w-[520px] [.bp-list-head_&]:m-0">
                     <select
                       aria-label="Sort by brand"
@@ -1310,19 +1435,12 @@ export default function Branches() {
                       <option value="">All brands</option>
                       {Object.entries(BRANDS).map(([key, brand]) => <option key={key} value={key}>{brand.label}</option>)}
                     </select>
-                    <input
-                      type="search"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search branches, locations or brands"
-                      aria-label="Search branches"
-                    />
+                    <BranchLookup branches={lookupBranches} value={branchPick} onChange={setBranchPick} />
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-[8px_16px] p-[12px_18px_0] [&_small]:text-muted later-6:[&_small]:text-[12px] [&_small]:whitespace-nowrap">
-                  <small>{filtered.length} of {branches.length} branches</small>
+                {(role === 'admin' || (view === 'half' && listLastPage > 1)) && (
+                <div className="flex flex-wrap items-center justify-end gap-[8px_16px] p-[12px_18px_0]">
                   <div className="flex flex-wrap gap-[6px_14px] text-text-secondary text-[12px] [&_label]:inline-flex [&_label]:items-center [&_label]:gap-[5px] [&_label]:cursor-pointer">
-                    <label><input type="checkbox" checked={showDemo} onChange={(event) => setShowDemo(event.target.checked)} /> Show demo data</label>
                     {role === 'admin' && (
                       <label><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} /> Show archived</label>
                     )}
@@ -1335,6 +1453,7 @@ export default function Branches() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {!filtered.length ? (
                   <EmptyState
@@ -1356,6 +1475,10 @@ export default function Branches() {
                     ))}
                   </div>
                 )}
+
+                <div className="flex flex-wrap items-center justify-end gap-[6px_14px] p-[10px_18px_16px] text-text-secondary text-[12px] [&_label]:inline-flex [&_label]:items-center [&_label]:gap-[5px] [&_label]:cursor-pointer">
+                  <label><input type="checkbox" checked={showDemo} onChange={(event) => setShowDemo(event.target.checked)} /> Show demo data</label>
+                </div>
               </section>
 
               <aside

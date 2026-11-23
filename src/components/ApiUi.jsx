@@ -167,12 +167,12 @@ export function Modal({ title, onClose, children, footer, size = 'normal', chrom
   );
 }
 
-export function Pagination({ meta, onPage }) {
+export function Pagination({ meta, onPage, className = '' }) {
   if (!meta || meta.last_page <= 1) return null;
   const firstRecord = ((meta.current_page - 1) * meta.per_page) + 1;
   const lastRecord = Math.min(meta.current_page * meta.per_page, meta.total);
   return (
-    <nav className="later:[&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-2:[&_button]:border-line later-2:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-2:[&_button]:text-[9px] later-2:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] later-2:[&_button:hover:not(:disabled)]:[transform:translateY(-1px)] min-h-[58px] flex items-center justify-between gap-[14px] p-[11px_15px] border-t border-t-line text-muted text-[8px] max-[681px]:later:items-stretch max-[681px]:flex-col" aria-label="Pagination">
+    <nav className={`later:[&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-2:[&_button]:border-line later-2:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-2:[&_button]:text-[9px] later-2:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] later-2:[&_button:hover:not(:disabled)]:[transform:translateY(-1px)] min-h-[58px] flex items-center justify-between gap-[14px] p-[11px_15px] border-t border-t-line text-muted text-[8px] max-[681px]:later:items-stretch max-[681px]:flex-col ${className}`} aria-label="Pagination">
       <span className="pagination-summary">Showing {firstRecord}–{lastRecord} of {meta.total}</span>
       <div className="flex items-center gap-[9px] [&>span]:min-w-[100px] [&>span]:text-center max-[681px]:justify-between max-[681px]:[&_button]:flex-1">
         <button type="button" disabled={meta.current_page <= 1} onClick={() => onPage(meta.current_page - 1)}>Previous</button>
