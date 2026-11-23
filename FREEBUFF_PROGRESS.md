@@ -45,7 +45,7 @@ Last updated: 2026-11-23 (session setup)
 
 - Branches full view → **Branch Inventory header tones swapped**: the panel title row now carries the darker `--bg 94%` band and the Material/Source/On hand column header sits on the panel tone, so the title reads as the header instead of the column strip. The same darker title band now also sits on Supply requests, Needs attention and Delivery fulfillment. `src/pages/Branches.jsx`
 
-- Branches full view → **Branch Inventory search**: a "Search material" box sits beside the category dropdown and filters the table by material name (client-side, combined with the category and status filters, one page of 8 rows at a time). Typing returns to page 1, an empty result reads "No materials match this filter", and jumping to a material from elsewhere clears the search so the row is reachable. `src/pages/Branches.jsx`
+- Branches full view → **Branch Inventory search**: a "Search material" box sits beside the category dropdown and filters the table by material name (client-side, combined with the category and status filters, one page of 8 rows at a time). Typing returns to page 1, and jumping to a material from elsewhere clears the search so the row is reachable. An empty result keeps the table (header row intact) and shows a centred **"No materials found"** row that names the searched term, or points at the filters when no search is typed. `src/pages/Branches.jsx`
 
 ## In progress
 - Nothing half-done. Waiting for the next request.
