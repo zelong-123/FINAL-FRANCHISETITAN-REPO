@@ -1102,15 +1102,15 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
   const critPct = pctOf(criticalValue || 0);
   const lowPct = Math.max(critPct, pctOf(lowValue || 0));
   const onHandPct = pctOf(onHand);
-  // Real (not washed-out) colours: red below Critical, amber to Low, green above.
+  // The theme's own status colours: softer than pure red/amber/green, so the bar reads calmly.
   const track = [
     'linear-gradient(90deg',
-    `#e5484d 0%`,
-    `#e5484d ${critPct}%`,
-    `#f0b429 ${critPct}%`,
-    `#f0b429 ${lowPct}%`,
-    `#30a46c ${lowPct}%`,
-    `#30a46c 100%)`,
+    `var(--danger) 0%`,
+    `var(--danger) ${critPct}%`,
+    `var(--warning) ${critPct}%`,
+    `var(--warning) ${lowPct}%`,
+    `var(--success) ${lowPct}%`,
+    `var(--success) 100%)`,
   ].join(', ');
 
   const chips = [
@@ -1147,16 +1147,16 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
     setTouched({ low: true, critical: true, cover: true });
   };
 
-  const inputClass = 'w-full h-[52px] pl-[14px] pr-[58px] border rounded-[12px] [background:var(--input-bg)] text-text text-[22px] font-[600] [outline:none] [transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] focus:border-accent focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] focus:[background:var(--input-focus-bg)] [appearance:textfield] [&::-webkit-outer-spin-button]:[appearance:none] [&::-webkit-inner-spin-button]:[appearance:none]';
-  const labelClass = 'flex items-center gap-[5px] text-text text-[14px] font-[650]';
-  const suffixClass = 'absolute right-[14px] top-1/2 [transform:translateY(-50%)] text-text-secondary text-[14px] font-[600] pointer-events-none';
+  const inputClass = 'w-full h-[42px] pl-[12px] pr-[46px] border rounded-[10px] [background:var(--input-bg)] text-text text-[17px] font-[600] [outline:none] [transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] focus:border-accent focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] focus:[background:var(--input-focus-bg)] [appearance:textfield] [&::-webkit-outer-spin-button]:[appearance:none] [&::-webkit-inner-spin-button]:[appearance:none]';
+  const labelClass = 'flex items-center gap-[5px] text-text text-[13px] font-[650]';
+  const suffixClass = 'absolute right-[12px] top-1/2 [transform:translateY(-50%)] text-text-secondary text-[12.5px] font-[600] pointer-events-none';
 
   return (
     <Modal
       title={(
         <span className="flex min-w-0 flex-col gap-[2px]">
-          <span className="text-text text-[17px] font-[780] leading-[1.2] tracking-[-.01em]">Edit stock levels</span>
-          <span className="truncate text-text-secondary text-[14px] font-[500] leading-[1.35]">
+          <span className="text-text text-[16px] font-[780] leading-[1.2] tracking-[-.01em]">Edit stock levels</span>
+          <span className="truncate text-text-secondary text-[13px] font-[500] leading-[1.35]">
             {material.name} · counted in {unit || 'units'}
           </span>
         </span>
@@ -1165,21 +1165,21 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
       className="rounded-[14px]! max-[451px]:rounded-[12px]!"
       footer={(
         <div className="flex w-full flex-wrap items-center gap-[8px_10px]">
-          <span className={`mr-auto whitespace-nowrap text-[14px] font-[650] [transition:color_.18s_ease] max-[541px]:hidden ${dirty ? 'text-[color:var(--warning-text)]' : 'text-text-secondary'}`}>
+          <span className={`mr-auto whitespace-nowrap text-[13px] font-[650] [transition:color_.18s_ease] max-[541px]:hidden ${dirty ? 'text-[color:var(--warning-text)]' : 'text-text-secondary'}`}>
             {dirty ? 'Unsaved changes' : 'No changes yet'}
           </span>
           <span className="ml-auto flex flex-wrap items-center justify-end gap-[8px]">
-          <button type="button" onClick={onClose} className="ghost-button min-h-[42px]! inline-flex items-center justify-center p-[0_16px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[14px]! max-[451px]:text-[13px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent">Cancel</button>
+          <button type="button" onClick={onClose} className="ghost-button min-h-[36px]! inline-flex items-center justify-center p-[0_14px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[13px]! max-[451px]:text-[12.5px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent">Cancel</button>
           <button
             type="button"
-            className="ghost-button min-h-[42px]! inline-flex items-center justify-center p-[0_16px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[14px]! max-[451px]:text-[13px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent disabled:opacity-50 disabled:cursor-default"
+            className="ghost-button min-h-[36px]! inline-flex items-center justify-center p-[0_14px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[13px]! max-[451px]:text-[12.5px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent disabled:opacity-50 disabled:cursor-default"
             disabled={saving}
             onClick={resetToDefault}
           >
             Reset to default
           </button>
           <button
-            className="primary-button min-h-[42px]! inline-flex items-center justify-center gap-2 p-[0_18px]! max-[451px]:p-[0_12px]! border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[14px]! max-[451px]:text-[13px]! font-[720]! whitespace-nowrap tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:disabled]:text-muted [&:disabled]:[background:var(--surface-subtle)] [&:disabled]:cursor-not-allowed [&:disabled]:[box-shadow:none] [&:disabled]:opacity-100"
+            className="primary-button min-h-[36px]! inline-flex items-center justify-center gap-2 p-[0_16px]! max-[451px]:p-[0_12px]! border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_10px_22px_color-mix(in_srgb,_var(--accent)_16%,_transparent)] text-[13px]! max-[451px]:text-[12.5px]! font-[720]! whitespace-nowrap tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:disabled]:text-muted [&:disabled]:[background:var(--surface-subtle)] [&:disabled]:cursor-not-allowed [&:disabled]:[box-shadow:none] [&:disabled]:opacity-100"
             form="material-levels-form"
             disabled={saving || invalid || !dirty}
           >
@@ -1190,34 +1190,34 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
       )}
     >
       <Notice type="error">{error}</Notice>
-      <form id="material-levels-form" className="flex flex-col gap-[18px]" onSubmit={submit} noValidate>
+      <form id="material-levels-form" className="flex flex-col gap-[14px]" onSubmit={submit} noValidate>
         {/* 1. Summary: on hand + live reading */}
-        <div className="flex flex-wrap items-start justify-between gap-[12px_18px]">
+        <div className="flex flex-wrap items-center justify-between gap-[8px_16px]">
           <div className="min-w-0">
-            <p className="m-0 text-text-secondary text-[14px] font-[600]">On hand now</p>
-            <p className="m-0 mt-[2px] text-text text-[30px] font-[790] leading-[1.1]">{onHandLabel}</p>
+            <p className="m-0 text-text-secondary text-[13px] font-[600]">On hand now</p>
+            <p className="m-0 mt-[1px] text-text text-[23px] font-[790] leading-[1.15]">{onHandLabel}</p>
           </div>
-          <span className="inline-flex flex-none items-center gap-[8px] text-[16px] font-[730] whitespace-nowrap" style={{ color: previewTone.text }}>
-            <span aria-hidden="true" className="w-[8px] h-[8px] rounded-[50%]" style={{ background: previewTone.color }} />
+          <span className="inline-flex flex-none items-center gap-[7px] text-[14px] font-[730] whitespace-nowrap" style={{ color: previewTone.text }}>
+            <span aria-hidden="true" className="w-[7px] h-[7px] rounded-[50%]" style={{ background: previewTone.color }} />
             {previewTone.label}
           </span>
         </div>
 
         {/* 2. Stock bar with the Critical / Low markers */}
         <div>
-          <div className="relative h-[14px] rounded-[999px] overflow-hidden" style={{ background: track }} aria-hidden="true">
-            <span className="absolute top-0 bottom-0 w-[2px] [background:rgba(255,255,255,.75)]" style={{ left: `${critPct}%` }} />
-            <span className="absolute top-0 bottom-0 w-[2px] [background:rgba(255,255,255,.9)]" style={{ left: `${lowPct}%` }} />
-            <span className="absolute top-0 bottom-0 w-[3px] rounded-[2px] [background:#fff] [box-shadow:0_0_8px_rgba(255,255,255,.75)]" style={{ left: `${onHandPct}%`, transform: 'translateX(-50%)' }} />
+          <div className="relative h-[7px] rounded-[999px] overflow-hidden" style={{ background: track }} aria-hidden="true">
+            <span className="absolute top-0 bottom-0 w-[1.5px] [background:rgba(255,255,255,.45)]" style={{ left: `${critPct}%` }} />
+            <span className="absolute top-0 bottom-0 w-[1.5px] [background:rgba(255,255,255,.55)]" style={{ left: `${lowPct}%` }} />
+            <span className="absolute top-0 bottom-0 w-[2px] rounded-[2px] [background:#fff]" style={{ left: `${onHandPct}%`, transform: 'translateX(-50%)' }} />
           </div>
-          <div className="mt-[8px] flex flex-wrap items-center justify-between gap-[4px_14px] text-[14px] font-[650]">
+          <div className="mt-[6px] flex flex-wrap items-center justify-between gap-[4px_14px] text-[12.5px] font-[650]">
             <span className="text-[color:var(--danger-text)]">Critical at {formatQuantity(criticalValue || 0, unit)}</span>
             <span className="text-[color:var(--warning-text)]">Low at {formatQuantity(lowValue || 0, unit)}</span>
           </div>
         </div>
 
         {/* 3. Low + Critical */}
-        <div className="grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[541px]:grid-cols-[minmax(0,_1fr)]">
+        <div className="grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[12px] max-[541px]:grid-cols-[minmax(0,_1fr)]">
           <div>
             <label className={labelClass} htmlFor="material-levels-low">
               Low level <span className="text-[color:var(--danger-text)]" aria-hidden="true">*</span>
@@ -1283,7 +1283,7 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
               onBlur={() => setTouched((prev) => ({ ...prev, cover: true }))}
               aria-invalid={touched.cover && Boolean(coverError)}
               aria-describedby={touched.cover && coverError ? 'material-levels-cover-help' : undefined}
-              className={`${inputClass} max-w-[240px] max-[541px]:max-w-none ${touched.cover && coverError ? 'border-[color:var(--danger)]' : 'border-line-strong'} [font-size:18px] placeholder:text-placeholder placeholder:font-[500]`}
+              className={`${inputClass} max-w-[200px] max-[541px]:max-w-none ${touched.cover && coverError ? 'border-[color:var(--danger)]' : 'border-line-strong'} [font-size:15px]! placeholder:text-placeholder placeholder:font-[500]`}
             />
             <span className={suffixClass}>days</span>
           </div>
@@ -1291,18 +1291,18 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
         </div>
 
         {/* 5. How the reading will behave */}
-        <div className="pt-[16px] border-t border-t-line">
-          <p className="m-0 mb-[8px] text-text text-[15px] font-[700]">How status will read</p>
+        <div className="pt-[12px] border-t border-t-line">
+          <p className="m-0 mb-[7px] text-text text-[13.5px] font-[700]">How status will read</p>
           <div className="grid grid-cols-[repeat(4,_minmax(0,_1fr))] gap-[8px] max-[601px]:grid-cols-[repeat(2,_minmax(0,_1fr))]">
             {chips.map((chip) => {
               const active = previewStatus === chip.key;
               return (
                 <div key={chip.key} className="min-w-0">
-                  <span className={`flex items-center gap-[6px] text-[14px] [transition:color_.18s_ease] ${active ? 'text-text font-[750]' : 'text-text-secondary font-[600]'}`}>
-                    <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[50%]" style={{ background: LEVEL_TONES[chip.key].color }} />
+                  <span className={`flex items-center gap-[5px] text-[12.5px] [transition:color_.18s_ease] ${active ? 'text-text font-[750]' : 'text-text-secondary font-[600]'}`}>
+                    <span aria-hidden="true" className="w-[6px] h-[6px] flex-none rounded-[50%]" style={{ background: LEVEL_TONES[chip.key].color }} />
                     <span className="truncate">{chip.label}</span>
                   </span>
-                  <span className={`block mt-[2px] truncate text-[14px] [transition:color_.18s_ease] ${active ? 'text-text font-[600]' : 'text-text-secondary font-[500]'}`}>{chip.range}</span>
+                  <span className={`block mt-[1px] truncate text-[12.5px] [transition:color_.18s_ease] ${active ? 'text-text font-[600]' : 'text-text-secondary font-[500]'}`}>{chip.range}</span>
                 </div>
               );
             })}
@@ -1311,7 +1311,7 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
 
         {/* 6. Reference notes */}
         <div>
-          <ul className="m-0 p-0 [list-style:none] flex flex-col gap-[6px] text-text-secondary text-[14px] leading-[1.5] [&>li]:relative [&>li]:pl-[14px] [&>li::before]:[content:'•'] [&>li::before]:absolute [&>li::before]:left-0 [&>li::before]:text-muted">
+          <ul className="m-0 p-0 [list-style:none] flex flex-col gap-[4px] text-text-secondary text-[12.5px] leading-[1.5] [&>li]:relative [&>li]:pl-[13px] [&>li::before]:[content:'•'] [&>li::before]:absolute [&>li::before]:left-0 [&>li::before]:text-muted">
             <li>
               Default for this unit: <strong className="text-text font-[700]">Low {formatQuantity(defaults.low, unit)}</strong>
               {' · '}

@@ -47,6 +47,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Branches full view → **Branch Inventory search**: a "Search material" box sits beside the category dropdown and filters the table by material name (client-side, combined with the category and status filters, one page of 8 rows at a time). Typing returns to page 1, and jumping to a material from elsewhere clears the search so the row is reachable. An empty result keeps the table (header row intact) and shows a centred **"No materials found"** row that names the searched term, or points at the filters when no search is typed. That row is `8 × 60px` tall, the same height the body takes when it is padded out to a full page, so the panel never shrinks or jumps. `src/pages/Branches.jsx`
 
+- Branches → **Edit stock levels modal, compact pass**: on-hand reading 30px → 23px, bar 14px → 7px tall with hairline markers (no glow), number fields 52px/22px → 42px/17px with 10px corners, labels 13px, chips and notes 12.5px, tighter section gaps (18 → 14), footer buttons 36px. The bar now uses the theme's own `--danger` / `--warning` / `--success` instead of the saturated red/amber/green. `src/pages/Branches.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 
