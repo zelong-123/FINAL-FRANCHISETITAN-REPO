@@ -59,6 +59,10 @@ Last updated: 2026-11-23 (session setup)
 
 - Inquiries (all roles) → **Source and Date columns are bold**: the 350 weight came from the row's own `nth-child(4)` / `nth-child(5)` utilities (each `!important`), so a page-level CSS rule could not win the specificity fight. The row utilities themselves are now `font-[600]!`, so both columns render at 600 in every row. `src/pages/Inquiries.jsx`
 
+- Applicants → Franchisees (Admin + Sales) → **Location instead of a count**: the column used to print `franchisee.locations.length` (always `1`, one branch per franchisee), now it prints the branch's city (`Makati City`), falling back to province, then branch name, with `+N` when a franchisee somehow has more than one branch. Data already came from the API, no backend change.
+- Applicants → Franchisees → **Status column removed** (header and cell). `franchisees.franchise_status` is always `'active'` — nothing in the app ever writes another value — so the pill only repeated "Active". Real account state lives in Users; the Admin-only "Create Account" button that used to sit in that cell now sits under the owner's email in the Owner column.
+- Applicants → Franchisees → **readable table type**: body cells 13.5px / weight 500, business name 16px / 730, secondary line 12px, headers 10.5px, and taller rows. `src/pages/Applicants.jsx`, `src/tailwind.css`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 

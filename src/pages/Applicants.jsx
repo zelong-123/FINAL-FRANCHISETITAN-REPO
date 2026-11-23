@@ -1373,6 +1373,15 @@ function RequirementStatus({ status }) {
  * Accepted or Returned (with a reason) by Admin. The list itself comes from the API config.
  */
 /** Current residence (from the inquiry) and the preferred franchise location, which Sales or Admin may add later. */
+// Locations column reads as a place ('Makati City'), not a count: one branch per franchisee.
+function franchiseeLocationLabel(franchisee) {
+  const list = (franchisee?.locations || []).filter(Boolean);
+  if (!list.length) return '—';
+  const labelOf = (loc) => loc.city || loc.province || loc.name || '—';
+  const [first, ...rest] = list;
+  return rest.length ? `${labelOf(first)} +${rest.length}` : labelOf(first);
+}
+
 function ApplicantLocations({ editing, canEdit, busy, onSave }) {
   const [draft, setDraft] = useState(null);
   return (
@@ -3930,11 +3939,11 @@ export default function Applicants() {
           {remote.loading ? <LoadingState /> : !franchisees.length ? (
             <EmptyState label="No active franchisees yet." detail="Approved applicants appear here once activated." />
           ) : (
-            <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
+            <div className="table-wrap franchisees-table overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer">
               <table>
                 <thead>
                   <tr>
-                    <th>Business</th><th>Owner</th><th>Brand</th><th>Locations</th><th>Approved</th><th>Status</th>
+                    <th>Business</th><th>Owner</th><th>Brand</th><th>Location</th><th>Approved</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3948,24 +3957,25 @@ export default function Applicants() {
                       <td>
                         {franchisee.applicant?.full_name || '—'}
                         <small>{franchisee.applicant?.email || '—'}</small>
-                      </td>
-                      <td>{franchisee.applicant?.preferred_brand?.name || '—'}</td>
-                      <td>{franchisee.locations?.length || 0}</td>
-                      <td>{formatDate(franchisee.approval_date)}</td>
-                      <td>
-                        <StatusBadge value={franchisee.franchise_status} />
                         {!franchisee.has_portal_account && role === 'admin' && (
-                          <button type="button" className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" onClick={() => navigate('/users', { state: { createFranchiseeFor: {
-                            applicantId: franchisee.applicant_id,
-                            full_name: franchisee.applicant?.full_name || '',
-                            email: franchisee.applicant?.email || '',
-                            phone: franchisee.applicant?.phone || '',
-                            preferred_brand: franchisee.applicant?.preferred_brand || null,
-                            preferred_brand_id: franchisee.applicant?.preferred_brand?.id || null,
-                            status: 'active_franchisee',
-                          } } })}>Create Account</button>
+                          <button
+                            type="button"
+                            className="franchisee-create-account"
+                            onClick={() => navigate('/users', { state: { createFranchiseeFor: {
+                              applicantId: franchisee.applicant_id,
+                              full_name: franchisee.applicant?.full_name || '',
+                              email: franchisee.applicant?.email || '',
+                              phone: franchisee.applicant?.phone || '',
+                              preferred_brand: franchisee.applicant?.preferred_brand || null,
+                              preferred_brand_id: franchisee.applicant?.preferred_brand?.id || null,
+                              status: 'active_franchisee',
+                            } } })}
+                          >Create Account</button>
                         )}
                       </td>
+                      <td>{franchisee.applicant?.preferred_brand?.name || '—'}</td>
+                      <td>{franchiseeLocationLabel(franchisee)}</td>
+                      <td>{formatDate(franchisee.approval_date)}</td>
                     </tr>
                   ))}
                 </tbody>
