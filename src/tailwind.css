@@ -970,6 +970,47 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
+/* Proof of delivery (Logistics): the dialog, dropzone swap and small feedback motions.
+   Only transform/opacity animate; reduced motion keeps the fades and drops the rest. */
+@keyframes podOverlayIn { from { opacity: 0; } }
+@keyframes podOverlayOut { to { opacity: 0; } }
+@keyframes podPanelIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
+@keyframes podPanelOut { to { opacity: 0; transform: translateY(10px) scale(.985); } }
+@keyframes podFadeIn { from { opacity: 0; } }
+@keyframes podFadeOut { to { opacity: 0; } }
+@keyframes podFileIn { from { opacity: 0; transform: translateY(12px); } }
+@keyframes podFileOut { to { opacity: 0; transform: translateY(10px); } }
+@keyframes podDropIn { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes podErrorIn { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes podShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+@keyframes podThumbIn { from { opacity: 0; } }
+@keyframes podHintOut { to { opacity: 0; transform: translateY(-6px); } }
+@keyframes podHintIn { from { opacity: 0; transform: translateY(6px); } }
+@keyframes podCheckDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+
+.pod-overlay { animation: podOverlayIn 200ms ease both; }
+.pod-panel { animation: podPanelIn 260ms cubic-bezier(.22, 1, .36, 1) both; }
+.pod-overlay.pod-closing { animation: podOverlayOut 180ms ease both; }
+.pod-panel.pod-closing { animation: podPanelOut 180ms ease both; }
+.pod-file-in { animation: podFileIn 240ms cubic-bezier(.22, 1, .36, 1) both; }
+.pod-file-out { animation: podFileOut 200ms ease both; }
+.pod-drop-in { animation: podDropIn 220ms ease both; }
+.pod-thumb { animation: podThumbIn 220ms ease both; }
+.pod-hint-in { animation: podHintIn 200ms ease both; }
+.pod-hint-out { animation: podHintOut 200ms ease both; }
+.pod-shake { animation: podShake 320ms ease-in-out; }
+.pod-check path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: podCheckDraw 300ms ease-out 90ms forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pod-overlay { animation: podFadeIn 180ms ease both; }
+  .pod-panel { animation: podFadeIn 200ms ease both; }
+  .pod-overlay.pod-closing { animation: podFadeOut 150ms ease both; }
+  .pod-panel.pod-closing { animation: podFadeOut 150ms ease both; }
+  .pod-file-in, .pod-file-out, .pod-drop-in, .pod-thumb, .pod-hint-in, .pod-hint-out { animation: podFadeIn 150ms ease both; }
+  .pod-shake { animation: none; }
+  .pod-check path { animation: none; stroke-dashoffset: 0; }
+}
+
 /* Large TV screens: scale the whole page so it reads like a laptop. */
 @media (min-width: 2200px) {
   .inquiries-page,
