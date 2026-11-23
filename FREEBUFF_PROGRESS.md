@@ -41,6 +41,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Branches full view → **scrolling and focus**: the Needs attention and Delivery fulfillment lists no longer trap the wheel (`overscroll-behavior: contain` removed), so the page keeps scrolling once a list reaches its end; and a click anywhere on any full-view panel (Branch Inventory, Supply requests, Needs attention, Delivery fulfillment, Branch Detail) smooth-scrolls that panel to the vertical centre of the screen. The handler lives on the shared `Section` (`centrePanel`), only acts inside `.bp-full-grid`, and ignores clicks on buttons, links, inputs, labels and text selections, so controls keep their own behaviour. Vertical centring is clamped so a panel taller than the screen (Branch Inventory) can't slide its title under the sticky header: it stops 12px below `--header-height` instead. `src/pages/Branches.jsx`
 
+- Branches full view → **banner stroke removed**: the brand-tinted 1px border around the full-view header is gone; the gradient, blur and shadow carry the shape. `src/pages/Branches.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 
