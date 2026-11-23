@@ -304,6 +304,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
     // Clear filters so the material is in the list, then go to its page.
     setCategoryFilter('');
     setStatusFilter('');
+    setInventorySearch('');
     setHighlightMaterial(focusMaterial.id);
     const timer = window.setTimeout(() => setHighlightMaterial(null), 2500);
     return () => window.clearTimeout(timer);
@@ -319,6 +320,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   const [deliveryVisible, setDeliveryVisible] = useState(DELIVERY_PAGE_SIZE);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [inventorySearch, setInventorySearch] = useState('');
   const [brandCategories, setBrandCategories] = useState([]);
   const brandId = ops?.branch?.brand?.id ?? null;
   useEffect(() => {
@@ -360,10 +362,12 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   }
   if (!ops) return null;
 
+  const inventoryTerm = inventorySearch.trim().toLowerCase();
   // Worst status first (No stock, Critical, Low, Normal), then by name.
   const inventory = sortWorstFirst(ops.inventory || [])
     .filter((row) => !activeCategoryFilter || categoryKey(row.category) === activeCategoryFilter)
-    .filter((row) => !statusFilter || row.status === statusFilter);
+    .filter((row) => !statusFilter || row.status === statusFilter)
+    .filter((row) => !inventoryTerm || String(row.name || '').toLowerCase().includes(inventoryTerm));
   const summary = ops.inventory_summary || {};
   const activeRequests = ops.active_requests || [];
   const attention = ops.needs_attention || [];
@@ -423,7 +427,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   const thresholds = ops.thresholds || {};
 
   // Inventory pages of 8 rows; the Pagination meta mirrors the server shape.
-  const filtered = Boolean(activeCategoryFilter || statusFilter);
+  const filtered = Boolean(activeCategoryFilter || statusFilter || inventoryTerm);
   const invLastPage = Math.max(1, Math.ceil(inventory.length / INVENTORY_PER_PAGE));
   const invPage = Math.min(inventoryPage, invLastPage);
   const invRows = inventory.slice((invPage - 1) * INVENTORY_PER_PAGE, invPage * INVENTORY_PER_PAGE);
@@ -441,7 +445,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
         titleClassName="uppercase tracking-[.06em]!"
         className="bp-sec-inventory [grid-area:inventory] [&_.panel-title]:[background:color-mix(in_srgb,_var(--bg)_94%,_transparent)]"
         meta={(
-          <span className="inline-flex items-center gap-[12px]">
+          <span className="inline-flex flex-wrap items-center gap-[12px]">
             {brandCategories.length > 0 && (
               <select
                 aria-label="Filter by category"
@@ -453,6 +457,14 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                 {brandCategories.map((category) => <option key={category.id} value={categoryKey(category.name)}>{category.name}</option>)}
               </select>
             )}
+            <input
+              type="search"
+              value={inventorySearch}
+              onChange={(event) => { setInventorySearch(event.target.value); setInventoryPage(1); }}
+              placeholder="Search material"
+              aria-label="Search material in this branch's inventory"
+              className="w-[180px] min-h-[40px] p-[0_12px] border border-line-strong rounded-[10px] [background:var(--panel)] text-text text-[14px] font-[600] [outline:none] placeholder:text-placeholder placeholder:font-[500] focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] max-[721px]:w-full"
+            />
             <select
               aria-label="Filter by status"
               value={statusFilter}
@@ -471,7 +483,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
         )}
       >
         {inventory.length > 0 && (
-          <div key={`${invPage}-${animateFilters ? activeCategoryFilter : ''}-${animateFilters ? statusFilter : ''}`} style={animateFilters ? undefined : { animation: `${inventoryDirection > 0 ? 'bpInventoryFromRight' : 'bpInventoryFromLeft'} .24s ease-out both` }} className={`table-wrap ${animateFilters ? 'bp-inventory-filter-enter' : ''} [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer later:overflow-auto later:max-h-[none] later-2:overflow-x-auto later-2:[overflow-y:visible] later:[.bp-full-grid_.bp-sec-inventory_&]:max-h-[none] [.bp-full-grid_.bp-sec-inventory_&]:overflow-x-auto [.bp-full-grid_.bp-sec-inventory_&]:[overflow-y:visible]`}>
+          <div key={`${invPage}-${animateFilters ? activeCategoryFilter : ''}-${animateFilters ? statusFilter : ''}-${animateFilters ? inventoryTerm : ''}`} style={animateFilters ? undefined : { animation: `${inventoryDirection > 0 ? 'bpInventoryFromRight' : 'bpInventoryFromLeft'} .24s ease-out both` }} className={`table-wrap ${animateFilters ? 'bp-inventory-filter-enter' : ''} [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer later:overflow-auto later:max-h-[none] later-2:overflow-x-auto later-2:[overflow-y:visible] later:[.bp-full-grid_.bp-sec-inventory_&]:max-h-[none] [.bp-full-grid_.bp-sec-inventory_&]:overflow-x-auto [.bp-full-grid_.bp-sec-inventory_&]:[overflow-y:visible]`}>
             <table className="[&_th]:top-0 [&_th]:[background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [&_td_small]:text-muted later:[&_tr.is-low_td]:[background:color-mix(in_srgb,_var(--warning)_5%,_transparent)] later-2:[&_tr.is-out_td]:[background:color-mix(in_srgb,_var(--danger)_6%,_transparent)] later:min-w-[620px] later:text-[13.5px] later:[&_th]:static later:[&_th]:p-[9px_14px] later:[&_th]:text-[11.5px] [&_th]:whitespace-nowrap later:[&_td]:p-[8px_14px] [&_td]:[vertical-align:top] later:[&_td_strong]:text-[13.5px] [&_td_small]:block later:[&_td_small]:text-[11.5px] [.bp-drawer-scroll_&]:min-w-0 [.bp-drawer-scroll_&_th]:p-[10px_12px] [.bp-drawer-scroll_&_td]:p-[10px_12px]">
               <thead>
                 <tr>
