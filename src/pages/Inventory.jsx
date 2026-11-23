@@ -674,6 +674,11 @@ function AddProductModal({ role, brands, defaultBrandId, onClose, onSaved }) {
   );
 }
 
+// Adjust Inventory: large type, two big direction cards, a stepper with quick chips and a
+// live before/after summary. The API call and props are unchanged.
+const ADJUST_STEPPER_CLASS = 'grid h-[46px] w-[46px] flex-none place-items-center rounded-[12px] border-2 border-line-strong [background:var(--input-bg)] text-[19px] font-[700] leading-none text-text cursor-pointer [transition:border-color_.16s_ease,_background_.16s_ease,_transform_.16s_ease] hover:border-accent hover:[background:var(--hover)] active:[transform:scale(.97)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]';
+const ADJUST_CHIP_CLASS = 'min-h-[32px] rounded-full border border-line-strong [background:transparent] p-[0_12px] text-[12px] font-[650] text-text-secondary cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] hover:text-text hover:border-accent hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.45] disabled:cursor-not-allowed';
+
 function AdjustQuantityModal({ item, onClose, onSaved }) {
   const [direction, setDirection] = useState('increase');
   const [quantity, setQuantity] = useState('');
@@ -681,11 +686,30 @@ function AdjustQuantityModal({ item, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const unit = item.unit || '';
+  const current = Number(item.quantity) || 0;
   const numeric = Number(quantity);
   const validQuantity = Number.isFinite(numeric) && numeric > 0;
+  const overStock = direction === 'decrease' && validQuantity && numeric - current > 1e-9;
+  const invalid = (quantity !== '' && !validQuantity) || overStock;
   const delta = validQuantity ? (direction === 'increase' ? numeric : -numeric) : 0;
-  const resulting = Number(item.quantity) + delta;
+  const resulting = current + delta;
   const ready = validQuantity && resulting >= 0 && !saving;
+  const toneClass = delta > 0 ? 'text-[color:var(--success-text)]' : delta < 0 ? 'text-[color:var(--danger-text)]' : 'text-text';
+  const message = overStock
+    ? `You only have ${formatNumber(current, 2)} ${unit}. Stock can't go below zero.`
+    : quantity !== '' && !validQuantity
+      ? 'Must be greater than zero.'
+      : validQuantity ? 'Looks good.' : '';
+
+  const step = (amount) => {
+    const next = Math.max(0, Math.round(((validQuantity ? numeric : 0) + amount) * 1000) / 1000);
+    setQuantity(next > 0 ? String(next) : '');
+  };
+  const useAll = () => {
+    setDirection('decrease');
+    setQuantity(current > 0 ? String(current) : '');
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -706,45 +730,162 @@ function AdjustQuantityModal({ item, onClose, onSaved }) {
     }
   };
 
+  const options = [
+    {
+      value: 'increase', label: 'Add stock', hint: 'New delivery or recount', icon: '+',
+      selectedClass: 'border-[color:var(--success)]! [background:color-mix(in_srgb,_var(--success)_15%,_transparent)]!',
+      iconClass: '[background:var(--success)]! border-[color:var(--success)]! text-[#04160f]!',
+    },
+    {
+      value: 'decrease', label: 'Remove stock', hint: 'Used, spilled or expired', icon: '−',
+      selectedClass: 'border-[color:var(--danger)]! [background:color-mix(in_srgb,_var(--danger)_15%,_transparent)]!',
+      iconClass: '[background:var(--danger)]! border-[color:var(--danger)]! text-[#1d0509]!',
+    },
+  ];
+
   return (
     <Modal
-      title={`Adjust ${item.name || 'quantity'}`}
+      title={<span className="block text-[20px] font-[750] leading-[1.25] tracking-[-.01em] text-text">Adjust {item.name || 'quantity'}</span>}
       onClose={onClose}
       size="small"
       footer={(
         <>
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="adjust-quantity-form" disabled={!ready}>
-            {saving ? 'Saving…' : 'Confirm adjustment'}
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-[42px]! inline-flex items-center justify-center gap-2 rounded-[12px]! border-2! border-line-strong! [background:transparent]! p-[0_16px]! text-[14px]! font-[700]! text-text-secondary! cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] hover:text-text! hover:border-accent! hover:[background:var(--hover)]! focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[520px]:flex-1"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="adjust-quantity-form"
+            disabled={!ready}
+            className={`min-h-[42px]! inline-flex items-center justify-center gap-2 rounded-[12px]! border-2! border-transparent! p-[0_16px]! text-[14px]! font-[700]! cursor-pointer [transition:filter_.16s_ease,_opacity_.16s_ease] enabled:hover:[filter:brightness(1.06)] disabled:opacity-[.55]! disabled:cursor-not-allowed focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[520px]:flex-1 ${direction === 'increase' ? '[background:var(--success)]! text-[#04160f]!' : '[background:var(--danger)]! text-[#1d0509]!'}`}
+          >
+            {saving ? 'Saving…' : direction === 'increase' ? 'Add stock' : 'Remove stock'}
           </button>
         </>
       )}
     >
       <Notice type="error">{error}</Notice>
-      <div className="grid grid-cols-[minmax(0,_1fr)_auto] gap-[5px_15px] mb-4 p-[13px_14px] border border-line rounded-[13px] [background:var(--surface-subtle)] [&_span]:text-muted later:[&_span]:text-[8px] [&_strong]:row-[span_2] [&_strong]:self-center [&_strong]:text-text later:[&_strong]:text-[16px] later:[&_strong]:tracking-[-.03em] [&_small]:text-text-secondary [&_small]:text-[9px]">
-        <span>Current quantity</span>
-        <strong>{formatNumber(item.quantity)} {item.unit || ''}</strong>
-        <small>Resulting quantity: {formatNumber(resulting)} {item.unit || ''}</small>
-      </div>
-      <form id="adjust-quantity-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={submit}>
-        <Field label="Direction" required>
-          <div className="[.inventory-page_&]:flex [.inventory-page_&]:gap-4 [.inventory-page_&]:items-center [.inventory-page_&_label]:inline-flex [.inventory-page_&_label]:items-center [.inventory-page_&_label]:gap-[6px] [.inventory-page_&_label]:text-[12px] [.inventory-page_&_label]:text-text [.inventory-page_&_label]:cursor-pointer">
-            <label>
-              <input type="radio" name="direction" value="increase" checked={direction === 'increase'} onChange={() => setDirection('increase')} />
-              Increase
-            </label>
-            <label>
-              <input type="radio" name="direction" value="decrease" checked={direction === 'decrease'} onChange={() => setDirection('decrease')} />
-              Decrease
-            </label>
+
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="mb-[16px] rounded-[14px] border border-line [background:var(--surface-subtle)] p-[14px_16px] max-[520px]:p-[13px_14px]"
+      >
+        <div className="flex items-stretch gap-3 max-[520px]:flex-col max-[520px]:gap-2">
+          <div className="min-w-0 flex-1">
+            <span className="block text-[12.5px] font-[600] text-muted">Current stock</span>
+            <strong className="mt-1 block text-[26px] font-[800] leading-none tabular-nums text-text">
+              {formatNumber(current, 2)} {unit}
+            </strong>
           </div>
-        </Field>
-        <Field label="Quantity" required hint="Must be greater than zero. Stock can never go below zero.">
-          <input required type="number" min="0.01" step="any" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        </Field>
-        <Field label="Note (optional)" hint={`${note.length}/255`} full>
-          <textarea maxLength={255} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why is the quantity changing?" />
-        </Field>
+          <span aria-hidden="true" className="self-center flex-none text-[16px] leading-none text-muted max-[520px]:hidden">→</span>
+          <div className="min-w-0 flex-1 text-right max-[520px]:text-left">
+            <span className="block text-[12.5px] font-[600] text-muted">New stock</span>
+            <strong className={`mt-1 block text-[26px] font-[800] leading-none tabular-nums ${toneClass}`}>
+              {formatNumber(resulting, 2)} {unit}
+            </strong>
+            <span className={`mt-1 block text-[12px] font-[600] ${toneClass}`}>
+              {delta === 0 ? 'No change yet' : `${delta > 0 ? '+' : ''}${formatNumber(delta, 2)} ${unit} from today`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <form id="adjust-quantity-form" onSubmit={submit} className="grid gap-0">
+        <fieldset className="mb-[16px] min-w-0 border-0! p-0">
+          <legend className="mb-2 p-0 text-[14px] font-[700] leading-[1.3] text-text">
+            What do you want to do? <span aria-hidden="true" className="text-[color:var(--danger-text)]">*</span>
+          </legend>
+          <div className="grid grid-cols-2 gap-3 max-[520px]:grid-cols-1">
+            {options.map((option) => {
+              const selected = direction === option.value;
+              return (
+                <label
+                  key={option.value}
+                  className={`flex min-h-[62px] cursor-pointer items-center gap-[10px] rounded-[12px] border-2 p-[10px_12px] [transition:border-color_.16s_ease,_background_.16s_ease] focus-within:[outline:2px_solid_var(--accent)] focus-within:[outline-offset:2px] ${selected ? option.selectedClass : 'border-line [background:var(--input-bg)] hover:border-line-strong'}`}
+                >
+                  <input
+                    type="radio"
+                    name="adjust-direction"
+                    value={option.value}
+                    checked={selected}
+                    onChange={() => setDirection(option.value)}
+                    className="sr-only"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className={`grid h-[34px] w-[34px] flex-none place-items-center rounded-full border-2 text-[17px] font-[800] leading-none ${selected ? option.iconClass : 'border-line text-muted'}`}
+                  >
+                    {option.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <strong className="block text-[14px] font-[700] leading-[1.2] text-text">{option.label}</strong>
+                    <span className="mt-[2px] block text-[11.5px] leading-[1.3] text-muted">{option.hint}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <div className="mb-[16px]">
+          <label htmlFor="adjust-quantity" className="mb-2 block text-[14px] font-[700] leading-[1.3] text-text">
+            Quantity <span className="text-[12px] font-[600] text-muted">({unit})</span> <span aria-hidden="true" className="text-[color:var(--danger-text)]">*</span>
+          </label>
+          <div className="flex items-stretch gap-2">
+            <button type="button" className={ADJUST_STEPPER_CLASS} onClick={() => step(-1)} aria-label="Decrease quantity by 1">−</button>
+            <input
+              id="adjust-quantity"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              placeholder="0"
+              aria-invalid={invalid || undefined}
+              className={`min-h-[46px] w-full min-w-0 flex-1 rounded-[12px] border-2 [background:var(--input-bg)] p-[0_12px] text-center text-[20px] font-[800] leading-none tabular-nums text-text [appearance:textfield] [outline:none] [transition:border-color_.16s_ease,_box-shadow_.16s_ease] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:text-placeholder focus:border-[color:var(--accent)] focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_18%,_transparent)] ${invalid ? 'border-[color:var(--danger)]' : 'border-input-line'}`}
+            />
+            <button type="button" className={ADJUST_STEPPER_CLASS} onClick={() => step(1)} aria-label="Increase quantity by 1">+</button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-[6px]">
+            {[1, 5, 10].map((amount) => (
+              <button key={amount} type="button" className={ADJUST_CHIP_CLASS} onClick={() => setQuantity(String(amount))}>
+                +{amount}
+              </button>
+            ))}
+            <button type="button" className={ADJUST_CHIP_CLASS} onClick={useAll} disabled={current <= 0}>
+              All {formatNumber(current, 2)} {unit}
+            </button>
+          </div>
+          {message && (
+            <p
+              role={invalid ? 'alert' : undefined}
+              className={`mt-2 text-[12px] font-[600] leading-[1.45] ${invalid ? 'text-[color:var(--danger-text)]' : 'text-[color:var(--success-text)]'}`}
+            >
+              {message}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor="adjust-note" className="mb-2 block text-[14px] font-[700] leading-[1.3] text-text">
+            Note <span className="text-[12px] font-[600] text-muted">(optional)</span>
+          </label>
+          <textarea
+            id="adjust-note"
+            maxLength={255}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Why is the quantity changing?"
+            className="min-h-[76px] w-full rounded-[12px] border-2 border-input-line [background:var(--input-bg)] p-[10px_12px] text-[13px] leading-[1.5] text-text [outline:none] [transition:border-color_.16s_ease,_box-shadow_.16s_ease] placeholder:text-placeholder focus:border-[color:var(--accent)] focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_18%,_transparent)]"
+          />
+          <div className="mt-1 text-right text-[11.5px] text-muted">{note.length} / 255</div>
+        </div>
       </form>
     </Modal>
   );

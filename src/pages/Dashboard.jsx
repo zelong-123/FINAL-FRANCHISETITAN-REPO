@@ -570,6 +570,8 @@ function TransactionBadge({ type }) {
   return <StatusBadge value={transactionTypeLabels[type] || type} />;
 }
 
+const TRANSACTIONS_PER_PAGE = 7;
+
 function TransactionsPanel({ from, to }) {
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [from, to]);
@@ -578,7 +580,7 @@ function TransactionsPanel({ from, to }) {
   // here (payload.data) left `data.data` undefined and the table always empty.
   const { data, loading, error } = useRemote(
     async () => (await api.get('/inventory-transactions', {
-      per_page: 20,
+      per_page: TRANSACTIONS_PER_PAGE,
       page,
       ...(from ? { from, to } : {}),
     })),

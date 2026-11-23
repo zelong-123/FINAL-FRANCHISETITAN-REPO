@@ -393,6 +393,9 @@
 @layer utilities {
 body,
 #root { min-width: 320px; min-height: 100vh; margin: 0; }
+/* Reserve the scrollbar width even when a page is short, so two-column layouts do not
+   shift sideways (and look compressed) when a panel collapses or expands. */
+html { scrollbar-gutter: stable; }
 .recharts-wrapper,
 .recharts-wrapper *:focus,
 .recharts-wrapper *:focus-visible,

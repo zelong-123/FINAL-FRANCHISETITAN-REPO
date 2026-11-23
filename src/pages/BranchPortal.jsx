@@ -5,6 +5,10 @@ import { api, firstValidationMessage } from '../lib/api';
 import { BRANCH_VIEWS, branchPlace, breadcrumbFor, resolveView } from '../lib/branchWorkspace';
 import { useAuth } from '../context/AuthContext';
 import { BRANCH_LOGIN_PATH } from '../lib/portal';
+import kkopiLogo from '../assets/kkopi_new.png';
+import godoLogo from '../assets/godo_new.png';
+import dailyDashLogo from '../assets/dailydash_new.png';
+import laPastaLogo from '../assets/lapasta_new.png';
 import { EmptyState, LoadingState, Notice } from '../components/ApiUi';
 import BranchDashboardPanel from '../components/branch/BranchDashboardPanel';
 import BranchRawMaterialsPanel from '../components/branch/BranchRawMaterialsPanel';
@@ -32,6 +36,15 @@ const brandAccent = (brand) => {
   if (name.includes('dailydash')) return '#0088FF';
   if (name.includes('lapasta')) return '#D32F2F';
   return '#6687ff';
+};
+
+const brandLogo = (brand) => {
+  const name = `${brand?.code || ''} ${brand?.name || ''}`.toLowerCase().replace(/[^a-z]/g, '');
+  if (name.includes('kkopi')) return kkopiLogo;
+  if (name.includes('godo')) return godoLogo;
+  if (name.includes('dailydash')) return dailyDashLogo;
+  if (name.includes('lapasta')) return laPastaLogo;
+  return null;
 };
 
 function BranchPortal({ preview = false }) {
@@ -95,6 +108,7 @@ function BranchPortal({ preview = false }) {
 
   const location = workspace?.location;
   const accent = brandAccent(location?.brand);
+  const logo = brandLogo(location?.brand);
   const ownerName = location?.franchisee?.user?.full_name || user?.full_name || 'Branch owner';
   const place = workspace ? branchPlace(location, ownerName) : 'Branch workspace';
   const crumbs = breadcrumbFor(view);
@@ -154,9 +168,10 @@ function BranchPortal({ preview = false }) {
               ))}
             </ol>
           </nav>
+          {logo && <img src={logo} alt={`${location.brand.name} logo`} className="ml-auto h-[60px] w-auto max-w-[240px] object-contain max-[761px]:h-[40px]" />}
         </header>
 
-        <main className="flex-1 min-w-0 p-[22px_28px] max-[761px]:later:p-4">
+        <main className={`flex-1 min-w-0 max-[761px]:later:p-4 ${view === 'supply' ? 'p-[10px_12px]' : 'p-[22px_28px]'}`}>
           <Notice type="error">{error}</Notice>
           {loading && !workspace ? <LoadingState label="Loading your branch workspace…" /> : !workspace ? (
             <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">

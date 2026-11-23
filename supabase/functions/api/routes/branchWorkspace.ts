@@ -12,6 +12,7 @@ import * as ledger from '../services/ledger.ts';
 import { readCsv, warehouse } from '../services/inventory.ts';
 import { receiveLines, recordCost, requirementsFor, resolveBrandProduct, syncRecipe } from '../services/branchStock.ts';
 import { notifyRoles } from '../services/notifications.ts';
+import { audit } from '../services/users.ts';
 import { evaluate, lastCountsByMaterial, STOCK_LABELS } from '../services/materialStock.ts';
 import { DELIVERED_ON, sqlList, STATUSES as SUPPLY_STATUSES } from '../services/supplyStatus.ts';
 
@@ -307,12 +308,14 @@ workspaceRoutes.get('/branch/workspace/recipes', anyBranchRole, async (c) => {
 workspaceRoutes.get('/branch/workspace/products', anyBranchRole, async (c) => {
   const { db, files } = c.get('deps');
   const loc = await location(c);
-  const products = await db.query(`select * from brand_products where brand_id = $1 and is_active = true order by name`, [loc.brand_id]);
+  // ?archived=1 lists the products the branch put away; the default is what it can still produce.
+  const archived = boolParam(c.req.query('archived'));
+  const products = await db.query(`select * from brand_products where brand_id = $1 and is_active = $2 order by name`, [loc.brand_id, !archived]);
   const rows: Row[] = [];
   for (const product of products) {
     const ingredients = await resolveBrandProduct(db, product.id, loc);
     rows.push({
-      id: product.id, sku: product.sku, name: product.name, description: product.description, image_url: product.image_path ? files.publicUrl(product.image_path) : null,
+      id: product.id, sku: product.sku, name: product.name, description: product.description, image_url: product.image_path ? files.publicUrl(product.image_path) : null, is_active: Boolean(product.is_active),
       ingredients: ingredients.map((row) => ({
         product_id: row.product_id, name: row.name, unit: row.material_unit || row.unit, quantity_per_piece: row.required_milli !== null ? round3(row.required_milli / 1000) : round3(Number(row.quantity_per_piece)),
         batch_amount: row.batch_amount, batch_unit: row.unit, yield_pieces: row.yield_pieces, available: row.available, missing: Boolean(row.missing),
@@ -322,6 +325,30 @@ workspaceRoutes.get('/branch/workspace/products', anyBranchRole, async (c) => {
   const materials = await db.query(`select 1 from profittrack_materials where location_id = $1 and is_active = true limit 1`, [loc.id]);
   return ok(c, { brand: brandBrief(loc.brand), products: rows, has_materials: materials.length > 0 });
 });
+
+// Archive a product the branch no longer makes, or put it back. Nothing is deleted: the product,
+// its recipe and its production history stay, and only the Production dropdown changes.
+for (const [action, active] of [['archive', false], ['unarchive', true]] as const) {
+  workspaceRoutes.post(`/branch/workspace/products/:product/${action}`, franchisee, async (c) => {
+    const { db } = c.get('deps');
+    const loc = await location(c);
+    const id = routeId(c, 'product');
+    const [product] = await db.query(`select * from brand_products where id = $1 and brand_id = $2`, [id, loc.brand_id]);
+    requireFound(product);
+    if (Boolean(product.is_active) === active) {
+      return ok(c, { id: product.id, is_active: Boolean(product.is_active) }, active ? 'This product is already active.' : 'This product is already archived.');
+    }
+    if (active) {
+      const recipe = await db.query(`select 1 from brand_product_ingredients where brand_product_id = $1 limit 1`, [product.id]);
+      if (!recipe.length) fail('product', 'Admin must add at least one recipe ingredient before this product can come back.');
+    }
+    const saved = (await updateRow(db, 'brand_products', product.id, { is_active: active, updated_by_user_id: c.get('user').id }))!;
+    await audit(c, db, active ? 'brand_product.restored' : 'brand_product.archived', { type: 'App\\Models\\BrandProduct', id: product.id }, product, saved);
+    return ok(c, { id: product.id, is_active: Boolean(saved.is_active) }, active
+      ? `${product.name} is back in the Production dropdown.`
+      : `${product.name} was archived. It no longer appears in the Production dropdown, and its production history stays.`);
+  });
+}
 
 workspaceRoutes.post('/branch/workspace/produce-product', franchisee, async (c) => {
   const { db } = c.get('deps');
