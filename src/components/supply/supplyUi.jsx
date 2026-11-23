@@ -1,6 +1,10 @@
 // Shared look for the Supply Requests page, drawer and modals: the app theme's own tokens and
 // the same button and card classes the rest of the app uses.
 import React from 'react';
+import {
+  FaArrowRotateLeft, FaBan, FaBoxOpen, FaBoxesPacking, FaCalendarCheck, FaCircleCheck, FaCircleXmark, FaClock,
+  FaHourglassHalf, FaMagnifyingGlass, FaPaperPlane, FaPause, FaTriangleExclamation, FaTruckFast,
+} from 'react-icons/fa6';
 import { supplyStatusLabel } from '../../lib/supplyStatus';
 import { isFinished, STAGES, stageIndex, URGENCY_TONE, urgencyLabel } from './supplyStyles';
 
@@ -24,9 +28,30 @@ const STATUS_TONE = {
   returned: 'warning', on_hold: 'warning', discrepancy_review: 'danger', rejected: 'danger', cancelled: 'neutral',
   completed: 'success', completed_with_discrepancy: 'warning', dispatched: 'accent', delivered: 'accent',
 };
-export function StatusChip({ status }) {
-  if (status === 'returned') return <Chip tone="warning" borderless>Returned – waiting for branch</Chip>;
-  return <Chip tone={STATUS_TONE[status] || 'accent'}>{supplyStatusLabel(status)}</Chip>;
+/** One icon per stage, so the drawer's plain status reads at a glance; Preparing and Dispatched also move. */
+const STATUS_ICON = {
+  draft: FaHourglassHalf, submitted: FaPaperPlane, under_review: FaMagnifyingGlass, waiting_logistics: FaClock,
+  scheduled: FaCalendarCheck, preparing: FaBoxesPacking, dispatched: FaTruckFast, delivered: FaBoxOpen,
+  completed: FaCircleCheck, completed_with_discrepancy: FaCircleCheck, returned: FaArrowRotateLeft,
+  on_hold: FaPause, discrepancy_review: FaTriangleExclamation, rejected: FaBan, cancelled: FaCircleXmark,
+};
+const STATUS_MOTION = { preparing: 'supply-status-icon-work', dispatched: 'supply-status-icon-roll' };
+const TONE_TEXT = {
+  neutral: 'text-text-secondary', accent: 'text-accent-text', danger: 'text-danger-text',
+  warning: 'text-[color:var(--warning-text)]', success: 'text-success-text',
+};
+/** `plain` drops the chip border and fill (status + icon in its tone colour only), used in the drawer header. */
+export function StatusChip({ status, plain = false }) {
+  const tone = status === 'returned' ? 'warning' : (STATUS_TONE[status] || 'accent');
+  const label = status === 'returned' ? 'Returned – waiting for branch' : supplyStatusLabel(status);
+  if (!plain) return <Chip tone={tone} borderless={status === 'returned'}>{label}</Chip>;
+  const Icon = STATUS_ICON[status] || FaCircleCheck;
+  return (
+    <span className={`inline-flex items-center gap-[7px] text-[14.5px] font-[720] [&>svg]:shrink-0 [&>svg]:text-[16px] ${TONE_TEXT[tone] || TONE_TEXT.neutral}`}>
+      <Icon aria-hidden="true" className={STATUS_MOTION[status] || ''} />
+      {label}
+    </span>
+  );
 }
 
 
@@ -55,7 +80,7 @@ export function Section({ title, children, aside }) {
   return (
     <section className="mt-[20px]">
       <div className="flex items-center justify-between gap-2 mb-[8px]">
-        <h3 className="m-0 text-muted text-[10.5px] font-[800] tracking-[.14em] uppercase">{title}</h3>
+        <h3 className="m-0 flex items-center gap-[8px] text-text text-[10.5px] font-[800] tracking-[.14em] uppercase before:[content:''] before:block before:w-[3px] before:h-[13px] before:rounded-[2px] before:[background:var(--accent)]">{title}</h3>
         {aside}
       </div>
       {children}

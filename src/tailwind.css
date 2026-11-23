@@ -476,6 +476,9 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   overflow: hidden;
   min-height: 0;
 }
+/* Warehouse inventory (Admin and Logistics): the stock status reads as a plain label, no outline. */
+.inventory-page .status-pill { border-color: transparent; }
+
 /* Add warehouse product modal: bigger labels, taller inputs and dropdowns. */
 .wh-product-form label > span {
   font-size: 13px;
@@ -1009,6 +1012,410 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   .pod-file-in, .pod-file-out, .pod-drop-in, .pod-thumb, .pod-hint-in, .pod-hint-out { animation: podFadeIn 150ms ease both; }
   .pod-shake { animation: none; }
   .pod-check path { animation: none; stroke-dashoffset: 0; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Logistics dashboard: inline date filter, metric cards, stage chevrons */
+/* ------------------------------------------------------------------ */
+
+/* Date filter without the full-width outlined bar: sentence-case label and a 44px select. */
+/* The filter sits in the dashboard's own wrapper row, which already adds the
+   bottom gap — keep the bar itself margin-free so no space is doubled up. */
+.dashboard-page .date-filter-bar.is-plain {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 12px;
+}
+
+.dashboard-page .date-filter-bar.is-plain > span:first-child {
+  color: #98a2b8;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dashboard-page .date-filter-bar.is-plain select {
+  min-height: 36px;
+  padding: 0 30px 0 12px;
+  border: 1px solid #2f3752;
+  border-radius: 9px;
+  background: transparent;
+  color: #e8ebf3;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.dashboard-page .date-filter-bar.is-plain select:focus-visible {
+  outline: 2px solid #6d7cff;
+  outline-offset: 2px;
+}
+
+.dashboard-page .date-filter-bar.is-plain select option {
+  background: #131929;
+  color: #e8ebf3;
+}
+
+.dashboard-page .date-filter-bar.is-plain input[type='date'] {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid #2f3752;
+  border-radius: 9px;
+  background: transparent;
+  color: #e8ebf3;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Metric cards: flat card, no icon, no border, number in the primary text colour. */
+.stage-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.stage-metric-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 11px;
+  background: #131929;
+  overflow: hidden;
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+
+/* Same soft gradient circle as the Warehouse inventory metric cards, top-right. */
+.stage-metric-card::after {
+  content: '';
+  position: absolute;
+  top: -70px;
+  right: -58px;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent-2) 7%, transparent));
+  transition: transform .35s ease;
+  pointer-events: none;
+}
+
+.stage-metric-card > * { position: relative; z-index: 1; }
+
+.stage-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(4, 8, 18, .34);
+}
+
+.stage-metric-card:hover::after { transform: scale(1.16); }
+
+.stage-metric-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stage-metric-head > span { color: #98a2b8; font-size: 12.5px; font-weight: 600; }
+.stage-metric-icon { flex: 0 0 auto; font-size: 15px; color: color-mix(in srgb, var(--accent) 55%, #98a2b8); transition: color .18s ease; }
+.stage-metric-card:hover .stage-metric-icon { color: color-mix(in srgb, var(--accent) 88%, #dbe1ff); }
+.stage-metric-card > strong { color: #e8ebf3; font-size: 27px; font-weight: 700; line-height: 1.02; letter-spacing: -0.02em; }
+.stage-metric-card > small { display: flex; align-items: center; gap: 6px; color: #98a2b8; font-size: 12px; line-height: 1.3; }
+.stage-metric-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #f2b866; }
+
+@media (max-width: 1180px) {
+  .stage-metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .stage-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+}
+
+@media (max-width: 460px) {
+  .stage-metric-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Requests by stage card + chevron steps. */
+.stage-chart-card {
+  padding: 15px 18px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #131929;
+  transition: box-shadow .2s ease;
+}
+
+.stage-chart-card:hover { box-shadow: 0 12px 26px rgba(4, 8, 18, .32); }
+
+.stage-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+}
+
+.stage-chart-head > h2 { margin: 0; color: #e8ebf3; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.stage-chart-sub { margin: 0; color: #98a2b8; font-size: 13px; }
+
+@media (max-width: 860px) {
+  .stage-chart-sub { font-size: 12.5px; }
+}
+
+.stage-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each step slides in from the left, one after another, when the chart mounts. */
+@keyframes stage-step-in {
+  from { opacity: 0; translate: -46px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* The shape lives on ::before so a filter (focus ring, hover brightness) on the
+   <li> is never clipped by the chevron's own clip-path. */
+.stage-step {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 92px;
+  margin-left: -6px;
+  animation: stage-step-in .42s cubic-bezier(.22, .8, .3, 1) both;
+  animation-delay: calc(var(--step-index, 0) * 65ms);
+  transition: transform .15s ease, filter .15s ease;
+}
+
+.stage-step::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--step-bg, #161c2e);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%, 18px 50%);
+}
+
+.stage-step--first { margin-left: 0; }
+
+.stage-step--first::before {
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%);
+}
+
+/* The body carries the padding, so the <li> keeps the shape and the lift is not clipped. */
+.stage-step-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 0 28px 0 34px;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.stage-step--first .stage-step-body { padding: 0 28px 0 22px; }
+
+.stage-step-value { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.stage-step-value > strong { color: #5d6684; font-size: 28px; font-weight: 700; line-height: 1; }
+.stage-step-value > em { font-style: normal; font-size: 13px; font-weight: 500; color: #98a2b8; }
+.stage-step-name { color: #6b7590; font-size: 13px; font-weight: 500; line-height: 1.25; }
+
+/* Interactive stage (count > 0): indigo heat tint, brighter text, lift on hover. */
+.stage-step--live .stage-step-body { cursor: pointer; }
+.stage-step--on .stage-step-value > strong { color: #b9c3ff; }
+.stage-step--on .stage-step-name { color: #e8ebf3; font-weight: 600; }
+
+.stage-step--heat1 { --step-bg: #26305a; }
+.stage-step--heat2 { --step-bg: #2d3a73; }
+.stage-step--heat3 { --step-bg: #394590; }
+
+.stage-step--live:hover {
+  z-index: 2;
+  transform: translateY(-3px);
+  filter: brightness(1.25);
+}
+
+/* clip-path clips outline/box-shadow, so the keyboard ring is a doubled drop-shadow on the <li>. */
+.stage-step:has(.stage-step-body:focus-visible) {
+  filter: drop-shadow(0 0 1.5px #6d7cff) drop-shadow(0 0 1.5px #6d7cff);
+}
+
+.stage-step--live:hover:has(.stage-step-body:focus-visible) {
+  filter: brightness(1.25) drop-shadow(0 0 1.5px #6d7cff) drop-shadow(0 0 1.5px #6d7cff);
+}
+
+.stage-step .stage-step-body:focus-visible { outline: none; }
+
+/* Delivered and Returned keep their own tones, declared after the heat rules. */
+.stage-step--delivered { --step-bg: #1b3a30; }
+.stage-step--delivered .stage-step-value > strong { color: #7fd8a8; }
+.stage-step--delivered .stage-step-name { color: #e8ebf3; font-weight: 600; }
+
+.stage-step-returned {
+  flex: 0 0 150px;
+  margin-left: 16px;
+}
+
+.stage-step-returned::before {
+  border-radius: 10px;
+  clip-path: none;
+}
+
+.stage-step-returned .stage-step-body { padding: 0 22px; }
+
+.stage-step--returned { --step-bg: #2b2417; }
+.stage-step--returned .stage-step-value > strong { color: #f2b866; }
+.stage-step--returned .stage-step-name { color: #e8ebf3; font-weight: 600; }
+
+@media (hover: none) {
+  .stage-step--live:hover { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-step { animation: none; transition: filter .15s ease; }
+  .stage-step--live:hover { transform: none; }
+}
+
+@media (max-width: 1200px) {
+  .stage-steps { gap: 6px 0; }
+  .stage-step { flex: 1 1 22%; }
+  .stage-step-returned { flex: 1 1 22%; }
+}
+
+@media (max-width: 640px) {
+  .stage-chart-card { padding: 20px 18px; }
+  .stage-steps { gap: 8px; }
+  .stage-step,
+  .stage-step--first,
+  .stage-step-returned {
+    flex: 1 1 calc(50% - 4px);
+    margin-left: 0;
+  }
+  .stage-step::before,
+  .stage-step--first::before {
+    border-radius: 10px;
+    clip-path: none;
+  }
+  .stage-step .stage-step-body { padding: 0 16px; }
+}
+
+/* Admin > dashboard > Supply / Inventory: the chevron card uses the same darker
+   chart surface as the panels below it. The tabpanel only exists on that page. */
+.dashboard-tabpanel .stage-chart-card { background: #070a13; }
+
+/* Requests table under the chart: larger type, taller rows, 7 rows a page.
+   The !important flags beat the long arbitrary-variant utilities on the panel. */
+.stage-requests { border-radius: 8px; }
+
+.stage-requests .table-wrap table { min-width: 900px; font-size: 13.5px; }
+.stage-requests th { padding: 11px 14px !important; font-size: 10.5px !important; letter-spacing: .06em; }
+.stage-requests td { padding: 12px 14px !important; font-size: 13.5px !important; line-height: 1.5 !important; vertical-align: top; }
+.stage-requests td strong { font-size: 13.5px !important; }
+
+.stage-requests .stage-cat-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 300px; }
+.stage-requests .stage-cat-tag { display: inline-flex; align-items: center; padding: 2px 8px; border: 0; border-radius: 6px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12.5px; font-weight: 500; line-height: 1.6; white-space: nowrap; }
+.stage-requests .stage-cat-toggle { display: inline-flex; align-items: center; gap: 4px; min-height: 0 !important; height: 22px; padding: 0 8px !important; border: 0 !important; border-radius: 6px !important; background: color-mix(in srgb, var(--accent) 14%, transparent) !important; color: var(--accent-text) !important; font-size: 12px !important; font-weight: 600 !important; cursor: pointer; }
+.stage-requests .stage-cat-toggle:hover { background: color-mix(in srgb, var(--accent) 24%, transparent) !important; }
+.stage-requests .stage-cat-arrow { font-size: 9px; transition: transform .15s ease; }
+.stage-requests .stage-cat-arrow.is-open { transform: rotate(180deg); }
+
+.stage-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; padding: 11px 14px; border-top: 1px solid var(--border); }
+.stage-pager-info { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.stage-pager-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* Pagination reads as a dark control strip, not as light chips. */
+.stage-pager-buttons > button { min-width: 30px; height: 30px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--bg-elevated) 86%, var(--panel)); color: var(--text-secondary); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: color .15s ease, background .15s ease, border-color .15s ease; }
+.stage-pager-buttons > button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, color-mix(in srgb, var(--bg-elevated) 86%, var(--panel))); color: var(--text); }
+.stage-pager-buttons > button[aria-current='page'] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 30%, var(--bg-elevated)); color: var(--text); }
+.stage-pager-buttons > button:disabled { opacity: .4; cursor: default; }
+.stage-pager-buttons > button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+.stage-pager-ellipsis { padding: 0 1px; color: var(--muted); font-size: 12.5px; }
+
+@media (max-width: 640px) {
+  .stage-pager { padding: 10px 12px; }
+  .stage-pager-info { font-size: 12px; }
+}
+
+/* Supply request drawer: the action button that was pressed runs one neon-blue
+   lap around its own border, so a slow round-trip still reads as "working".
+   The runner is a masked conic gradient whose angle is animated with @property,
+   which keeps the button's shape still while the light travels the edge. */
+@property --supply-btn-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.supply-action-loading {
+  position: relative;
+  cursor: progress;
+}
+
+.supply-action-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--supply-btn-angle),
+    transparent 0deg 230deg,
+    rgba(56, 189, 248, .45) 312deg,
+    #38bdf8 342deg,
+    #a5e8ff 356deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: supply-btn-orbit .9s linear 1 both;
+}
+
+@keyframes supply-btn-orbit {
+  from { --supply-btn-angle: 0deg; }
+  to { --supply-btn-angle: 360deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .supply-action-loading::after {
+    animation: none;
+    background: conic-gradient(from 300deg, transparent 0deg 300deg, #7dd3fc 360deg);
+  }
+}
+
+/* Supply status icon: Preparing and Dispatched are hands-on stages, so their icon keeps moving
+   (a packing bob and a driving sway). The other stages stay still. */
+@keyframes supply-status-work { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes supply-status-roll { 0%, 100% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
+.supply-status-icon-work { animation: supply-status-work 1.8s ease-in-out infinite; }
+.supply-status-icon-roll { animation: supply-status-roll 1.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .supply-status-icon-work,
+  .supply-status-icon-roll { animation: none; }
 }
 
 /* Large TV screens: scale the whole page so it reads like a laptop. */

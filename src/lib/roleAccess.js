@@ -81,7 +81,7 @@ export const NAVIGATION = {
  * Dashboard panels per role — drives the dashboard renderer.
  * Panel ids: kpi, dateFilter, salesTrend, applicantFunnel, inquirySource,
  * inquiryAcquisition, topBranches, insights, recentApplications, transactions,
- * inventoryHealth, stageTracker, stageBreakdown, fulfillmentTrend.
+ * inventoryHealth, stageTracker, stageChevrons, stageBreakdown, fulfillmentTrend.
  */
 export const DASHBOARD_PANELS = {
   admin: [
@@ -89,6 +89,8 @@ export const DASHBOARD_PANELS = {
     'dateFilter',
     'inquiryAcquisition',
     'inventoryHealth',
+    'stageChevrons',
+    'fulfillmentTrend',
     'applicantFunnel',
     'inquirySource',
     'salesTrend',
@@ -116,7 +118,6 @@ export const DASHBOARD_PANELS = {
   logistics: [
     'dateFilter',
     'stageTracker',
-    'stageBreakdown',
     'fulfillmentTrend',
     'inventoryHealth',
     'transactions',
