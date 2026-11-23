@@ -4,6 +4,7 @@ import {
   FaAngleLeft,
   FaAngleRight,
   FaBoxesStacked,
+  FaCheck,
   FaCircleExclamation,
   FaClipboardList,
   FaClockRotateLeft,
@@ -223,7 +224,7 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
  * raw-material ledger: the same rows the branch portal reads.
  * ------------------------------------------------------------------ */
 function Section({ title, meta, className = '', titleClassName = '', children }) {
-  return (                    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
+  return (                    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[9px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
       <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
         <h2 className={titleClassName}>{title}</h2>
         {meta && <span>{meta}</span>}
@@ -235,7 +236,45 @@ function Section({ title, meta, className = '', titleClassName = '', children })
 
 const INVENTORY_PER_PAGE = 8;
 
-function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevels, onBranchAction, focusMaterial = null, animateFilters = false }) {
+/* Delivery fulfillment: 10 rows at a time, with quick date presets. */
+const DELIVERY_PAGE_SIZE = 10;
+
+/* Needs attention: 10 rows at a time, grouped by how bad the stock is. */
+const ATTENTION_PAGE_SIZE = 10;
+const ATTENTION_STATUSES = ['out', 'critical', 'low'];
+const ATTENTION_TONES = {
+  out: { label: 'No stock', dot: '#9aa4b8', text: 'var(--text-secondary)', mix: '#9aa4b8' },
+  critical: { label: 'Critical', dot: '#e5484d', text: 'var(--danger-text)', mix: '#e5484d' },
+  low: { label: 'Low', dot: '#f0b429', text: 'var(--warning-text)', mix: '#f0b429' },
+};
+const DELIVERY_PRESETS = [
+  { key: '7d', label: 'Last 7 days' },
+  { key: '30d', label: 'Last 30 days' },
+  { key: 'month', label: 'This month' },
+];
+const isoDay = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const dayOfValue = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : isoDay(date);
+};
+const presetRange = (key) => {
+  const today = new Date();
+  const to = isoDay(today);
+  if (key === '7d') {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    return { from: isoDay(from), to };
+  }
+  if (key === '30d') {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 29);
+    return { from: isoDay(from), to };
+  }
+  if (key === 'month') return { from: isoDay(new Date(today.getFullYear(), today.getMonth(), 1)), to };
+  return { from: '', to: '' };
+};
+
+function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevels, onBranchAction, onRetry = null, focusMaterial = null, animateFilters = false }) {
   const costing = useCosting();
   const [inventoryPage, setInventoryPage] = useState(1);
   const [inventoryDirection, setInventoryDirection] = useState(1);
@@ -249,7 +288,15 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
     const timer = window.setTimeout(() => setHighlightMaterial(null), 2500);
     return () => window.clearTimeout(timer);
   }, [focusMaterial]);
-  const [openDeliveries, setOpenDeliveries] = useState({});
+  const [attentionStatus, setAttentionStatus] = useState('all');
+  const [attentionSearch, setAttentionSearch] = useState('');
+  const [attentionVisible, setAttentionVisible] = useState(ATTENTION_PAGE_SIZE);
+  const attentionListRef = useRef(null);
+  const [deliveryOpenId, setDeliveryOpenId] = useState(null);
+  const [deliveryPreset, setDeliveryPreset] = useState('');
+  const [deliveryFrom, setDeliveryFrom] = useState('');
+  const [deliveryTo, setDeliveryTo] = useState('');
+  const [deliveryVisible, setDeliveryVisible] = useState(DELIVERY_PAGE_SIZE);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [brandCategories, setBrandCategories] = useState([]);
@@ -274,6 +321,17 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
     if (highlightMaterial == null) return;
     document.querySelector('[data-inv-focus="true"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [highlightMaterial, inventoryPage]);
+  // Back to the top and the first page whenever the stock filter or the search changes.
+  useEffect(() => {
+    setAttentionVisible(ATTENTION_PAGE_SIZE);
+    if (attentionListRef.current) attentionListRef.current.scrollTop = 0;
+  }, [attentionStatus, attentionSearch]);
+  // The newest delivery starts open; keep the open row while it is still listed.
+  useEffect(() => {
+    const rows = [...(ops?.deliveries || [])].sort((a, b) => new Date(b.delivered_at || 0) - new Date(a.delivered_at || 0));
+    if (!rows.length) return;
+    setDeliveryOpenId((current) => (current != null && rows.some((row) => row.id === current) ? current : rows[0].id));
+  }, [ops]);
   if (loading && !ops) {
     return <Section title="Branch Inventory"><LoadingState label="Loading branch data…" /></Section>;
   }
@@ -289,7 +347,60 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   const summary = ops.inventory_summary || {};
   const activeRequests = ops.active_requests || [];
   const attention = ops.needs_attention || [];
+  const attentionTotal = attention.length;
+  const attentionCounts = ATTENTION_STATUSES.reduce((acc, status) => ({ ...acc, [status]: attention.filter((item) => item.status === status).length }), {});
+  const attentionChips = [
+    { key: 'all', label: 'All', count: attentionTotal },
+    ...ATTENTION_STATUSES.map((status) => ({ key: status, label: ATTENTION_TONES[status].label, count: attentionCounts[status] || 0 })),
+  ].filter((chip) => chip.count > 0);
+  const attentionTerm = attentionSearch.trim().toLowerCase();
+  // Within each group the most urgent row (lowest on-hand vs critical level) comes first.
+  const attentionFiltered = attention
+    .filter((item) => attentionStatus === 'all' || item.status === attentionStatus)
+    .filter((item) => !attentionTerm || String(item.label || '').toLowerCase().includes(attentionTerm))
+    .sort((a, b) => {
+      const ratio = (item) => (Number(item.on_hand) || 0) / Math.max(Number(item.critical_level) || 0, 1);
+      return ratio(a) - ratio(b);
+    });
+  const attentionShown = attentionFiltered.slice(0, attentionVisible);
+  const attentionGroupsView = ATTENTION_STATUSES
+    .map((status) => ({ status, rows: attentionShown.filter((item) => item.status === status) }))
+    .filter((group) => group.rows.length > 0);
+  const attentionChipClass = (active) => `min-h-[32px] inline-flex items-center gap-[6px] p-[0_12px] border rounded-[999px] text-[13.5px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:[background:var(--hover)]'}`;
+  const openAttentionMaterial = (item) => onEditLevels?.(ops.inventory?.find((row) => Number(row.id) === Number(item.material_id)) || {
+    id: item.material_id, name: item.label, unit: item.unit, low_level: item.low_level, critical_level: item.critical_level, on_hand: item.on_hand,
+  });
   const deliveries = ops.deliveries || [];
+  const sortedDeliveries = [...deliveries].sort((a, b) => new Date(b.delivered_at || 0) - new Date(a.delivered_at || 0));
+  const deliveryHasRange = Boolean(deliveryFrom || deliveryTo);
+  const filteredDeliveries = sortedDeliveries.filter((row) => {
+    const day = dayOfValue(row.delivered_at);
+    if (!day) return !deliveryHasRange;
+    if (deliveryFrom && day < deliveryFrom) return false;
+    if (deliveryTo && day > deliveryTo) return false;
+    return true;
+  });
+  const visibleDeliveries = filteredDeliveries.slice(0, deliveryVisible);
+  const applyDeliveryPreset = (key) => {
+    const range = presetRange(key);
+    setDeliveryPreset(key);
+    setDeliveryFrom(range.from);
+    setDeliveryTo(range.to);
+    setDeliveryVisible(DELIVERY_PAGE_SIZE);
+  };
+  const clearDeliveryFilter = () => {
+    setDeliveryPreset('');
+    setDeliveryFrom('');
+    setDeliveryTo('');
+    setDeliveryVisible(DELIVERY_PAGE_SIZE);
+  };
+  const editDeliveryDate = (setter) => (event) => {
+    setter(event.target.value);
+    setDeliveryPreset('');
+    setDeliveryVisible(DELIVERY_PAGE_SIZE);
+  };
+  const deliveryChipClass = (active) => `min-h-[34px] inline-flex items-center p-[0_14px] border rounded-[999px] text-[14px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:border-line-strong hover:[background:var(--hover)]'}`;
+  const deliveryInputClass = 'min-h-[36px] p-[4px_10px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[14px] font-[600] [outline:none] focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]';
   const branch = ops.branch || {};
   const brand = getBrand(branch);
   const thresholds = ops.thresholds || {};
@@ -344,7 +455,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
       >
         {inventory.length > 0 && (
           <div key={`${invPage}-${animateFilters ? activeCategoryFilter : ''}-${animateFilters ? statusFilter : ''}`} style={animateFilters ? undefined : { animation: `${inventoryDirection > 0 ? 'bpInventoryFromRight' : 'bpInventoryFromLeft'} .24s ease-out both` }} className={`table-wrap ${animateFilters ? 'bp-inventory-filter-enter' : ''} [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer later:overflow-auto later:max-h-[none] later-2:overflow-x-auto later-2:[overflow-y:visible] later:[.bp-full-grid_.bp-sec-inventory_&]:max-h-[none] [.bp-full-grid_.bp-sec-inventory_&]:overflow-x-auto [.bp-full-grid_.bp-sec-inventory_&]:[overflow-y:visible]`}>
-            <table className="[&_th]:top-0 [&_td_small]:text-muted later:[&_tr.is-low_td]:[background:color-mix(in_srgb,_var(--warning)_5%,_transparent)] later-2:[&_tr.is-out_td]:[background:color-mix(in_srgb,_var(--danger)_6%,_transparent)] later:min-w-[620px] later:text-[13.5px] later:[&_th]:static later:[&_th]:p-[9px_14px] later:[&_th]:text-[11.5px] [&_th]:whitespace-nowrap later:[&_td]:p-[8px_14px] [&_td]:[vertical-align:top] later:[&_td_strong]:text-[13.5px] [&_td_small]:block later:[&_td_small]:text-[11.5px] [.bp-drawer-scroll_&]:min-w-0 [.bp-drawer-scroll_&_th]:p-[10px_12px] [.bp-drawer-scroll_&_td]:p-[10px_12px]">
+            <table className="[&_th]:top-0 [&_th]:[background:color-mix(in_srgb,_var(--bg)_94%,_transparent)] [&_td_small]:text-muted later:[&_tr.is-low_td]:[background:color-mix(in_srgb,_var(--warning)_5%,_transparent)] later-2:[&_tr.is-out_td]:[background:color-mix(in_srgb,_var(--danger)_6%,_transparent)] later:min-w-[620px] later:text-[13.5px] later:[&_th]:static later:[&_th]:p-[9px_14px] later:[&_th]:text-[11.5px] [&_th]:whitespace-nowrap later:[&_td]:p-[8px_14px] [&_td]:[vertical-align:top] later:[&_td_strong]:text-[13.5px] [&_td_small]:block later:[&_td_small]:text-[11.5px] [.bp-drawer-scroll_&]:min-w-0 [.bp-drawer-scroll_&_th]:p-[10px_12px] [.bp-drawer-scroll_&_td]:p-[10px_12px]">
               <thead>
                 <tr>
                   <th>Material</th>
@@ -403,13 +514,13 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Supply requests"
-        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests] [&_.panel-title]:min-h-[58px] [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
+        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests] [&_.panel-title]:min-h-[58px] [&_.panel-title_h2]:text-[17.5px] [&_.panel-title_h2]:uppercase [&_.panel-title_h2]:tracking-[.05em] [&_.panel-title_span]:text-[14px]"
         meta={activeRequests.length ? `${activeRequests.length} open` : 'No open requests'}
       >
         {activeRequests.length > 0 && (
           <ul className="m-0 p-0 [list-style:none] flex flex-col">
             {activeRequests.map((request) => (
-              <li className="flex items-center justify-between gap-[14px] p-[14px_18px] border-b border-b-line last:border-b-0" key={request.id}>
+              <li className="flex items-center justify-between gap-[14px] p-[14px_18px] border-b border-b-line last:border-b-0 [&_.status-pill]:min-h-[30px]! [&_.status-pill]:p-[5px_13px]! [&_.status-pill]:text-[11.5px]!" key={request.id}>
                 <div className="min-w-0">
                   <strong className="block text-text text-[16px] font-[760] [font-family:ui-monospace,monospace]">{request.request_number}</strong>
                   <small className="block mt-[4px] text-muted text-[13.5px] leading-[1.5]">
@@ -424,82 +535,298 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
           </ul>
         )}
         <div className="flex justify-end p-[12px_18px] border-t border-t-line">
-          <button type="button" className="ghost-button min-h-[42px] inline-flex items-center justify-center gap-[8px] p-[0_16px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent" onClick={onOpenRequests}>
+          <button type="button" className="primary-button min-h-[36px] inline-flex items-center justify-center gap-[7px] p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_8px_22px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12.5px] font-[720] cursor-pointer [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-1px)] [&:hover:not(:disabled)]:[box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_28%,_transparent)]" onClick={onOpenRequests}>
             Open in Supply Requests
           </button>
         </div>
       </Section>
 
       <Section
-        title="Needs Attention"
+        title="Needs attention"
         className="[grid-area:attention] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
-        meta={attention.length
-          ? (thresholds.description || "Based on each material's low and critical levels")
-          : 'Nothing needs attention'}
+        meta={attentionTotal ? (thresholds.description || "Based on each material's low and critical levels") : 'Nothing needs attention'}
       >
-        {attention.length > 0 && (
-          <ul className="m-0 p-0 [list-style:none] flex flex-col [&_li]:p-[14px_18px] [&_li]:border-b [&_li]:border-b-line [&_li:last-child]:border-b-0 [&_small]:block [&_small]:mt-[5px] [&_small]:text-muted [&_small]:text-[13.5px] [&_small]:leading-[1.5] [&_li.is-critical_.bp-attention-tag]:text-[color:var(--warning-text)] [&_li.is-low_.bp-attention-tag]:text-accent-text [&_li.is-out_.bp-attention-tag]:text-danger-text">
-            {attention.map((item, index) => (
-              <li key={`${item.material_id || index}`} className={`is-${item.status || 'low'}`}>
-                <div className="flex items-center justify-between gap-[12px] [&_strong]:text-text [&_strong]:text-[16px] [&_strong]:font-[740]">
-                  <strong>{item.label}</strong>
-                  <StatusBadge
-                    value={item.status === 'out' || item.status === 'critical' ? 'critical' : 'low'}
-                    label={item.alert}
-                  />
-                </div>
-                <small>{item.detail}</small>
-              </li>
+        {error ? (
+          <div className="flex flex-col items-center gap-[8px] p-[32px_22px] text-center" role="alert">
+            <p className="m-0 text-text text-[15.5px] font-[740]">Couldn't load stock levels</p>
+            <p className="m-0 text-text-secondary text-[14.5px] leading-[1.5]">{error}</p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="ghost-button mt-[4px] min-h-[38px] inline-flex items-center justify-center p-[0_16px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        ) : loading && !attentionTotal ? (
+          <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
+            {[0, 1, 2, 3].map((row) => (
+              <div key={row} className="flex items-center justify-between gap-3 [animation:apDotPulse_1.2s_ease-in-out_infinite]">
+                <span className="block h-[13px] w-[180px] rounded-[6px] [background:var(--surface-strong)]" />
+                <span className="block h-[13px] w-[72px] rounded-[6px] [background:var(--surface-strong)]" />
+              </div>
             ))}
-          </ul>
+          </div>
+        ) : attentionTotal === 0 ? (
+          <div className="flex flex-col items-center gap-[10px] p-[36px_22px] text-center">
+            <span
+              aria-hidden="true"
+              className="grid place-items-center w-[46px] h-[46px] border rounded-[50%] text-[20px] [color:var(--success-text)] [border-color:color-mix(in_srgb,_var(--success)_58%,_transparent)] [background:color-mix(in_srgb,_var(--success)_10%,_transparent)]"
+            >
+              <FaCheck />
+            </span>
+            <p className="m-0 text-text text-[16px] font-[760]">All materials are above their low levels</p>
+            <p className="m-0 max-w-[430px] text-text-secondary text-[14.5px] leading-[1.55]">
+              Nothing needs your attention right now. Items will appear here when their stock reaches the low or critical level.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="flex-none flex flex-col gap-[10px] p-[10px_16px_12px] border-b border-b-line">
+              <div className="flex flex-wrap items-center gap-[6px]" role="group" aria-label="Filter by stock status">
+                {attentionChips.map((chip) => (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    aria-pressed={attentionStatus === chip.key}
+                    onClick={() => setAttentionStatus(chip.key)}
+                    className={attentionChipClass(attentionStatus === chip.key)}
+                  >
+                    {chip.label}
+                    <span className="opacity-80">{chip.count}</span>
+                  </button>
+                ))}
+              </div>
+              <input
+                type="search"
+                value={attentionSearch}
+                onChange={(event) => setAttentionSearch(event.target.value)}
+                placeholder="Search material"
+                aria-label="Search material"
+                className="min-h-[38px] w-full p-[7px_12px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[14px] [outline:none] placeholder:text-placeholder focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]"
+              />
+            </div>
+
+            <div ref={attentionListRef} className="h-[480px] overflow-y-auto [overscroll-behavior:contain]">
+              {loading && attentionTotal === 0 && (
+                <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
+                  {[0, 1, 2].map((row) => (
+                    <div key={row} className="flex items-center justify-between gap-3 [animation:apDotPulse_1.2s_ease-in-out_infinite]">
+                      <span className="block h-[13px] w-[180px] rounded-[6px] [background:var(--surface-strong)]" />
+                      <span className="block h-[13px] w-[72px] rounded-[6px] [background:var(--surface-strong)]" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(!loading || attentionTotal > 0) && attentionFiltered.length === 0 && (
+                <div className="p-[28px_18px] text-center">
+                  <p className="m-0 text-text text-[15px] font-[720]">Nothing matches</p>
+                  <p className="m-0 mt-[4px] text-text-secondary text-[14px]">Try another status or clear the search.</p>
+                </div>
+              )}
+              {attentionGroupsView.map((group) => {
+                const tone = ATTENTION_TONES[group.status];
+                return (
+                  <div key={group.status}>
+                    <div className="sticky top-0 z-[2] flex items-center gap-[7px] px-[16px] py-[7px] border-b border-b-line [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [backdrop-filter:blur(8px)] text-text-secondary text-[13.5px] font-[720]">
+                      <span aria-hidden="true" className="w-[7px] h-[7px] rounded-[50%]" style={{ background: tone.dot }} />
+                      {tone.label} · {group.rows.length}
+                    </div>
+                    <ul className="m-0 p-0 [list-style:none]">
+                      {group.rows.map((item) => {
+                        const qty = formatQuantity(item.on_hand ?? 0, item.unit);
+                        const lowLabel = formatQuantity(item.low_level ?? 0, item.unit);
+                        const criticalLabel = formatQuantity(item.critical_level ?? 0, item.unit);
+                        const barMax = Math.max((Number(item.low_level) || 0) * 1.5, Number(item.on_hand) || 0, 1);
+                        const pct = (value) => Math.min(100, Math.max(0, ((Number(value) || 0) / barMax) * 100));
+                        return (
+                          <li
+                            key={item.material_id ?? item.label}
+                            className="flex flex-wrap items-start justify-between gap-[10px_16px] px-[16px] py-[13px] border-b border-b-line last:border-b-0 scroll-mt-[40px]"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-[8px]">
+                                <strong className="text-text text-[17px] font-[760] leading-[1.25]">{item.label}</strong>
+                                <span
+                                  className="inline-flex flex-none items-center gap-[6px] min-h-[24px] p-[2px_10px] border rounded-[999px] text-[13px] font-[720] whitespace-nowrap"
+                                  style={{ color: tone.text, borderColor: `color-mix(in srgb, ${tone.mix} 48%, transparent)` }}
+                                >
+                                  <span aria-hidden="true" className="w-[6px] h-[6px] rounded-[50%]" style={{ background: tone.dot }} />
+                                  {tone.label}
+                                </span>
+                              </div>
+                              <p className="m-0 mt-[5px] text-text-secondary text-[15px] leading-[1.45]">
+                                {group.status === 'out'
+                                  ? <><strong className="text-text font-[750]">Out of stock</strong>{` · critical at ${criticalLabel}`}</>
+                                  : <><strong className="text-text font-[750]">{qty}</strong>{` left · ${group.status === 'critical' ? 'critical' : 'low'} at ${group.status === 'critical' ? criticalLabel : lowLabel}`}</>}
+                              </p>
+                              <div className="relative mt-[9px] h-[6px] w-full max-w-[340px] rounded-[999px] [background:color-mix(in_srgb,_var(--border)_70%,_transparent)]">
+                                <span className="absolute left-0 top-0 bottom-0 rounded-[999px]" style={{ width: `${pct(item.on_hand)}%`, background: tone.dot }} />
+                                <span aria-hidden="true" className="absolute top-[-3px] bottom-[-3px] w-[2px] [background:color-mix(in_srgb,_var(--text)_45%,_transparent)]" style={{ left: `${pct(item.critical_level)}%` }} />
+                                <span aria-hidden="true" className="absolute top-[-3px] bottom-[-3px] w-[2px] [background:color-mix(in_srgb,_var(--text)_45%,_transparent)]" style={{ left: `${pct(item.low_level)}%` }} />
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={`Edit levels for ${item.label}`}
+                              onClick={() => openAttentionMaterial(item)}
+                              className="ghost-button ml-auto max-[560px]:ml-0 max-[560px]:w-full min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                            >
+                              Edit levels
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex-none flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
+              <span className="text-text-secondary text-[14px] font-[600]">
+                Showing {attentionShown.length} of {attentionFiltered.length} items that need attention
+              </span>
+              {attentionFiltered.length > attentionVisible && (
+                <button
+                  type="button"
+                  onClick={() => setAttentionVisible((count) => count + ATTENTION_PAGE_SIZE)}
+                  className="ghost-button min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                >
+                  Load 10 more
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {!error && attentionTotal === 0 && !loading && (
+          <div className="flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
+            <span className="text-text-secondary text-[14px] font-[600]">All materials checked</span>
+          </div>
         )}
       </Section>
 
       <Section
-        title="Delivery Fulfillment"
+        title="Delivery fulfillment"
         className="bp-sec-deliveries [grid-area:deliveries] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
-        meta={deliveries.length ? `${deliveries.length} delivered` : 'No deliveries yet'}
+        meta={loading && !deliveries.length ? 'Loading…' : `${filteredDeliveries.length} delivered`}
       >
-        {deliveries.length > 0 && (
-          <div className="flex flex-col">
-            {deliveries.map((delivery) => {
-              const items = delivery.items || [];
-              const itemCount = Number(delivery.item_count ?? items.length);
-              const isOpen = !!openDeliveries[delivery.id];
-              return (
-                <article className="p-[14px_18px] border-b border-b-line last:border-b-0" key={delivery.id}>
-                  <header className="flex items-start justify-between gap-[12px]">
-                    <div className="min-w-0">
-                      <strong className="block text-text text-[16px] font-[760] [font-family:ui-monospace,monospace]">{delivery.request_number}</strong>
-                      <small className="block mt-[4px] text-muted text-[13.5px]">{formatDate(delivery.delivered_at, true)}</small>
-                    </div>
-                    <div className="flex-none flex flex-col items-end gap-[8px]">
-                      <span className="text-text-secondary text-[14px] font-[740]">{formatNumber(itemCount)} item{itemCount === 1 ? '' : 's'}</span>
-                      <button
-                        type="button"
-                        aria-expanded={isOpen}
-                        className="ghost-button inline-flex items-center justify-center min-h-[36px] p-[0_14px] border border-line-strong rounded-[10px] text-text-secondary [background:transparent] text-[13px] font-[650] cursor-pointer hover:text-text hover:border-accent"
-                        onClick={() => setOpenDeliveries((prev) => ({ ...prev, [delivery.id]: !prev[delivery.id] }))}
-                      >
-                        {isOpen ? 'Hide items' : 'Show items'}
-                      </button>
-                    </div>
-                  </header>
-                  {isOpen && (
-                    <ul className="m-[12px_0_0] p-0 [list-style:none] flex flex-col gap-[8px] [&_li]:flex [&_li]:items-baseline [&_li]:justify-between [&_li]:gap-[14px] [&_li]:text-text-secondary [&_li]:text-[14px] [&_li_span:last-child]:text-text [&_li_span:last-child]:font-[720] [&_li_span:last-child]:whitespace-nowrap">
+        {/* Filters stay put while the list scrolls. */}
+        <div className="flex-none flex flex-col gap-[10px] p-[10px_16px_12px] border-b border-b-line">
+          <div className="flex flex-wrap items-center gap-[6px]" role="group" aria-label="Delivery date presets">
+            <button type="button" aria-pressed={!deliveryHasRange} onClick={clearDeliveryFilter} className={deliveryChipClass(!deliveryHasRange)}>All</button>
+            {DELIVERY_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                aria-pressed={deliveryPreset === preset.key}
+                onClick={() => applyDeliveryPreset(preset.key)}
+                className={deliveryChipClass(deliveryPreset === preset.key)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-[10px]">
+            <label className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
+              From
+              <input type="date" aria-label="Deliveries from date" value={deliveryFrom} onChange={editDeliveryDate(setDeliveryFrom)} className={deliveryInputClass} />
+            </label>
+            <label className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
+              To
+              <input type="date" aria-label="Deliveries to date" value={deliveryTo} onChange={editDeliveryDate(setDeliveryTo)} className={deliveryInputClass} />
+            </label>
+            {deliveryHasRange && (
+              <button type="button" onClick={clearDeliveryFilter} className="text-accent-text text-[14px] font-[650] underline cursor-pointer [background:none] border-0 focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]">
+                Clear filter
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="h-[480px] overflow-y-auto [overscroll-behavior:contain] @container" aria-live="polite">
+          {loading && !deliveries.length && (
+            <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
+              {[0, 1, 2].map((row) => (
+                <div key={row} className="flex items-center justify-between gap-3 [animation:apDotPulse_1.2s_ease-in-out_infinite]">
+                  <span className="block h-[13px] w-[180px] rounded-[6px] [background:var(--surface-strong)]" />
+                  <span className="block h-[13px] w-[64px] rounded-[6px] [background:var(--surface-strong)]" />
+                </div>
+              ))}
+            </div>
+          )}
+          {(!loading || deliveries.length > 0) && filteredDeliveries.length === 0 && (
+            <div className="p-[26px_18px] text-center">
+              <p className="m-0 text-text text-[15px] font-[720]">No deliveries in this date range</p>
+              <p className="m-0 mt-[4px] text-text-secondary text-[14px]">Widen the range or clear the filter to see earlier deliveries.</p>
+            </div>
+          )}
+          {visibleDeliveries.map((delivery) => {
+            const items = delivery.items || [];
+            const itemCount = Number(delivery.item_count ?? items.length);
+            const isOpen = deliveryOpenId === delivery.id;
+            return (
+              <article
+                key={delivery.id}
+                className={`border-b border-b-line last:border-b-0 [transition:background_.18s_ease] ${isOpen ? '[background:color-mix(in_srgb,_var(--bg)_68%,_var(--panel))]' : ''}`}
+              >
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => setDeliveryOpenId(isOpen ? null : delivery.id)}
+                  className="w-full flex items-start justify-between gap-[12px] p-[12px_16px] border-0 [background:transparent] text-left cursor-pointer hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:-2px]"
+                >
+                  <span className="min-w-0">
+                    <strong className="block text-text text-[15px] font-[760] [font-family:ui-monospace,monospace]">{delivery.request_number}</strong>
+                    <span className="block mt-[3px] text-text-secondary text-[14px]">{formatDate(delivery.delivered_at, true)}</span>
+                  </span>
+                  <span className="flex-none flex items-center gap-[10px]">
+                    <span className="min-h-[28px] inline-flex items-center p-[3px_11px] border border-line rounded-[999px] text-text-secondary text-[14px] font-[650] whitespace-nowrap">
+                      {formatNumber(itemCount)} item{itemCount === 1 ? '' : 's'}
+                    </span>
+                    <FaAngleRight aria-hidden="true" className={`text-text-secondary text-[13px] [transition:transform_.2s_ease] motion-reduce:[transition:none] ${isOpen ? '-rotate-90' : 'rotate-90'}`} />
+                  </span>
+                </button>
+                {/* Slide open/closed with a 0fr → 1fr grid row, so no measuring is needed. */}
+                <div
+                  className={`grid [transition:grid-template-rows_.28s_cubic-bezier(.22,_.8,_.24,_1)] motion-reduce:[transition:none] ${isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+                  aria-hidden={!isOpen}
+                >
+                  <div className="overflow-hidden">
+                  <div className="p-[2px_16px_12px]">
+                    <ul className="m-0 w-full p-0 [list-style:none] grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-x-[24px] max-[640px]:grid-cols-[minmax(0,_1fr)] @max-[520px]:grid-cols-[minmax(0,_1fr)]">
                       {items.map((item, index) => (
-                        <li key={`${delivery.id}-${index}`}>
-                          <span>{item.name}</span>
-                          <span>{formatQuantity(item.quantity, item.unit)}</span>
+                        <li
+                          key={`${delivery.id}-${index}`}
+                          className="flex min-w-0 items-baseline justify-between gap-[10px] py-[9px] text-text-secondary text-[14px] leading-[1.4] [border-bottom:1px_dashed_color-mix(in_srgb,_var(--border)_90%,_transparent)]"
+                        >
+                          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                          <span className="flex-none text-text text-[14px] font-[700] [font-variant-numeric:tabular-nums] whitespace-nowrap">{formatQuantity(item.quantity, item.unit)}</span>
                         </li>
                       ))}
                     </ul>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
+                  </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        <div className="flex-none flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
+          <span className="text-text-secondary text-[14px] font-[600]">Showing {visibleDeliveries.length} of {filteredDeliveries.length}</span>
+          {visibleDeliveries.length < filteredDeliveries.length && (
+            <button
+              type="button"
+              onClick={() => setDeliveryVisible((count) => count + DELIVERY_PAGE_SIZE)}
+              className="ghost-button min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+            >
+              Load 10 more
+            </button>
+          )}
+        </div>
       </Section>
 
       <Section
@@ -654,39 +981,106 @@ function BranchActionModal({ action, onClose, onDone }) {
  * Admin: one material's Low (reorder) and Critical level, typed in the
  * material's own unit (g, ml, pcs …), with a readable preview (kg / L).
  */
+/* The four stock readings and the colour each one uses in the badge / chips. */
+const LEVEL_TONES = {
+  out: { label: 'No stock', color: '#e5484d', text: 'var(--danger-text)' },
+  critical: { label: 'Critical', color: '#f0526b', text: 'var(--danger-text)' },
+  low: { label: 'Low stock', color: '#f0b429', text: 'var(--warning-text)' },
+  ok: { label: 'Normal', color: '#30a46c', text: 'var(--success-text)' },
+};
+
+/** Same order the server uses: No stock → Critical → Low → Normal. */
+function levelStatus(onHand, low, critical) {
+  const qty = Number(onHand) || 0;
+  if (qty <= 0) return 'out';
+  if (qty <= (Number(critical) || 0)) return 'critical';
+  if (qty <= (Number(low) || 0)) return 'low';
+  return 'ok';
+}
+
+/**
+ * Admin / logistics: one material's Low (reorder) and Critical level, typed in
+ * the material's own unit (g, ml, pcs …), with a live preview of the reading.
+ */
 function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
-  const [low, setLow] = useState(String(material.low_level ?? ''));
-  const [critical, setCritical] = useState(String(material.critical_level ?? ''));
+  const initialLow = material.low_level === null || material.low_level === undefined ? '' : String(material.low_level);
+  const initialCritical = material.critical_level === null || material.critical_level === undefined ? '' : String(material.critical_level);
   // Estimated Requirement: optional perishable cap on the cover period (1–60 days, empty = no cap).
   const initialCover = material.max_cover_days === null || material.max_cover_days === undefined ? '' : String(material.max_cover_days);
+
+  const [low, setLow] = useState(initialLow);
+  const [critical, setCritical] = useState(initialCritical);
   const [maxCover, setMaxCover] = useState(initialCover);
+  const [touched, setTouched] = useState({ low: false, critical: false, cover: false });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
   const unit = material.unit || '';
   // pcs, packs, boxes, bottles…: the API requires whole numbers too.
   const wholeOnly = Boolean(material.count_unit);
+  const defaults = defaultLevelsFor(unit);
+  const onHand = Number(material.on_hand) || 0;
+  const onHandLabel = material.on_hand_display || formatQuantity(material.on_hand ?? 0, unit);
+
+  const lowValue = Number(low);
+  const criticalValue = Number(critical);
+  const coverValue = maxCover.trim() === '' ? null : Number(maxCover);
+
+  const lowError = low.trim() === ''
+    ? 'Enter the Low level.'
+    : lowValue < 1
+      ? `Low level must be at least 1 ${unit}.`.trim()
+      : wholeOnly && !Number.isInteger(lowValue)
+        ? 'Use whole numbers only.'
+        : '';
+  const criticalError = critical.trim() === ''
+    ? 'Enter the Critical level.'
+    : criticalValue < 0
+      ? 'Critical level cannot be negative.'
+      : wholeOnly && !Number.isInteger(criticalValue)
+        ? 'Use whole numbers only.'
+        : !lowError && !(criticalValue < lowValue)
+          ? `Critical must be lower than Low (${formatQuantity(lowValue, unit)}).`
+          : '';
+  const coverError = coverValue === null
+    ? ''
+    : !Number.isInteger(coverValue) || coverValue < 1 || coverValue > 60
+      ? 'Use a whole number from 1 to 60, or leave it empty.'
+      : '';
+  const invalid = Boolean(lowError || criticalError || coverError);
+  const dirty = low !== initialLow || critical !== initialCritical || maxCover !== initialCover;
+
+  const previewStatus = levelStatus(onHand, low || 0, critical || 0);
+  const previewTone = LEVEL_TONES[previewStatus];
+
+  // Bar scale: a little headroom past the biggest of on hand / Low.
+  const barMax = Math.max(onHand, lowValue || 0, 1) * 1.1;
+  const pctOf = (value) => Math.min(100, Math.max(0, ((Number(value) || 0) / barMax) * 100));
+  const critPct = pctOf(criticalValue || 0);
+  const lowPct = Math.max(critPct, pctOf(lowValue || 0));
+  const onHandPct = pctOf(onHand);
+  // Real (not washed-out) colours: red below Critical, amber to Low, green above.
+  const track = [
+    'linear-gradient(90deg',
+    `#e5484d 0%`,
+    `#e5484d ${critPct}%`,
+    `#f0b429 ${critPct}%`,
+    `#f0b429 ${lowPct}%`,
+    `#30a46c ${lowPct}%`,
+    `#30a46c 100%)`,
+  ].join(', ');
+
+  const chips = [
+    { key: 'out', label: 'No stock', range: '0' },
+    { key: 'critical', label: 'Critical', range: criticalValue > 0 ? `1–${formatQuantity(criticalValue, unit)}` : '—' },
+    { key: 'low', label: 'Low', range: lowValue > criticalValue ? `${formatQuantity(criticalValue + 1, unit)}–${formatQuantity(lowValue, unit)}` : '—' },
+    { key: 'ok', label: 'Normal', range: `${formatQuantity(Math.max(lowValue, 0) + 1, unit)}+` },
+  ];
 
   const submit = async (event) => {
     event.preventDefault();
-    const lowValue = Number(low);
-    const criticalValue = Number(critical);
-    if (low === '' || critical === '' || !(lowValue >= 0) || !(criticalValue >= 0)) {
-      setError('Enter both levels as zero or more (no negative values).');
-      return;
-    }
-    if (!(criticalValue < lowValue)) {
-      setError('The critical level must be lower than the low level.');
-      return;
-    }
-    if (wholeOnly && (!Number.isInteger(lowValue) || !Number.isInteger(criticalValue))) {
-      setError(`${unit} is counted in whole units: enter whole numbers for both levels.`);
-      return;
-    }
-    const coverValue = maxCover.trim() === '' ? null : Number(maxCover);
-    if (coverValue !== null && (!Number.isInteger(coverValue) || coverValue < 1 || coverValue > 60)) {
-      setError('Max cover days must be a whole number from 1 to 60, or empty for no cap.');
-      return;
-    }
+    setTouched({ low: true, critical: true, cover: true });
+    if (invalid) return;
     setSaving(true);
     setError('');
     try {
@@ -702,60 +1096,193 @@ function MaterialLevelsModal({ branchId, material, onClose, onSaved }) {
     }
   };
 
-  /** Logistics: put back the auto-calculated default for this unit (logged). */
-  const resetToDefault = async () => {
-    setSaving(true);
-    setError('');
-    try {
-      await api.patch(`/branches/${branchId}/materials/${material.id}/levels`, { reset: true });
-      await onSaved(`Stock levels for ${material.name} reset to the default.`);
-    } catch (caught) {
-      setError(firstValidationMessage(caught));
-    } finally {
-      setSaving(false);
-    }
+  /** Form-only: put back the auto-calculated default for this unit. Nothing is saved yet. */
+  const resetToDefault = () => {
+    setLow(String(defaults.low));
+    setCritical(String(defaults.critical));
+    setMaxCover('');
+    setTouched({ low: true, critical: true, cover: true });
   };
 
-  const defaults = defaultLevelsFor(unit);
-  const reference = Math.max(Number(low) || 0, Number(critical) || 0);
+  const inputClass = 'w-full h-[52px] pl-[14px] pr-[58px] border rounded-[12px] [background:var(--input-bg)] text-text text-[22px] font-[600] [outline:none] [transition:border-color_.18s_ease,_box-shadow_.18s_ease,_background_.18s_ease] focus:border-accent focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_14%,_transparent)] focus:[background:var(--input-focus-bg)] [appearance:textfield] [&::-webkit-outer-spin-button]:[appearance:none] [&::-webkit-inner-spin-button]:[appearance:none]';
+  const labelClass = 'flex items-center gap-[5px] text-text text-[14px] font-[650]';
+  const suffixClass = 'absolute right-[14px] top-1/2 [transform:translateY(-50%)] text-text-secondary text-[14px] font-[600] pointer-events-none';
+
   return (
     <Modal
-      title={`Stock levels · ${material.name}`}
+      title={(
+        <span className="flex min-w-0 flex-col gap-[2px]">
+          <span className="text-text text-[17px] font-[780] leading-[1.2] tracking-[-.01em]">Edit stock levels</span>
+          <span className="truncate text-text-secondary text-[14px] font-[500] leading-[1.35]">
+            {material.name} · counted in {unit || 'units'}
+          </span>
+        </span>
+      )}
       onClose={onClose}
+      className="rounded-[14px]! max-[451px]:rounded-[12px]!"
       footer={(
-        <>
-          <button type="button" onClick={onClose}>Cancel</button>
+        <div className="flex w-full flex-wrap items-center gap-[8px_10px]">
+          <span className={`mr-auto whitespace-nowrap text-[14px] font-[650] [transition:color_.18s_ease] max-[541px]:hidden ${dirty ? 'text-[color:var(--warning-text)]' : 'text-text-secondary'}`}>
+            {dirty ? 'Unsaved changes' : 'No changes yet'}
+          </span>
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-[8px]">
+          <button type="button" onClick={onClose} className="ghost-button min-h-[42px]! inline-flex items-center justify-center p-[0_16px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[14px]! max-[451px]:text-[13px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent">Cancel</button>
           <button
             type="button"
-            className="ghost-button later:min-h-[38px] inline-flex items-center justify-center later:gap-[7px] later:p-[0_14px] border later:border-line-strong later:rounded-[10px] later:text-text-secondary later:[background:transparent] later:text-[13px] later:font-[650] later:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] later:[&:hover:not(:disabled)]:text-text later:[&:hover:not(:disabled)]:border-accent later:[&:hover:not(:disabled)]:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [.branch-production-line_&]:min-h-[40px]"
+            className="ghost-button min-h-[42px]! inline-flex items-center justify-center p-[0_16px]! max-[451px]:p-[0_11px]! border border-line-strong rounded-[10px] text-text-secondary [background:transparent]! text-[14px]! max-[451px]:text-[13px]! font-[650]! whitespace-nowrap cursor-pointer hover:text-text hover:border-accent disabled:opacity-50 disabled:cursor-default"
             disabled={saving}
-            title={`Default for ${unit || 'this unit'}: low ${formatQuantity(defaults.low, unit)}, critical ${formatQuantity(defaults.critical, unit)}`}
-            onClick={() => void resetToDefault()}
+            onClick={resetToDefault}
           >
             Reset to default
           </button>
-          <button className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]" form="material-levels-form" disabled={saving}>{saving ? 'Saving…' : 'Save levels'}</button>
-        </>
+          <button
+            className="primary-button min-h-[42px]! inline-flex items-center justify-center gap-2 p-[0_18px]! max-[451px]:p-[0_12px]! border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[14px]! max-[451px]:text-[13px]! font-[720]! whitespace-nowrap tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:disabled]:text-muted [&:disabled]:[background:var(--surface-subtle)] [&:disabled]:cursor-not-allowed [&:disabled]:[box-shadow:none] [&:disabled]:opacity-100"
+            form="material-levels-form"
+            disabled={saving || invalid || !dirty}
+          >
+            {saving ? 'Saving…' : 'Save levels'}
+          </button>
+          </span>
+        </div>
       )}
     >
       <Notice type="error">{error}</Notice>
-      <form id="material-levels-form" className="form-grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[681px]:later:grid-cols-[1fr] [.branch-portal-financial_&>button]:min-h-[42px] [.branch-portal-financial_&>button]:[justify-self:start] [.branch-portal-financial_&>button]:p-[0_16px] [.branch-portal-financial_&>button]:border [.branch-portal-financial_&>button]:border-transparent [.branch-portal-financial_&>button]:rounded-[12px] [.branch-portal-financial_&>button]:text-[#fff] [.branch-portal-financial_&>button]:[background:linear-gradient(135deg,_var(--branch-accent),_color-mix(in_srgb,_var(--branch-accent)_70%,_#695cff))] [.branch-portal-financial_&>button]:[box-shadow:0_10px_24px_color-mix(in_srgb,_var(--branch-accent)_22%,_transparent)] [.branch-portal-financial_&>button]:text-[10px] [.branch-portal-financial_&>button]:font-[780] [.branch-portal-financial_&>button]:[transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [.branch-portal-financial_&>button:hover:not(:disabled)]:[transform:translateY(-2px)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[box-shadow:0_14px_28px_color-mix(in_srgb,_var(--branch-accent)_29%,_transparent)] [.branch-portal-financial_&>button:hover:not(:disabled)]:[filter:saturate(1.08)] [.branch-portal-financial_&>button[type='button']]:min-h-[38px] [.branch-portal-financial_&>button[type='button']]:[justify-self:start] [.branch-portal-financial_&>button[type='button']]:p-[0_13px] [.branch-portal-financial_&>button[type='button']]:[border:1px_solid_color-mix(in_srgb,_var(--branch-accent)_22%,_var(--border))] [.branch-portal-financial_&>button[type='button']]:rounded-[11px] [.branch-portal-financial_&>button[type='button']]:text-text-secondary [.branch-portal-financial_&>button[type='button']]:[background:color-mix(in_srgb,_var(--branch-accent)_7%,_var(--panel))] [.branch-portal-financial_&>button[type='button']]:text-[9px] [.branch-portal-financial_&>button[type='button']]:font-[740] [.branch-portal-financial_&>button[type='button']:hover]:text-text [.branch-portal-financial_&>button[type='button']:hover]:border-[color:var(--branch-accent)] [.branch-portal-financial_&>button[type='button']:hover]:[background:color-mix(in_srgb,_var(--branch-accent)_12%,_var(--panel))] [#update-applicant-form_&]:gap-3" onSubmit={submit}>
-        <Field label={`Low level (${unit})`} required hint={low !== '' ? `= ${formatQuantity(low, unit, reference)}` : 'Reorder at or below this amount.'}>
-          <input required type="number" min="0" step={wholeOnly ? '1' : '0.001'} value={low} onChange={(event) => setLow(event.target.value)} />
-        </Field>
-        <Field label={`Critical level (${unit})`} required hint={critical !== '' ? `= ${formatQuantity(critical, unit, reference)}` : 'Critical at or below this amount.'}>
-          <input required type="number" min="0" step={wholeOnly ? '1' : '0.001'} value={critical} onChange={(event) => setCritical(event.target.value)} />
-        </Field>
-        <Field label="Max cover days (optional)" hint="Perishables: the suggested reorder never covers more than this many days. Empty = no cap.">
-          <input type="number" min="1" max="60" step="1" value={maxCover} placeholder="No cap" onChange={(event) => setMaxCover(event.target.value)} />
-        </Field>
+      <form id="material-levels-form" className="flex flex-col gap-[18px]" onSubmit={submit} noValidate>
+        {/* 1. Summary: on hand + live reading */}
+        <div className="flex flex-wrap items-start justify-between gap-[12px_18px]">
+          <div className="min-w-0">
+            <p className="m-0 text-text-secondary text-[14px] font-[600]">On hand now</p>
+            <p className="m-0 mt-[2px] text-text text-[30px] font-[790] leading-[1.1]">{onHandLabel}</p>
+          </div>
+          <span className="inline-flex flex-none items-center gap-[8px] text-[16px] font-[730] whitespace-nowrap" style={{ color: previewTone.text }}>
+            <span aria-hidden="true" className="w-[8px] h-[8px] rounded-[50%]" style={{ background: previewTone.color }} />
+            {previewTone.label}
+          </span>
+        </div>
+
+        {/* 2. Stock bar with the Critical / Low markers */}
+        <div>
+          <div className="relative h-[14px] rounded-[999px] overflow-hidden" style={{ background: track }} aria-hidden="true">
+            <span className="absolute top-0 bottom-0 w-[2px] [background:rgba(255,255,255,.75)]" style={{ left: `${critPct}%` }} />
+            <span className="absolute top-0 bottom-0 w-[2px] [background:rgba(255,255,255,.9)]" style={{ left: `${lowPct}%` }} />
+            <span className="absolute top-0 bottom-0 w-[3px] rounded-[2px] [background:#fff] [box-shadow:0_0_8px_rgba(255,255,255,.75)]" style={{ left: `${onHandPct}%`, transform: 'translateX(-50%)' }} />
+          </div>
+          <div className="mt-[8px] flex flex-wrap items-center justify-between gap-[4px_14px] text-[14px] font-[650]">
+            <span className="text-[color:var(--danger-text)]">Critical at {formatQuantity(criticalValue || 0, unit)}</span>
+            <span className="text-[color:var(--warning-text)]">Low at {formatQuantity(lowValue || 0, unit)}</span>
+          </div>
+        </div>
+
+        {/* 3. Low + Critical */}
+        <div className="grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[14px] max-[541px]:grid-cols-[minmax(0,_1fr)]">
+          <div>
+            <label className={labelClass} htmlFor="material-levels-low">
+              Low level <span className="text-[color:var(--danger-text)]" aria-hidden="true">*</span>
+            </label>
+            <div className="relative mt-[6px]">
+              <input
+                id="material-levels-low"
+                type="number"
+                inputMode="decimal"
+                min="1"
+                step={wholeOnly ? '1' : '0.001'}
+                value={low}
+                onChange={(event) => { setLow(event.target.value); setTouched((prev) => ({ ...prev, low: true })); }}
+                onBlur={() => setTouched((prev) => ({ ...prev, low: true }))}
+                aria-invalid={touched.low && Boolean(lowError)}
+                aria-describedby={touched.low && lowError ? 'material-levels-low-help' : undefined}
+                className={`${inputClass} ${touched.low && lowError ? 'border-[color:var(--danger)]' : 'border-line-strong'}`}
+              />
+              <span className={suffixClass}>{unit}</span>
+            </div>
+            {touched.low && lowError && <span id="material-levels-low-help" className="block mt-[6px] text-[14px] font-[600] text-[color:var(--danger-text)]">{lowError}</span>}
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="material-levels-critical">
+              Critical level <span className="text-[color:var(--danger-text)]" aria-hidden="true">*</span>
+            </label>
+            <div className="relative mt-[6px]">
+              <input
+                id="material-levels-critical"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step={wholeOnly ? '1' : '0.001'}
+                value={critical}
+                onChange={(event) => { setCritical(event.target.value); setTouched((prev) => ({ ...prev, critical: true })); }}
+                onBlur={() => setTouched((prev) => ({ ...prev, critical: true }))}
+                aria-invalid={touched.critical && Boolean(criticalError)}
+                aria-describedby={touched.critical && criticalError ? 'material-levels-critical-help' : undefined}
+                className={`${inputClass} ${touched.critical && criticalError ? 'border-[color:var(--danger)]' : 'border-line-strong'}`}
+              />
+              <span className={suffixClass}>{unit}</span>
+            </div>
+            {touched.critical && criticalError && <span id="material-levels-critical-help" className="block mt-[6px] text-[14px] font-[600] text-[color:var(--danger-text)]">{criticalError}</span>}
+          </div>
+        </div>
+
+        {/* 4. Max cover days */}
+        <div>
+          <label className={labelClass} htmlFor="material-levels-cover">
+            Max cover days <span className="text-text-secondary text-[14px] font-[500]">(optional, for perishables)</span>
+          </label>
+          <div className="relative mt-[6px]">
+            <input
+              id="material-levels-cover"
+              type="number"
+              inputMode="numeric"
+              min="1"
+              max="60"
+              step="1"
+              value={maxCover}
+              placeholder="No cap"
+              onChange={(event) => { setMaxCover(event.target.value); setTouched((prev) => ({ ...prev, cover: true })); }}
+              onBlur={() => setTouched((prev) => ({ ...prev, cover: true }))}
+              aria-invalid={touched.cover && Boolean(coverError)}
+              aria-describedby={touched.cover && coverError ? 'material-levels-cover-help' : undefined}
+              className={`${inputClass} max-w-[240px] max-[541px]:max-w-none ${touched.cover && coverError ? 'border-[color:var(--danger)]' : 'border-line-strong'} [font-size:18px] placeholder:text-placeholder placeholder:font-[500]`}
+            />
+            <span className={suffixClass}>days</span>
+          </div>
+          {touched.cover && coverError && <span id="material-levels-cover-help" className="block mt-[6px] text-[14px] font-[600] text-[color:var(--danger-text)]">{coverError}</span>}
+        </div>
+
+        {/* 5. How the reading will behave */}
+        <div className="pt-[16px] border-t border-t-line">
+          <p className="m-0 mb-[8px] text-text text-[15px] font-[700]">How status will read</p>
+          <div className="grid grid-cols-[repeat(4,_minmax(0,_1fr))] gap-[8px] max-[601px]:grid-cols-[repeat(2,_minmax(0,_1fr))]">
+            {chips.map((chip) => {
+              const active = previewStatus === chip.key;
+              return (
+                <div key={chip.key} className="min-w-0">
+                  <span className={`flex items-center gap-[6px] text-[14px] [transition:color_.18s_ease] ${active ? 'text-text font-[750]' : 'text-text-secondary font-[600]'}`}>
+                    <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[50%]" style={{ background: LEVEL_TONES[chip.key].color }} />
+                    <span className="truncate">{chip.label}</span>
+                  </span>
+                  <span className={`block mt-[2px] truncate text-[14px] [transition:color_.18s_ease] ${active ? 'text-text font-[600]' : 'text-text-secondary font-[500]'}`}>{chip.range}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 6. Reference notes */}
+        <div>
+          <ul className="m-0 p-0 [list-style:none] flex flex-col gap-[6px] text-text-secondary text-[14px] leading-[1.5] [&>li]:relative [&>li]:pl-[14px] [&>li::before]:[content:'•'] [&>li::before]:absolute [&>li::before]:left-0 [&>li::before]:text-muted">
+            <li>
+              Default for this unit: <strong className="text-text font-[700]">Low {formatQuantity(defaults.low, unit)}</strong>
+              {' · '}
+              <strong className="text-text font-[700]">Critical {formatQuantity(defaults.critical, unit)}</strong>
+            </li>
+            <li>{wholeOnly ? 'Use whole numbers only.' : 'Up to 3 decimals are allowed for this unit.'}</li>
+            <li>Every change is logged with who, when, and the old and new values.</li>
+          </ul>
+        </div>
       </form>
-      {wholeOnly && <p className="muted-note text-muted text-[8px] leading-[1.6]">{unit} is counted in whole units: use whole numbers.</p>}
-      <p className="muted-note text-muted text-[8px] leading-[1.6]">On hand now: {material.on_hand_display || formatQuantity(material.on_hand, unit)}. Status order: No stock → Critical → Low → Normal.</p>
-      <p className="muted-note text-muted text-[8px] leading-[1.6]">Default for this unit: low {formatQuantity(defaults.low, unit)} · critical {formatQuantity(defaults.critical, unit)}. Every change is logged (who, when, old and new values).</p>
     </Modal>
   );
 }
+
 
 /* ------------------------------------------------------------------ *
  * Alert list under the summary cards: Low-stock items, Critical items
@@ -1293,6 +1820,7 @@ export default function Branches() {
       role={role}
       onOpenRequests={() => navigate(`/supply-requests?tab=all&location_id=${selectedId}`)}
       onEditLevels={setLevelsTarget}
+      onRetry={() => operations.reload?.()}
       onBranchAction={(kind, branch) => setBranchAction({ kind, branch })}
       animateFilters={view === 'full'}
     />
@@ -1420,7 +1948,7 @@ export default function Branches() {
             </section>
           ) : (
             <div className={`bp-body grid grid-cols-[minmax(0,_1fr)_0px] [align-items:start] gap-0 [transition:grid-template-columns_.32s_var(--bp-ease),_gap_.32s_var(--bp-ease)] [&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(340px,_440px)] [&.is-open]:gap-4 max-[1181px]:later:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:gap-[14px] max-[1181px]:later:[&.is-open]:grid-cols-[minmax(0,_1fr)] max-[1181px]:later:[&.is-open]:gap-[14px] motion-reduce:later:[transition:none] min-[1181px]:later-2:[&.is-open]:grid-cols-[minmax(0,_1fr)_minmax(400px,_38%)] ${view === 'half' ? ' is-open' : ''}${panelClosing ? ' is-closing' : ''}`}>
-              <section className="data-panel overflow-hidden mb-[18px] min-[1182px]:mb-0 border border-line rounded-[12px] [background:#0A0E19] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
+              <section className="data-panel overflow-hidden mb-[18px] min-[1182px]:mb-0 border rounded-[12px] [border-color:color-mix(in_srgb,_var(--muted)_20%,_var(--border-strong))] [background:#0A0E19] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:[border-color:color-mix(in_srgb,_var(--muted)_36%,_var(--border-strong))] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] min-w-0 [container-type:inline-size] [container-name:bp-list] p-0 later:hover:[box-shadow:none]" aria-labelledby="bp-list-title">
                 <div className="bp-list-head flex flex-wrap items-center justify-between gap-[12px_20px] p-[14px_18px] border-b border-b-line later-2:[&_h2]:m-0 [&_h2]:text-text later-2:[&_h2]:text-[20px] later:[&_h2]:font-[760] later-2:[&_h2]:tracking-[.06em]">
                   <div className="min-w-0 flex flex-col">
                     <h2 id="bp-list-title" className="uppercase">Branches</h2>
@@ -1439,16 +1967,16 @@ export default function Branches() {
                   </div>
                 </div>
                 {(role === 'admin' || (view === 'half' && listLastPage > 1)) && (
-                <div className="flex flex-wrap items-center justify-end gap-[8px_16px] p-[12px_18px_0]">
+                <div className="flex flex-wrap items-center justify-end gap-[8px_16px] p-[4px_18px_0]">
                   <div className="flex flex-wrap gap-[6px_14px] text-text-secondary text-[12px] [&_label]:inline-flex [&_label]:items-center [&_label]:gap-[5px] [&_label]:cursor-pointer">
                     {role === 'admin' && (
                       <label><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} /> Show archived</label>
                     )}
                     {view === 'half' && listLastPage > 1 && (
                       <span className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
-                        <button type="button" className="inline-grid place-items-center w-[52px] h-[52px] p-0 border-0 [background:transparent] text-[34px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage <= 1} onClick={() => setListPage(listCurPage - 1)} aria-label="Previous page">‹</button>
+                        <button type="button" className="inline-grid place-items-center w-[42px] h-[42px] p-0 border-0 [background:transparent] text-[30px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage <= 1} onClick={() => setListPage(listCurPage - 1)} aria-label="Previous page">‹</button>
                         <span>{listCurPage} / {listLastPage}</span>
-                        <button type="button" className="inline-grid place-items-center w-[52px] h-[52px] p-0 border-0 [background:transparent] text-[34px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage >= listLastPage} onClick={() => setListPage(listCurPage + 1)} aria-label="Next page">›</button>
+                        <button type="button" className="inline-grid place-items-center w-[42px] h-[42px] p-0 border-0 [background:transparent] text-[30px] text-text-secondary cursor-pointer disabled:opacity-[.35] disabled:cursor-default hover:text-text" disabled={listCurPage >= listLastPage} onClick={() => setListPage(listCurPage + 1)} aria-label="Next page">›</button>
                       </span>
                     )}
                   </div>
@@ -1461,7 +1989,7 @@ export default function Branches() {
                     detail="Try a different branch name, location or brand."
                   />
                 ) : (
-                  <div className="grid gap-[14px] max-[1381px]:later:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[761px]:later-2:grid-cols-[minmax(0,_1fr)] later-4:grid-cols-[repeat(auto-fill,_minmax(280px,_1fr))] p-[14px_18px_18px]" aria-label="Branches">
+                  <div className="grid gap-[14px] max-[1381px]:later:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[761px]:later-2:grid-cols-[minmax(0,_1fr)] later-4:grid-cols-[repeat(auto-fill,_minmax(280px,_1fr))] p-[10px_18px_18px]" aria-label="Branches">
                     {listItems.map((branch) => (
                       <BranchCard
                         key={branch.id}
@@ -1487,9 +2015,9 @@ export default function Branches() {
                 aria-hidden={view !== 'half'}
               >
                 {selected && (
-                  <div className="h-full flex flex-col overflow-hidden [border:1px_solid_var(--bp-border)] rounded-[var(--bp-radius)] [background:var(--bp-surface)]">
-                    <header className="flex-none flex items-start justify-between gap-3 p-[16px_16px_14px] border-b border-b-line [background:linear-gradient(120deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_12%,_transparent),_transparent_62%)]" style={{ '--brand-color': getBrand(selected).color }}>
-                      <div className="min-w-0 later:[&_h2]:m-[4px_0_2px] [&_h2]:text-text later:[&_h2]:text-[16px] [&_h2]:font-[780] later:[&_h2]:tracking-[-.02em] [&_small]:text-muted later-3:[&_small]:text-[10px]">
+                  <div className="h-full flex flex-col overflow-hidden rounded-[12px] [border:1px_solid_color-mix(in_srgb,_var(--muted)_20%,_var(--border-strong))] [box-shadow:0_14px_34px_-26px_rgba(0,0,0,.7)] [background:var(--bp-surface)]">
+                    <header className="flex-none flex items-start justify-between gap-2 p-[10px_12px_9px] border-b border-b-line [background:linear-gradient(120deg,_color-mix(in_srgb,_var(--brand-color,_var(--accent))_12%,_transparent),_transparent_62%)]" style={{ '--brand-color': getBrand(selected).color }}>
+                      <div className="min-w-0 later:[&_h2]:m-[1px_0_1px] [&_h2]:text-text later:[&_h2]:text-[18px] [&_h2]:font-[780] later:[&_h2]:tracking-[-.02em] [&_small]:text-text-secondary [&_small]:font-[700] later-3:[&_small]:text-[10.5px]">
                         <span className="text-[color:var(--brand-color,_var(--accent))] text-[9px] font-[780] tracking-[.1em] uppercase">{brandLabelOf(selected)}</span>
                         <h2>{locationOf(selected)}</h2>
                         <small>{selected.name}</small>
@@ -1497,7 +2025,7 @@ export default function Branches() {
                       <div className="flex items-center gap-[2px] flex-none">
                         <button
                           type="button"
-                          className="w-[34px] h-[34px] inline-grid place-items-center p-0 border border-transparent rounded-[10px] text-muted [background:transparent] [transition:color_.18s_ease,_background_.18s_ease,_transform_.18s_ease] hover:text-text hover:[background:var(--hover)] hover:[transform:translateY(-1px)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                          className="w-[34px] h-[34px] inline-grid place-items-center p-0 border border-transparent rounded-[10px] text-[var(--accent-text)] [background:transparent] [transition:color_.18s_ease,_background_.18s_ease] hover:text-text hover:[background:var(--hover)] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] [&_svg]:[transform-origin:center] [&_svg]:[animation:bpFullIconGlow_2.6s_ease-in-out_infinite] motion-reduce:[&_svg]:[animation:none]"
                           onClick={openFull}
                           aria-label="Open full view"
                           title="Full view"

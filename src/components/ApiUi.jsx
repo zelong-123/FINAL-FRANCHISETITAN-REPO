@@ -100,7 +100,7 @@ export function PageHeader({ actions }) {
   );
 }
 
-export function Modal({ title, onClose, children, footer, size = 'normal', chromeColor }) {
+export function Modal({ title, onClose, children, footer, size = 'normal', chromeColor, className = '' }) {
   const titleId = useId();
   const cardRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -149,7 +149,7 @@ export function Modal({ title, onClose, children, footer, size = 'normal', chrom
     <div className="modal-backdrop fixed inset-0 z-150 grid place-items-center p-5 overflow-hidden [background:rgba(2,_5,_12,_.66)] [backdrop-filter:blur(12px)_saturate(120%)] [animation:overlayFade_.18s_ease_both] max-[451px]:later:p-[10px]" role="presentation" onMouseDown={onClose}>
       <div
         ref={cardRef}
-        className={`w-[min(720px,_100%)] max-h-[calc(100dvh_-_40px)] flex flex-col overflow-hidden border border-line-strong rounded-[20px] [background:var(--panel)] [box-shadow:var(--shadow-xl)] [animation:modalIn_.26s_cubic-bezier(.2,.8,.2,1)_both] max-[781px]:later:w-full max-[451px]:later:max-h-[calc(100dvh_-_20px)] max-[451px]:later:rounded-[17px] modal-${size}`}
+        className={`w-[min(720px,_100%)] max-h-[calc(100dvh_-_40px)] flex flex-col overflow-hidden border border-line-strong rounded-[20px] [background:var(--panel)] [box-shadow:var(--shadow-xl)] [animation:modalIn_.26s_cubic-bezier(.2,.8,.2,1)_both] max-[781px]:later:w-full max-[451px]:later:max-h-[calc(100dvh_-_20px)] max-[451px]:later:rounded-[17px] modal-${size} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
