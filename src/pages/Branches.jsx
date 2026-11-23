@@ -23,6 +23,7 @@ import { defaultLevelsFor, formatQuantity, STOCK_STATUS_LABELS } from '../lib/qu
 import { formatDate, formatNumber } from '../lib/format';
 import { supplyStatusLabel } from '../lib/supplyActions';
 import { changedAgo, lastCountLabel, sortWorstFirst, STOCK_ORDER } from '../lib/stockView';
+import { setHeaderCrumb } from '../lib/headerCrumbs';
 
 import dailyDashLogo from '../assets/dailydash_new.png';
 import goDoLogo from '../assets/godo_new.png';
@@ -1755,6 +1756,16 @@ export default function Branches() {
       setPinnedId(null);
     }, 220);
   };
+
+  // While a branch is open (half or full view) the header trail ends with its name:
+  // Operations / Branches / [DEMO] Kkopi · Makati. Back to the list and it clears.
+  useEffect(() => {
+    if (view === 'default' || !selected) return undefined;
+    setHeaderCrumb({ label: selected.name || 'Branch', back: backToList });
+    return () => setHeaderCrumb(null);
+    // backToList only closes the panel; re-registering it each render would churn the header.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selected?.name]);
 
   const openFull = () => {
     if (closeTimer.current) {

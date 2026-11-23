@@ -49,6 +49,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Branches → **Edit stock levels modal, compact pass**: on-hand reading 30px → 23px, bar 14px → 7px tall with hairline markers (no glow), number fields 52px/22px → 42px/17px with 10px corners, labels 13px, chips and notes 12.5px, tighter section gaps (18 → 14), footer buttons 36px. The bar now uses the theme's own `--danger` / `--warning` / `--success` instead of the saturated red/amber/green. `src/pages/Branches.jsx`
 
+- Header breadcrumb → **Branches connectivity**: opening a branch (half or full view) appends its name to the trail — `Operations / Branches / [DEMO] Kkopi · Makati` — and clicking `Branches` closes the branch and returns to the default list, which drops the crumb. Implemented with a tiny store (`src/lib/headerCrumbs.js`) that the page sets and the header subscribes to, so no extra API call and no URL change; the crumb clears on unmount or when another page takes over. `src/lib/headerCrumbs.js`, `src/components/ADMIN/HeaderAndNav/Header.jsx`, `src/pages/Branches.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 

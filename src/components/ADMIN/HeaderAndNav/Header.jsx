@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   FaBars,
   FaBell,
@@ -10,6 +10,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api, firstValidationMessage } from '../../../lib/api';
 import { formatDate, titleCase } from '../../../lib/format';
 import { getBreadcrumbs } from '../../../lib/routes';
+import { getHeaderCrumb, subscribeHeaderCrumb } from '../../../lib/headerCrumbs';
 import { NAVIGATION } from '../../../lib/roleAccess';
 import { roleTheme } from '../../../lib/roleTheme';
 import ProfileModal from './ProfileModal';
@@ -59,9 +60,19 @@ export default function Header({ onMenu, mobileOpen }) {
   const sectionCrumb = sectionGroup
     ? { label: sectionGroup.label, path: sectionGroup.items[0].path }
     : null;
-  const breadcrumbs = sectionCrumb && pageCrumbs[0]?.label !== sectionCrumb.label
+  const baseCrumbs = sectionCrumb && pageCrumbs[0]?.label !== sectionCrumb.label
     ? [sectionCrumb, ...pageCrumbs]
     : pageCrumbs;
+  // A page can append one crumb for the record it has open (Branches: the open branch).
+  // The page crumb before it then links back to that page's default view.
+  const contextCrumb = useSyncExternalStore(subscribeHeaderCrumb, getHeaderCrumb, () => null);
+  const breadcrumbs = contextCrumb
+    ? [
+      ...baseCrumbs.slice(0, -1),
+      { label: baseCrumbs[baseCrumbs.length - 1].label, path: location.pathname, back: contextCrumb.back },
+      contextCrumb,
+    ]
+    : baseCrumbs;
 
   const loadNotifications = async () => {
     setNotificationLoading(true);
@@ -259,7 +270,13 @@ export default function Header({ onMenu, mobileOpen }) {
                 <li key={`${crumb.label}-${index}`} className="flex items-center gap-[6px] min-w-0" aria-current={isLast ? 'page' : undefined}>
                   {index > 0 && <span className="text-muted font-[600]" aria-hidden="true">/</span>}
                   {crumb.path && !isLast ? (
-                    <button type="button" className="p-0 border-0 [background:transparent] text-muted text-[14px] font-[600] cursor-pointer hover:text-text hover:underline" onClick={() => navigate(crumb.path)}>{crumb.label}</button>
+                    <button
+                      type="button"
+                      className="p-0 border-0 [background:transparent] text-muted text-[14px] font-[600] cursor-pointer hover:text-text hover:underline"
+                      onClick={() => (crumb.back ? crumb.back() : navigate(crumb.path))}
+                    >
+                      {crumb.label}
+                    </button>
                   ) : (
                     <strong className="text-text text-[16px] font-[800] whitespace-nowrap overflow-hidden text-ellipsis">{crumb.label}</strong>
                   )}
