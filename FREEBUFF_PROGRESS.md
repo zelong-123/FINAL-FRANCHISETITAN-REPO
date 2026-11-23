@@ -51,6 +51,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Header breadcrumb → **Branches connectivity**: opening a branch (half or full view) appends its name to the trail — `Operations / Branches / [DEMO] Kkopi · Makati` — and clicking `Branches` closes the branch and returns to the default list, which drops the crumb. Implemented with a tiny store (`src/lib/headerCrumbs.js`) that the page sets and the header subscribes to, so no extra API call and no URL change; the crumb clears on unmount or when another page takes over. `src/lib/headerCrumbs.js`, `src/components/ADMIN/HeaderAndNav/Header.jsx`, `src/pages/Branches.jsx`
 
+- Header breadcrumb → **Supply requests connectivity**: the selected category is named in the trail — `Operations / Supply requests / Needs my action` — following the tabs (`Under review`, `Dispatched`, `Overdue`, …) and a dashboard's stage narrowing. **`All` adds no crumb** (it is the default view), and clicking `Supply requests` returns to All, which clears it. Same store as Branches (`src/lib/headerCrumbs.js`), no extra API call. `src/pages/SupplyRequests.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 
