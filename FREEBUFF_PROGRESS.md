@@ -53,6 +53,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Header breadcrumb → **Supply requests connectivity**: the selected category is named in the trail — `Operations / Supply requests / Needs my action` — following the tabs (`Under review`, `Dispatched`, `Overdue`, …) and a dashboard's stage narrowing. **`All` adds no crumb** (it is the default view), and clicking `Supply requests` returns to All, which clears it. Same store as Branches (`src/lib/headerCrumbs.js`), no extra API call. `src/pages/SupplyRequests.jsx`
 
+- Inquiries (Sales view) → **table layout**: the **Actions** column is no longer rendered for a role that has no inquiry actions (Sales has none), so the empty track at the end is gone; every remaining column gets the space. Column padding went from `15px` to `22px` a side (`20px` on the first and last) so the columns are not crammed together. `src/pages/Inquiries.jsx`, `src/tailwind.css`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 

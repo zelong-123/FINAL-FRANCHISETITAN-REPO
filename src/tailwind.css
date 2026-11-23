@@ -740,6 +740,23 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   min-width: 760px;
 }
 
+/* Inquiries: a little more air between the columns so the rows do not read as one block. */
+.inquiries-page .table-wrap th,
+.inquiries-page .table-wrap td {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.inquiries-page .table-wrap th:first-child,
+.inquiries-page .table-wrap td:first-child {
+  padding-left: 20px;
+}
+
+.inquiries-page .table-wrap th:last-child,
+.inquiries-page .table-wrap td:last-child {
+  padding-right: 20px;
+}
+
 /* Tablets and narrow browser zoom: toolbars wrap and fields take full rows. */
 @media (max-width: 900px) {
   .applicant-pipeline-page .unified-toolbar-container,
