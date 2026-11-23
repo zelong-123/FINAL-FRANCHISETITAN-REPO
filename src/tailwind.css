@@ -214,8 +214,11 @@
   .notice-info { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 22%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, transparent); }
   .modal-small { width: min(500px, 100%); }
   .modal-wide { width: min(980px, 100%); }
+  /* Fixed height so the dialog never shrinks to its item list: the body scrolls instead. */
+  .modal-dispatch { height: min(740px, calc(100dvh - 40px)); }
   @media (max-width: 780px) { .modal-wide { width: 100%; } }
   @media (max-width: 780px) { .modal-small { width: 100%; } }
+  @media (max-width: 451px) { .modal-dispatch { height: calc(100dvh - 20px); } }
   .status-active-franchisee { color: var(--success-text); border-color: color-mix(in srgb, var(--success) 20%, var(--border)); background: color-mix(in srgb, var(--success) 7%, transparent); }
   .is-peak.bar-graph-bar { background: linear-gradient(180deg, var(--accent), var(--success)); }
   .fn-runs_out_soon { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }

@@ -3,14 +3,11 @@ import { createPortal } from 'react-dom';
 import {
   FaBoxOpen,
   FaCheck,
-  FaChevronLeft,
-  FaChevronRight,
   FaCircleCheck,
   FaClock,
   FaCloudArrowUp,
   FaEye,
   FaFilePdf,
-  FaRegCalendarDays,
   FaTrashCan,
   FaTriangleExclamation,
   FaUser,
@@ -19,6 +16,7 @@ import {
 import { api, firstValidationMessage } from '../../lib/api';
 import { supplyStatusLabel } from '../../lib/supplyStatus';
 import useRemote from '../../lib/useRemote';
+import SchedulePicker from './SchedulePicker';
 
 const NOTE_LIMIT = 255;
 const NOTE_WARN_AT = 220;
@@ -26,9 +24,15 @@ const ACCEPT = 'image/jpeg,image/png,application/pdf';
 const ALLOWED = ['image/jpeg', 'image/png', 'application/pdf'];
 const CLOSE_MS = 180;
 
-const pad2 = (value) => String(value).padStart(2, '0');
-
 const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+/** The Manila calendar day of an instant, as "YYYY-MM-DD". */
+const manilaDay = (value) => (value ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(value)) : '');
+const addDays = (day, days) => {
+  const [year, month, date] = String(day).split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, date + days));
+  return next.toISOString().slice(0, 10);
+};
+const dayText = (day) => (day ? new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
 
 const allowedFile = (file) => Boolean(file) && (ALLOWED.includes(file.type) || /\.(jpe?g|png|pdf)$/i.test(file.name || ''));
 
@@ -47,26 +51,6 @@ const humanTime = (value) => {
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
-
-const parseLocal = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value || ''));
-  if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const toLocalValue = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-
-const displayDateTime = (date) => {
-  if (!date) return '';
-  const hours = date.getHours();
-  const h12 = hours % 12 === 0 ? 12 : hours % 12;
-  return `${pad2(date.getMonth() + 1)}/${pad2(date.getDate())}/${date.getFullYear()}  ${h12}:${pad2(date.getMinutes())} ${hours < 12 ? 'AM' : 'PM'}`;
-};
-
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const WEEKDAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const ROW_H = 30;
 
 // Same input recipe the shared `Field` uses, so the POD form matches every other form in the app.
 const FIELD = 'w-full h-[42px] rounded-[9px] border border-input-line px-[11px] text-text text-[13.5px] [background:var(--input-bg)] [color-scheme:dark] light:[color-scheme:light] [transition:border-color_.12s_ease,_box-shadow_.12s_ease,_background_.12s_ease] placeholder:text-placeholder hover:border-line-strong focus:border-accent focus:outline-none focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_11%,_transparent)] focus:[background:var(--input-focus-bg)] disabled:opacity-[.6] disabled:cursor-not-allowed';
@@ -91,6 +75,7 @@ export default function MarkDeliveredModal({ requestId, onClose, onDelivered }) 
   const [viewing, setViewing] = useState(false);
   const [receivedBy, setReceivedBy] = useState('');
   const [deliveredAt, setDeliveredAt] = useState(nowLocal);
+  const [timeTouched, setTimeTouched] = useState(false);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -125,11 +110,27 @@ export default function MarkDeliveredModal({ requestId, onClose, onDelivered }) 
   }, [requestId]);
 
   const request = remote.data;
-  const complete = Boolean(file) && receivedBy.trim().length >= 2 && Boolean(deliveredAt);
+  const delivery = request?.delivery;
+  // The POD cannot land on the dispatch day: the truck needs at least one night on the road.
+  const dispatchAt = delivery?.dispatched_at || delivery?.departed_at || '';
+  const earliestDay = dispatchAt ? addDays(manilaDay(dispatchAt), 1) : '';
+  const pickedDay = deliveredAt ? manilaDay(deliveredAt) : '';
+  const timeError = earliestDay && pickedDay && pickedDay < earliestDay
+    ? `Choose ${dayText(earliestDay)} or later: a day after the dispatch.`
+    : '';
+  const nowAllowed = !earliestDay || manilaDay(new Date()) >= earliestDay;
+  // Until the field is touched, the default follows the earliest allowed day (the request loads a moment later).
+  // Same-day dispatches keep "now" and show the error instead: only tomorrow is a valid delivery date.
+  const shownDeliveredAt = !timeTouched && nowAllowed && earliestDay && pickedDay < earliestDay
+    ? `${earliestDay}T09:00`
+    : deliveredAt;
+
+  const complete = Boolean(file) && receivedBy.trim().length >= 2 && Boolean(shownDeliveredAt) && !timeError;
   const missing = [
     !file && 'POD photo or slip',
     receivedBy.trim().length < 2 && 'who received it',
-    !deliveredAt && 'the delivery date and time',
+    !shownDeliveredAt && 'the delivery date and time',
+    Boolean(timeError) && 'a day after the dispatch',
   ].filter(Boolean);
   const missingText = `Still needed: ${missing.join(', ')}.`;
 
@@ -247,7 +248,7 @@ export default function MarkDeliveredModal({ requestId, onClose, onDelivered }) 
       const form = new FormData();
       form.append('file', file);
       form.append('received_by', receivedBy.trim());
-      form.append('actual_delivered_at', new Date(deliveredAt).toISOString());
+      form.append('actual_delivered_at', new Date(shownDeliveredAt).toISOString());
       if (note.trim()) form.append('notes', note.trim());
       await api.post(`/supply-requests/${requestId}/pod`, form);
       setSaving(false);
@@ -464,26 +465,35 @@ export default function MarkDeliveredModal({ requestId, onClose, onDelivered }) 
                     <label htmlFor="pod-time">Actual delivery date and time</label>
                     <span className={TAG} aria-hidden="true">Required</span>
                   </div>
-                  <PodDateTimePicker
+                  <SchedulePicker
                     id="pod-time"
-                    value={deliveredAt}
-                    onChange={setDeliveredAt}
+                    value={shownDeliveredAt}
+                    onChange={(value) => { setTimeTouched(true); setDeliveredAt(value); }}
                     disabled={saving || saved}
+                    minDay={earliestDay}
+                    maxDateTime={nowLocal()}
+                    maxDay={nowLocal().slice(0, 10)}
                     ariaDescribedBy={shake.time ? errorId : undefined}
                   />
                   <div className="mt-[4px] flex items-center justify-between gap-[8px]">
-                    <small className="min-w-0 truncate text-muted text-[11px] leading-[1.4]">
-                      {deliveredAt ? `Actually delivered ${humanTime(deliveredAt)}` : 'Set when the delivery really arrived.'}
+                    <small className={`min-w-0 truncate text-[11px] leading-[1.4] ${timeError ? 'text-[color:var(--danger-text)] font-[600]' : 'text-muted'}`}>
+                      {timeError || (shownDeliveredAt ? `Actually delivered ${humanTime(shownDeliveredAt)}` : 'Set when the delivery really arrived.')}
                     </small>
                     <button
                       type="button"
-                      onClick={() => setDeliveredAt(nowLocal())}
-                      disabled={saving || saved}
+                      onClick={() => { setTimeTouched(true); setDeliveredAt(nowLocal()); }}
+                      disabled={saving || saved || !nowAllowed}
+                      title={nowAllowed ? undefined : `The delivery is at least a day after dispatch${earliestDay ? ` (${dayText(earliestDay)})` : ''}.`}
                       className="inline-flex flex-none items-center gap-[4px] p-0 border-0 text-accent-text text-[11px] font-[650] cursor-pointer [background:transparent] underline underline-offset-2 [transition:color_.12s_ease] hover:text-text focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] disabled:opacity-[.5] disabled:cursor-not-allowed"
                     >
                       <FaClock aria-hidden="true" /> Use current time
                     </button>
                   </div>
+                  {dispatchAt && !timeError && (
+                    <p className="m-[3px_0_0] text-muted text-[10.5px] leading-[1.4]">
+                      Dispatched {humanTime(dispatchAt)} · earliest POD {dayText(earliestDay)}.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -624,288 +634,3 @@ function SwapHint({ missingText, complete, saved }) {
   );
 }
 
-// Day/time cells must not pick up the app's global button fills.
-const CELL_RESET = 'appearance-none! min-h-0! shadow-none! border-0!';
-
-/**
- * Date + time field with the app's own #070A13 calendar popup and scroll columns,
- * because the native datetime-local panel cannot be recoloured by CSS.
- */
-function PodDateTimePicker({ id, value, onChange, disabled, ariaDescribedBy }) {
-  const [open, setOpen] = useState(false);
-  const [anchor, setAnchor] = useState(null);
-  const [viewMonth, setViewMonth] = useState(() => {
-    const base = parseLocal(value) || new Date();
-    return new Date(base.getFullYear(), base.getMonth(), 1);
-  });
-  const buttonRef = useRef(null);
-  const popupRef = useRef(null);
-  const hourColRef = useRef(null);
-  const minuteColRef = useRef(null);
-
-  const selected = parseLocal(value);
-  const now = new Date();
-  const todayKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-
-  const place = () => {
-    const rect = buttonRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const width = 330;
-    const height = 348;
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const above = spaceBelow < height && rect.top > spaceBelow;
-    setAnchor(above
-      ? { left, bottom: window.innerHeight - rect.top + 6 }
-      : { left, top: rect.bottom + 6 });
-  };
-
-  useEffect(() => {
-    if (!open) return undefined;
-    place();
-    const onPointerDown = (event) => {
-      if (buttonRef.current?.contains(event.target) || popupRef.current?.contains(event.target)) return;
-      setOpen(false);
-    };
-    const reposition = () => place();
-    // Capture phase so Escape closes only the popup, never the whole dialog.
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen(false);
-      buttonRef.current?.focus();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, [open, value]);
-
-  // Bring the current hour/minute into view inside the scroll columns.
-  useEffect(() => {
-    if (!open) return;
-    const base = parseLocal(value) || new Date();
-    const h12 = base.getHours() % 12 === 0 ? 12 : base.getHours() % 12;
-    if (hourColRef.current) hourColRef.current.scrollTop = Math.max(0, (h12 - 1) * ROW_H - ROW_H);
-    if (minuteColRef.current) minuteColRef.current.scrollTop = Math.max(0, (base.getMinutes() - 2) * ROW_H);
-  }, [open, value]);
-
-  const commit = (date) => {
-    const cap = new Date();
-    onChange(toLocalValue(date > cap ? cap : date));
-  };
-
-  const pickDay = (date) => {
-    const base = selected ? new Date(selected) : new Date();
-    base.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
-    commit(base);
-  };
-
-  const setHour = (h12) => {
-    const base = selected ? new Date(selected) : new Date();
-    const meridiem = base.getHours() < 12 ? 'AM' : 'PM';
-    base.setHours((h12 % 12) + (meridiem === 'PM' ? 12 : 0));
-    commit(base);
-  };
-
-  const setMinute = (minute) => {
-    const base = selected ? new Date(selected) : new Date();
-    base.setMinutes(minute);
-    commit(base);
-  };
-
-  const setMeridiem = (next) => {
-    const base = selected ? new Date(selected) : new Date();
-    const hours = base.getHours();
-    base.setHours(next === 'PM' ? (hours % 12) + 12 : hours % 12);
-    commit(base);
-  };
-
-  const hour24 = selected ? selected.getHours() : now.getHours();
-  const minuteValue = selected ? selected.getMinutes() : now.getMinutes();
-  const h12Value = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  const meridiemValue = hour24 < 12 ? 'AM' : 'PM';
-  const selectedDayKey = selected ? `${selected.getFullYear()}-${pad2(selected.getMonth() + 1)}-${pad2(selected.getDate())}` : '';
-
-  const year = viewMonth.getFullYear();
-  const month = viewMonth.getMonth();
-  const offset = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cellCount = Math.ceil((offset + daysInMonth) / 7) * 7;
-
-  const hourBlocked = (h12) => selectedDayKey === todayKey && (h12 % 12) + (meridiemValue === 'PM' ? 12 : 0) > now.getHours();
-  const minuteBlocked = (minute) => selectedDayKey === todayKey && hour24 >= now.getHours() && minute > now.getMinutes();
-
-  return (
-    <div className="relative">
-      <button
-        ref={buttonRef}
-        id={id}
-        type="button"
-        disabled={disabled}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-describedby={ariaDescribedBy}
-        onClick={() => {
-          if (!open) {
-            const base = parseLocal(value) || new Date();
-            setViewMonth(new Date(base.getFullYear(), base.getMonth(), 1));
-          }
-          setOpen((current) => !current);
-        }}
-        className={`${FIELD} flex items-center justify-between gap-[8px] text-left cursor-pointer`}
-      >
-        <span className={`truncate tabular-nums ${selected ? '' : 'text-placeholder'}`}>
-          {selected ? displayDateTime(selected) : 'mm/dd/yyyy  --:-- --'}
-        </span>
-        <FaRegCalendarDays aria-hidden="true" className="flex-none text-muted text-[12.5px]" />
-      </button>
-
-      {open && anchor && createPortal(
-        <div
-          ref={popupRef}
-          data-pod-picker="true"
-          role="dialog"
-          aria-label="Choose delivery date and time"
-          style={{ left: anchor.left, top: anchor.top, bottom: anchor.bottom }}
-          className="fixed z-[1300] w-[330px] max-w-[calc(100vw_-_16px)] p-[9px] border border-[#1B2437] rounded-[8px] [background:#070A13] [box-shadow:0_18px_44px_rgba(3,7,18,.6)] light:border-line light:[background:var(--panel)] light:[box-shadow:var(--shadow-md)]"
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          <div className="grid grid-cols-[1fr_96px] gap-[8px]">
-            <div>
-              <div className="flex items-center justify-between gap-[6px] mb-[6px]">
-                <button
-                  type="button"
-                  aria-label="Previous month"
-                  onClick={() => setViewMonth(new Date(year, month - 1, 1))}
-                  className={`${CELL_RESET} grid h-[26px] w-[26px] place-items-center rounded-[6px] p-0! text-[#A9B4C8]! [background:transparent]! cursor-pointer [transition:color_.15s_ease,_background_.15s_ease] hover:text-white! hover:[background:#141C2D]! light:text-muted light:hover:text-text light:hover:[background:var(--hover)]!`}
-                >
-                  <FaChevronLeft aria-hidden="true" className="text-[11px]" />
-                </button>
-                <strong className="text-[12.5px] font-[720] tracking-[-.01em] text-[#EEF2FA] light:text-text">
-                  {MONTH_NAMES[month]} {year}
-                </strong>
-                <button
-                  type="button"
-                  aria-label="Next month"
-                  onClick={() => setViewMonth(new Date(year, month + 1, 1))}
-                  className={`${CELL_RESET} grid h-[26px] w-[26px] place-items-center rounded-[6px] p-0! text-[#A9B4C8]! [background:transparent]! cursor-pointer [transition:color_.15s_ease,_background_.15s_ease] hover:text-white! hover:[background:#141C2D]! light:text-muted light:hover:text-text light:hover:[background:var(--hover)]!`}
-                >
-                  <FaChevronRight aria-hidden="true" className="text-[11px]" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-7 mb-[2px]">
-                {WEEKDAY_NAMES.map((label) => (
-                  <span key={label} className="grid h-[22px] place-items-center text-[9.5px] font-[800] tracking-[.04em] text-[#7B879C] light:text-muted">{label.toUpperCase()}</span>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-7 gap-[1px]">
-                {Array.from({ length: cellCount }, (_, index) => {
-                  const date = new Date(year, month, 1 - offset + index);
-                  if (date.getMonth() !== month) return <span key={`blank-${index}`} aria-hidden="true" className="h-[28px]" />;
-                  const key = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-                  const isSelected = key === selectedDayKey;
-                  const isFuture = key > todayKey;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      disabled={isFuture}
-                      aria-pressed={isSelected}
-                      aria-current={key === todayKey ? 'date' : undefined}
-                      onClick={() => pickDay(date)}
-                      className={`${CELL_RESET} grid h-[28px] w-full place-items-center rounded-[6px] p-0! text-[13px] tabular-nums cursor-pointer [background:transparent]! [transition:background_.12s_ease,_color_.12s_ease] ${isSelected ? 'text-white! font-[720]! [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]!' : 'text-[#DCE3F2]! font-[560]! hover:[background:#141C2D]! light:text-text! light:hover:[background:var(--hover)]!'} ${isFuture ? 'opacity-[.28]! cursor-not-allowed!' : ''} ${key === todayKey && !isSelected ? 'text-[#9DB2FF]! light:text-accent-text!' : ''}`}
-                    >
-                      {date.getDate()}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center justify-between gap-[8px] pt-[6px] mt-[4px] border-t border-[#1B2437] light:border-line">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const base = new Date();
-                    onChange(toLocalValue(base));
-                  }}
-                  className={`${CELL_RESET} p-0! text-[11.5px]! font-[680]! text-[#8FA8FF]! [background:transparent]! cursor-pointer hover:text-[#B4C6FF]! light:text-accent-text`}
-                >
-                  Now
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    buttonRef.current?.focus();
-                  }}
-                  className={`${CELL_RESET} p-0! text-[11.5px]! font-[680]! text-[#A9B4C8]! [background:transparent]! cursor-pointer hover:text-white! light:text-muted light:hover:text-text`}
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-
-            {/* Time: hour / minute scroll columns, like the native picker but in the app's own navy. */}
-            <div className="grid grid-cols-[1fr_1fr_38px] gap-[2px] pt-[2px] border-l border-[#1B2437] pl-[6px] light:border-line">
-              <div role="listbox" aria-label="Hour" ref={hourColRef} className="h-[224px] overflow-y-auto [scrollbar-width:thin]">
-                {Array.from({ length: 12 }, (_, index) => index + 1).map((h12) => (
-                  <button
-                    key={h12}
-                    type="button"
-                    role="option"
-                    aria-selected={h12 === h12Value}
-                    disabled={hourBlocked(h12)}
-                    onClick={() => setHour(h12)}
-                    className={`${CELL_RESET} grid h-[28px] w-full place-items-center rounded-[6px] p-0! text-[13px] tabular-nums cursor-pointer [background:transparent]! [transition:background_.12s_ease,_color_.12s_ease] ${h12 === h12Value ? 'text-white! font-[720]! [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]!' : 'text-[#DCE3F2]! hover:[background:#141C2D]! light:text-text! light:hover:[background:var(--hover)]!'} ${hourBlocked(h12) ? 'opacity-[.25]! cursor-not-allowed!' : ''}`}
-                  >
-                    {pad2(h12)}
-                  </button>
-                ))}
-              </div>
-              <div role="listbox" aria-label="Minute" ref={minuteColRef} className="h-[224px] overflow-y-auto [scrollbar-width:thin]">
-                {Array.from({ length: 60 }, (_, index) => index).map((minute) => (
-                  <button
-                    key={minute}
-                    type="button"
-                    role="option"
-                    aria-selected={minute === minuteValue}
-                    disabled={minuteBlocked(minute)}
-                    onClick={() => setMinute(minute)}
-                    className={`${CELL_RESET} grid h-[28px] w-full place-items-center rounded-[6px] p-0! text-[13px] tabular-nums cursor-pointer [background:transparent]! [transition:background_.12s_ease,_color_.12s_ease] ${minute === minuteValue ? 'text-white! font-[720]! [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]!' : 'text-[#DCE3F2]! hover:[background:#141C2D]! light:text-text! light:hover:[background:var(--hover)]!'} ${minuteBlocked(minute) ? 'opacity-[.25]! cursor-not-allowed!' : ''}`}
-                  >
-                    {pad2(minute)}
-                  </button>
-                ))}
-              </div>
-              <div role="listbox" aria-label="AM or PM" className="h-[224px] overflow-y-auto [scrollbar-width:thin]">
-                {['AM', 'PM'].map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    role="option"
-                    aria-selected={label === meridiemValue}
-                    onClick={() => setMeridiem(label)}
-                    className={`${CELL_RESET} grid h-[28px] w-full place-items-center rounded-[6px] p-0! text-[12.5px] font-[650] cursor-pointer [background:transparent]! [transition:background_.12s_ease,_color_.12s_ease] ${label === meridiemValue ? 'text-white! font-[720]! [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]!' : 'text-[#DCE3F2]! hover:[background:#141C2D]! light:text-text! light:hover:[background:var(--hover)]!'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}

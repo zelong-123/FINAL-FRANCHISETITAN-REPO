@@ -108,7 +108,7 @@ test('preparing rows are not deducted twice when dispatched', async () => {
   const before = await stock(beansStock.id);
   const res = await call('POST', `/supply-requests/${preparing[0]}/dispatch`, {
     token: logistics,
-    body: { driver_name: 'Pedro Reyes', driver_contact: '09181234567', plate_number: 'XYZ 987', departed_at: new Date(Date.now() - 60_000).toISOString(), eta_at: new Date(Date.now() + 3_600_000).toISOString() },
+    body: { driver_name: 'Pedro Reyes', driver_contact: '09181234567', plate_number: 'XYZ 987', departed_at: new Date(Date.now() - 60_000).toISOString(), eta_at: new Date(Date.now() + 2 * 24 * 3600_000).toISOString() },
   });
   assert.equal(res.status, 200, JSON.stringify(res.json));
   assert.equal(res.json.data.status, 'dispatched');

@@ -14,7 +14,7 @@ import { forecastFor } from './supplyForecast.ts';
 import { resolveWorkspace } from './branchAccess.ts';
 import { evaluate, STOCK_LABELS } from './materialStock.ts';
 import * as S from './supplyStatus.ts';
-import { addWorkingDays, earliestTargetDate, isWeekend, manilaDate, nextWorkingDayOrSame, pastOneWorkingDay } from './workingDays.ts';
+import { addDays, addWorkingDays, earliestTargetDate, isWeekend, manilaDate, nextWorkingDayOrSame, pastOneWorkingDay } from './workingDays.ts';
 
 const SUPPLY_MODEL = 'App\\Models\\SupplyRequest';
 /** Dates in notification text, as people read them (Manila): "Fri, Nov 13" and "Nov 11, 5:14 PM". */
@@ -714,6 +714,9 @@ export async function dispatchRequest(db: Db, actor: Row, id: number, input: Row
   const eta = new Date(String(input.eta_at ?? ''));
   if (Number.isNaN(eta.getTime())) fail('eta_at', 'Enter the ETA.');
   if (eta < departed) fail('eta_at', 'The ETA must be on or after the departure.');
+  // Two clear days on the road. Weekends are fine: branches receive on weekends, Admin catches up on Monday.
+  const etaMinDay = addDays(manilaDate(departed), 2);
+  if (manilaDate(eta) < etaMinDay) fail('eta_at', `The ETA must be at least 2 days after the departure (not before ${dayText(etaMinDay)}).`);
   const given = new Map<number, number>((Array.isArray(input.items) ? input.items : []).map((r: Row) => [Number(r.item_id), num(r.prepared)]));
   const result = await db.tx(async (tx) => {
     const sr = await lockRequest(tx, id);
@@ -747,7 +750,7 @@ export async function dispatchRequest(db: Db, actor: Row, id: number, input: Row
     else await insertRow(tx, 'deliveries', { supply_request_id: id, ...fields });
     await history(tx, sr, 'dispatched', 'dispatched', actor, `Dispatched with ${driver} (${plate}).`, { driver_name: driver, plate_number: plate, departed_at: departed, eta_at: eta, items: lines.map((l) => ({ item_id: l.item.id, prepared: l.prepared })), stock: deducted });
     const saved = await setStatus(tx, sr, 'dispatched', sr.stock_deducted_at ? {} : { stock_deducted_at: new Date() });
-    return { saved, warnings: isWeekend(manilaDate(eta)) ? ['The ETA is on a weekend. Make sure the branch can receive.'] : [] };
+    return { saved, warnings: isWeekend(manilaDate(eta)) ? ['The ETA is on a weekend. Branches can receive it, but Admin processes the papers on the next working day.'] : [] };
   });
   await notifyBranch(db, result.saved, 'supply_request_dispatched', 'Supplies on the way', `${result.saved.request_number} left the warehouse with ${driver} (${plate}), ETA ${timeText(eta)}.`);
   return result;
@@ -783,6 +786,9 @@ export async function encodePod(db: Db, actor: Row, id: number, input: Row) {
     if (!delivery) fail('status', 'This request has no dispatch record.');
     if (delivery.pod_encoded_at) fail('status', 'The POD is already encoded.');
     if (delivery.departed_at && actual < new Date(delivery.departed_at)) fail('actual_delivered_at', 'The actual delivery time must be on or after the departure.');
+    // A delivery cannot arrive on the day the dispatch was encoded: it needs the road, at least one night.
+    const dispatchDay = manilaDate(new Date(delivery.dispatched_at ?? delivery.departed_at ?? delivery.created_at));
+    if (manilaDate(actual) < addDays(dispatchDay, 1)) fail('actual_delivered_at', 'The actual delivery date must be at least a day after the dispatch date.');
     await updateRow(tx, 'deliveries', delivery.id, {
       recipient_name: receivedBy, actual_delivered_at: actual, delivered_at: actual, delivery_date: manilaDate(actual), pod_encoded_by_user_id: actor.id, pod_encoded_at: new Date(),
       pod_document_id: Number(input.document_id), delivered_by_user_id: actor.id, confirmed_by_party: 'logistics',
