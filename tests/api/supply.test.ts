@@ -137,12 +137,13 @@ test('supply: role scoping, reservation at endorsement, deduction at dispatch an
 
   assert.equal((await call('POST', `${path}/prepare`, { token: admin })).status, 403);
   assert.equal((await call('POST', `${path}/prepare`, { token: logistics })).json.data.status, 'preparing');
-  const dispatch = (extra: object) => call('POST', `${path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(30), eta_at: ago(-60), ...extra } });
+  const dispatch = (extra: object) => call('POST', `${path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(3 * 24 * 60), eta_at: ago(-60), ...extra } });
   assert.match((await dispatch({ driver_contact: '0917123' })).json.errors.driver_contact[0], /11 digits/);
   assert.match((await dispatch({ driver_name: 'R2-D2' })).json.errors.driver_name[0], /driver name/);
   assert.match((await dispatch({ plate_number: '???' })).json.errors.plate_number[0], /plate/);
   assert.match((await dispatch({ departed_at: ago(-120) })).json.errors.departed_at[0], /future/);
-  assert.match((await dispatch({ eta_at: ago(60) })).json.errors.eta_at[0], /on or after/);
+  assert.match((await dispatch({ eta_at: ago(3 * 24 * 60 + 120) })).json.errors.eta_at[0], /on or after/);
+  assert.match((await dispatch({ eta_at: ago(2 * 24 * 60) })).json.errors.eta_at[0], /at least 2 days after the departure/, 'two clear days on the road');
   const itemId = detail.json.data.items[0].id;
   assert.match((await dispatch({ items: [{ item_id: itemId, prepared: 25 }] })).json.errors['items.0.prepared'][0], /must equal the endorsed/, 'never short a delivery silently');
   assert.equal(await stockOf(), 120);
@@ -279,7 +280,7 @@ test('supply: short stock needs a Fulfillment Decision; backorders, hold, resume
   await call('POST', `${small.path}/prepare`, { token: logistics });
   const whileOpen = await call('DELETE', '/inventories/items', { token: logistics, body: { inventory_ids: [inventoryId] } });
   assert.match(whileOpen.json.errors.inventory_ids[0], /still on an open supply request/, 'blocked while the request is open');
-  const shipped = await call('POST', `${small.path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(10), eta_at: ago(-30) } });
+  const shipped = await call('POST', `${small.path}/dispatch`, { token: logistics, body: { ...driver, departed_at: ago(3 * 24 * 60), eta_at: ago(-30) } });
   assert.equal(shipped.json.data.status, 'dispatched', JSON.stringify(shipped.json));
   assert.equal(await stockOf(), 86, 'only the endorsed 4 leave the warehouse');
 

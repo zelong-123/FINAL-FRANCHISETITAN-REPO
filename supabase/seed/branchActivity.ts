@@ -306,7 +306,7 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
         await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
         await step(at(3, 9, now));
         await asOf(at(3, 13, now));
-        await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(3, 13, now).toISOString(), eta_at: at(3, 17, now).toISOString() });
+        await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(3, 13, now).toISOString(), eta_at: at(1, 11, now).toISOString() });
         await step(at(3, 13, now));
         await db.query(
           `update supply_requests set created_at = $2, submitted_at = $2, reviewed_at = $3, endorsed_at = $3, scheduled_at = $3, preparing_at = $4, stock_deducted_at = $5, status_changed_at = $5,
@@ -321,20 +321,20 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
     // A delivered request: submitted, reviewed, endorsed (reserved), scheduled, prepared, dispatched
     // (deducted), POD encoded, receipt confirmed with every item good: completed.
     const deliver = async (items: Row[], day: number) => {
-      await asOf(at(day + 1, 9, now));
+      await asOf(at(day + 4, 9, now));
       const sr = await call(OWNER, 'POST', '/supply-requests', { location_id: branch.id, delivery_address: address, items, bulk_reason: BULK_REASON });
-      await step(at(day + 1, 9, now));
-      await asOf(at(day + 1, 14, now));
+      await step(at(day + 4, 9, now));
+      await asOf(at(day + 4, 14, now));
       await call(ADMIN, 'POST', `/supply-requests/${sr.id}/start-review`);
       await call(ADMIN, 'POST', `/supply-requests/${sr.id}/endorse`);
-      await step(at(day + 1, 14, now));
-      await asOf(at(day, 7, now));
+      await step(at(day + 4, 14, now));
+      await asOf(at(day + 3, 7, now));
       await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/accept-schedule`);
       await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/prepare`);
-      await step(at(day, 7, now));
-      await asOf(at(day, 8, now));
-      const sent = await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(day, 8, now).toISOString(), eta_at: at(day, 11, now).toISOString() });
-      await step(at(day, 8, now));
+      await step(at(day + 3, 7, now));
+      await asOf(at(day + 2, 8, now));
+      const sent = await call(LOGISTICS, 'POST', `/supply-requests/${sr.id}/dispatch`, { ...DRIVER, departed_at: at(day + 2, 8, now).toISOString(), eta_at: at(day, 11, now).toISOString() });
+      await step(at(day + 2, 8, now));
       await asOf(at(day, 10, now));
       const pod = new FormData();
       pod.append('file', new File([POD_PNG], 'pod.png', { type: 'image/png' }));
@@ -349,7 +349,7 @@ async function run(root: Db, options: { now?: Date; log?: (line: string) => void
       await db.query(
         `update supply_requests set created_at = $2, submitted_at = $2, reviewed_at = $3, endorsed_at = $3, scheduled_at = $3, preparing_at = $4, stock_deducted_at = $5,
            branch_received_at = $6, completed_at = $6, status_changed_at = $6, target_delivery_date = $7, confirmed_delivery_date = $7 where id = $1`,
-        [sr.id, at(day + 1, 9, now), at(day + 1, 14, now), at(day, 7, now), at(day, 8, now), at(day, 15, now), isoDate(at(day, 0, now))],
+        [sr.id, at(day + 4, 9, now), at(day + 4, 14, now), at(day + 3, 7, now), at(day + 2, 8, now), at(day, 15, now), isoDate(at(day, 0, now))],
       );
       await db.query(`update deliveries set pod_encoded_at = $2 where supply_request_id = $1`, [sr.id, at(day, 10, now)]);
       report.delivered++;

@@ -50,7 +50,7 @@ test('the branch is reminded once, a day after the POD, and is never "overdue"',
   await call('POST', `/supply-requests/${sr.id}/endorse`, { token: admin });
   await call('POST', `/supply-requests/${sr.id}/accept-schedule`, { token: logistics });
   await call('POST', `/supply-requests/${sr.id}/prepare`, { token: logistics });
-  const sent = await call('POST', `/supply-requests/${sr.id}/dispatch`, { token: logistics, body: { driver_name: 'Juan Cruz', driver_contact: '09171234567', plate_number: 'ABC 1234', departed_at: new Date(Date.now() - 3600_000).toISOString(), eta_at: new Date().toISOString() } });
+  const sent = await call('POST', `/supply-requests/${sr.id}/dispatch`, { token: logistics, body: { driver_name: 'Juan Cruz', driver_contact: '09171234567', plate_number: 'ABC 1234', departed_at: new Date(Date.now() - 3 * 24 * 3600_000).toISOString(), eta_at: new Date().toISOString() } });
   assert.equal(sent.status, 200, JSON.stringify(sent.json));
   const form = new FormData();
   form.set('file', new File(['pod'], 'pod.pdf', { type: 'application/pdf' }));

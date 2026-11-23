@@ -4,6 +4,10 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FaXmark } from 'react-icons/fa6';
+import dailyDashLogo from '../../assets/dailydash_new.png';
+import godoLogo from '../../assets/godo_new.png';
+import kkopiLogo from '../../assets/kkopi_new.png';
+import laPastaLogo from '../../assets/lapasta_new.png';
 import { api, fetchBlob, firstValidationMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import { printDeliveryReceipt } from '../../lib/deliveryReceipt';
@@ -26,6 +30,13 @@ const ACTION_NAME = {
   shortage_reported: 'Shortage reported', preparing_started: 'Preparing started', dispatched: 'Dispatched', pod_encoded: 'POD encoded', receipt_confirmed: 'Receipt confirmed',
   discrepancy_opened: 'Discrepancy review', discrepancy_resolved: 'Discrepancy resolved', completed: 'Completed', migrated: 'Moved to the new workflow',
 };
+const BRAND_LOGOS = [['kkopi', kkopiLogo], ['godo', godoLogo], ['dailydash', dailyDashLogo], ['lapasta', laPastaLogo]];
+/** Same brand-to-logo match the branch portal uses (name or code, ignoring punctuation and case). */
+const brandLogoOf = (brand) => {
+  const name = `${brand?.code || ''} ${brand?.name || ''}`.toLowerCase().replace(/[^a-z]/g, '');
+  return BRAND_LOGOS.find(([key]) => name.includes(key))?.[1] || null;
+};
+
 const STOCK_TONE = { out: 'danger', critical: 'danger', low: 'warning', ok: 'success', none: 'neutral' };
 
 /** A private image as a thumbnail that enlarges (like the applicant documents); PDFs open in a tab. */
@@ -72,6 +83,14 @@ function Thumb({ requestId, doc, label }) {
 }
 
 const TABLE = 'w-full min-w-[500px] [border-collapse:collapse] text-[13px] [&_th]:p-[8px_9px] [&_th]:text-left [&_th]:align-bottom [&_th]:text-muted [&_th]:text-[13px] [&_th]:font-[500] [&_td]:p-[10px_9px] [&_td]:border-t [&_td]:border-line [&_td]:text-text-secondary [&_td]:align-top';
+/** The requested/available pair is the first thing Admin reads, so it gets divider lines and bold text. */
+const FOCUS_COL = 'border-l border-line-strong';
+const FOCUS_HEAD = `${FOCUS_COL} !text-text !font-[800]`;
+const FOCUS_CELL = `${FOCUS_COL} whitespace-nowrap !text-text text-[14px] font-[750]`;
+/** The stock status keeps its own colour but drops the chip border/fill so it sits on the item name's line. */
+const STOCK_TEXT = {
+  danger: '!text-danger-text', warning: '!text-[color:var(--warning-text)]', success: '!text-success-text', neutral: '!text-muted',
+};
 
 /**
  * Two compact tables so every column fits the drawer at desktop width: what Admin reviews
@@ -90,8 +109,8 @@ function ItemsTable({ request, staff }) {
         <table className={TABLE}>
           <thead>
             <tr>
-              <th>Item</th><th>Requested</th>
-              {staff && <><th>Available</th><th>Unavailable</th><th>Days covered</th><th>Suggested</th></>}
+              <th>Item</th><th className={FOCUS_HEAD}>Requested</th>
+              {staff && <><th className={FOCUS_HEAD}>Available</th><th className={FOCUS_COL}>Unavailable</th><th>Days covered</th><th>Suggested</th></>}
             </tr>
           </thead>
           <tbody>
@@ -101,20 +120,24 @@ function ItemsTable({ request, staff }) {
               return (
                 <tr key={item.id}>
                   <td className="!text-text font-[650]">
-                    {nameOf(item)}
-                    {(r || item.over_bulk) && (
+                    <span className="block uppercase">{nameOf(item)}</span>
+                    {r && (
+                      <span title="Branch stock" className={`mt-[2px] block text-[12px] font-[400] normal-case ${STOCK_TEXT[STOCK_TONE[r.branch_stock_status]] || STOCK_TEXT.neutral}`}>
+                        Branch: {r.branch_stock_label}
+                      </span>
+                    )}
+                    {(r?.critical || item.over_bulk) && (
                       <span className="mt-[4px] flex flex-wrap gap-[4px] font-[400]">
-                        {r && <Chip tone={STOCK_TONE[r.branch_stock_status]} title="Branch stock">Branch: {r.branch_stock_label}</Chip>}
                         {r?.critical && <Chip tone="danger" title="Branch stock is Critical/Out, or it covers fewer days than the lead time">Critical</Chip>}
                         {item.over_bulk && <Chip tone="warning">Bulk</Chip>}
                       </span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap">{qty(item.quantity_requested)} {unit}</td>
+                  <td className={FOCUS_CELL}>{qty(item.quantity_requested)} {unit}</td>
                   {staff && (
                     <>
-                      <td className="whitespace-nowrap">{r ? `${qty(r.available)} ${unit}` : '—'}</td>
-                      <td className={`whitespace-nowrap ${r?.unavailable > 0 ? '!text-danger-text font-[750]' : r ? '!text-muted' : ''}`}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit}` : '0') : '—'}</td>
+                      <td className={FOCUS_CELL}>{r ? `${qty(r.available)} ${unit}` : '—'}</td>
+                      <td className={`${FOCUS_COL} whitespace-nowrap ${r?.unavailable > 0 ? '!text-danger-text font-[750]' : r ? '!text-muted' : ''}`}>{r ? (r.unavailable > 0 ? `${qty(r.unavailable)} ${unit}` : '0') : '—'}</td>
                       <td className={r?.branch_stock_status === 'low' ? '!text-[color:var(--warning-text)] font-[600]' : ''}>{r?.days_covered ?? '—'}</td>
                       <td className={Number(r?.suggested) > 0 ? '!text-text font-[700]' : r ? '!text-muted' : ''}>{r?.suggested ?? '—'}</td>
                     </>
@@ -146,9 +169,10 @@ function ItemsTable({ request, staff }) {
   );
 }
 
-export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpenRequest, reloadKey }) {
+export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpenRequest, reloadKey, busyKey = '' }) {
   const remote = useRemote(async () => (await api.get(`/supply-requests/${requestId}`)).data, [requestId, reloadKey]);
   const [error, setError] = useState('');
+  const [itemsOpen, setItemsOpen] = useState(true);
   const r = remote.data;
   const staff = role === 'admin' || role === 'logistics';
 
@@ -176,6 +200,7 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
     } catch (e) { setError(firstValidationMessage(e)); }
   };
   const decision = r?.fulfillment_type && r.fulfillment_type !== 'full';
+  const brandLogo = r ? brandLogoOf(r.location?.brand) : null;
   const restockLines = (r?.items || []).filter((i) => Number(i.quantity_unavailable) > 0);
 
   return createPortal(
@@ -196,9 +221,17 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
             <div className="sticky top-[-22px] z-[5] -mx-[22px] -mt-[22px] mb-[4px] px-[22px] pt-[22px] pb-[10px] [background:var(--panel)] max-[520px]:-mx-[16px] max-[520px]:px-[16px] max-[520px]:top-[-16px] max-[520px]:-mt-[16px] max-[520px]:pt-[16px]">
               <button type="button" aria-label="Close" className="absolute top-[14px] right-[14px] z-10 w-[44px] h-[44px] grid place-items-center border-0 rounded-[10px] bg-transparent text-muted cursor-pointer hover:text-text" onClick={onClose}><FaXmark aria-hidden="true" /></button>
               <div className="pr-[52px] text-muted text-[12px] [font-family:ui-monospace,monospace]">{r.request_number}</div>
-              <h2 className="m-[4px_0_8px] text-text text-[24px] font-[700] leading-[1.2]">{branchLabel(r.location)}</h2>
+              <div className="flex items-center gap-[10px]">
+                <h2 className="m-[4px_0_8px] text-text text-[24px] font-[700] leading-[1.2]">{branchLabel(r.location)}</h2>
+                {brandLogo && (
+                  <img
+                    src={brandLogo} alt={`${r.location?.brand?.name || 'Brand'} logo`}
+                    className="mb-[8px] mt-[4px] h-[40px] w-auto max-w-[130px] shrink-0 object-contain object-left"
+                  />
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-[10px]">
-                <StatusChip status={r.status} />
+                <StatusChip status={r.status} plain />
                 <span className="text-muted text-[13px]">{urgencyLabel(r.urgency)} priority</span>
                 {r.reservation_incomplete && <Chip tone="warning">Reservation incomplete</Chip>}
                 {r.parent && <Chip>Backorder of {r.parent.request_number}</Chip>}
@@ -233,12 +266,18 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
               )}
               {actions.length > 0 && (
                 <div className="flex flex-wrap gap-[8px]">
-                  {actions.map((a) => (
-                    <button key={`${a.key}-${a.label}`} type="button" disabled={a.disabled} title={a.reason || undefined}
-                      className={a.kind === 'primary' ? BTN_PRIMARY : a.kind === 'danger' ? 'min-h-[44px] px-[10px] border-0 rounded-[10px] bg-transparent text-danger-text cursor-pointer hover:[background:color-mix(in_srgb,_var(--danger)_11%,_transparent)] disabled:opacity-50' : BTN_GHOST}
-                      onClick={() => onAction(a.key, r)}
-                    >{a.label}</button>
-                  ))}
+                  {actions.map((a) => {
+                    // The pressed button runs its loading lap until the request settles.
+                    const busy = busyKey === a.key;
+                    const base = a.kind === 'primary' ? BTN_PRIMARY : a.kind === 'danger' ? 'min-h-[44px] px-[10px] border-0 rounded-[10px] bg-transparent text-danger-text cursor-pointer hover:[background:color-mix(in_srgb,_var(--danger)_11%,_transparent)] disabled:opacity-50' : BTN_GHOST;
+                    return (
+                      <button key={`${a.key}-${a.label}`} type="button" disabled={a.disabled || (Boolean(busyKey) && !busy)} title={a.reason || undefined}
+                        aria-busy={busy || undefined}
+                        className={`${base} ${busy ? 'supply-action-loading' : ''}`}
+                        onClick={() => onAction(a.key, r)}
+                      >{a.label}</button>
+                    );
+                  })}
                 </div>
               )}
               {actions.filter((a) => a.disabled && a.reason).map((a) => <small key={a.key} className="block mt-[6px] text-muted text-[12px]">{a.label}: {a.reason}</small>)}
@@ -263,7 +302,25 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
               )}
             </Section>
 
-            <Section title="Items"><ItemsTable request={r} staff={staff} /></Section>
+            <Section
+              title="Items"
+              aside={
+                <button
+                  type="button" className={`${BTN_GHOST} ${BTN_SMALL} !border-0 !px-[8px]`} aria-expanded={itemsOpen}
+                  onClick={() => setItemsOpen((open) => !open)}
+                >
+                  {itemsOpen ? 'Hide items' : `Show items (${r.items.length})`}
+                </button>
+              }
+            >
+              {/* The table stays mounted so the collapse can animate; the 0fr→1fr grid trick animates height without measuring. */}
+              <div
+                aria-hidden={!itemsOpen}
+                className={`grid [transition:grid-template-rows_.28s_ease,_opacity_.22s_ease] motion-reduce:[transition:none] ${itemsOpen ? '[grid-template-rows:1fr] opacity-100' : '[grid-template-rows:0fr] opacity-0 pointer-events-none'}`}
+              >
+                <div className="min-h-0 overflow-hidden"><ItemsTable request={r} staff={staff} /></div>
+              </div>
+            </Section>
             {r.items.some((i) => i.quantity_endorsed !== null && i.quantity_endorsed !== undefined) && (
               <Section title="Endorsed quantity">
                 <ul className="m-0 p-0 [list-style:none]">
@@ -342,11 +399,20 @@ export default function SupplyDrawer({ requestId, role, onClose, onAction, onOpe
 
             <Section title="Activity">
               <ol className="m-0 p-0 [list-style:none]">
-                {[...(r.status_history || [])].reverse().map((h, index) => {
+                {[...(r.status_history || [])].reverse().map((h, index, all) => {
                   const latest = index === 0;
                   const actor = [h.actor?.full_name, ROLE_NAME[h.actor_role] || h.actor_role].filter(Boolean).join(' · ') || '';
+                  // One gradient over the whole trail: the present dot is always full colour, older ones fade.
+                  const fade = latest ? 1 : Math.max(0.22, 1 - (index / Math.max(1, all.length - 1)) * 0.78);
                   return (
-                    <li key={`${h.at}-${index}`} className={`relative pl-[24px] pb-[16px] ${index > 0 ? '' : ''} before:[content:''] before:absolute before:left-[0] before:top-[5px] before:w-[12px] before:h-[12px] before:rounded-[50%] before:[background:${latest ? 'var(--accent)' : '#3a4363'}] after:[content:''] after:absolute after:left-[5px] after:top-[17px] after:bottom-0 after:w-[2px] after:[background:#1f2639] last:after:hidden`}>
+                    <li key={`${h.at}-${index}`} className="relative pl-[24px] pb-[16px]">
+                      <span
+                        aria-hidden="true" style={{ opacity: fade }}
+                        className={`absolute left-0 top-[5px] w-[12px] h-[12px] rounded-[50%] [background:var(--accent)] ${latest ? '[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_20%,_transparent)]' : ''}`}
+                      />
+                      {index < all.length - 1 && (
+                        <span aria-hidden="true" style={{ opacity: Math.max(0.3, fade) }} className="absolute left-[5px] top-[20px] bottom-0 w-[2px] [background:#1f2639]" />
+                      )}
                       <div className="flex justify-between gap-[12px]">
                         <b className={`text-text text-[15px] ${latest ? 'font-[600]' : 'font-[500]'}`}>{ACTION_NAME[h.action] || supplyStatusLabel(h.to)}</b>
                         <small className="text-muted text-[13px] whitespace-nowrap">{when(h.at)}</small>

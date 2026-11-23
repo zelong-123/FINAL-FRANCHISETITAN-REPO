@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Bar,
   BarChart,
@@ -15,19 +16,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import {
-  FaBoxesStacked,
-  FaCalendarCheck,
-  FaCircleCheck,
-  FaClipboardCheck,
-  FaClipboardList,
-  FaHandshake,
-  FaMagnifyingGlass,
-  FaPause,
-  FaRotateLeft,
-  FaTriangleExclamation,
-  FaTruckFast,
-} from 'react-icons/fa6';
+import { FaBoxesStacked, FaCalendarDay, FaChevronDown, FaCircleCheck, FaClipboardCheck, FaTruckFast } from 'react-icons/fa6';
 import { EmptyState, LoadingState, Notice, StatusBadge } from '../ApiUi';
 import { formatNumber, titleCase } from '../../lib/format';
 import { conversionRatePercent, formatPercent } from '../../lib/conversion';
@@ -49,19 +38,6 @@ const STAGE_COLORS = {
   dispatched: '#9db2ff',
   delivered: '#32c997',
   discrepancy_review: '#f56d7d',
-};
-
-const STAGE_ICONS = {
-  submitted: FaClipboardList,
-  under_review: FaMagnifyingGlass,
-  returned: FaRotateLeft,
-  waiting_logistics: FaHandshake,
-  scheduled: FaCalendarCheck,
-  on_hold: FaPause,
-  preparing: FaBoxesStacked,
-  dispatched: FaTruckFast,
-  delivered: FaCircleCheck,
-  discrepancy_review: FaTriangleExclamation,
 };
 
 function ChartTooltip({ active, payload, label }) {
@@ -648,79 +624,230 @@ export function FulfillmentTrend({ rows }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Supply pipeline stage tracker (stepper + KPI cards + table)          */
+/* Supply pipeline: metric cards, chevron stage chart, request table    */
 /* ------------------------------------------------------------------ */
+
+/** The 5 KPI cards. Values, captions and the queue's critical count all come from the API. */
 const TRACKER_CARDS = [
-  { key: 'today', label: "Today's requests", Icon: FaClipboardList, tone: 'accent' },
-  { key: 'approved', label: 'Approved requests', Icon: FaClipboardCheck, tone: 'success' },
-  { key: 'queue', label: 'Queue count', Icon: FaTriangleExclamation, tone: 'danger' },
-  { key: 'route_to_branch', label: 'Route to branch', Icon: FaTruckFast, tone: 'info' },
-  { key: 'branch_confirmation', label: 'Branch confirmation', Icon: FaCircleCheck, tone: 'confirm' },
+  { key: 'today', label: "Today's requests", Icon: FaCalendarDay },
+  { key: 'approved', label: 'Approved requests', Icon: FaClipboardCheck },
+  { key: 'queue', label: 'Queue count', Icon: FaBoxesStacked },
+  { key: 'route_to_branch', label: 'Route to branch', Icon: FaTruckFast },
+  { key: 'branch_confirmation', label: 'Branch confirmation', Icon: FaCircleCheck },
 ];
 
+/** Workflow order of the chevron steps. On hold and Discrepancy review are intentionally not shown. */
+const STAGE_STEPS = [
+  { key: 'submitted', label: 'Submitted' },
+  { key: 'under_review', label: 'Under review' },
+  { key: 'waiting_logistics', label: 'Waiting for Logistics' },
+  { key: 'scheduled', label: 'Scheduled' },
+  { key: 'preparing', label: 'Preparing' },
+  { key: 'dispatched', label: 'Dispatched' },
+  { key: 'delivered', label: 'Delivered' },
+];
+
+/** Returned is an exception, not the next step, so it sits outside the chevron row. */
+const RETURNED_STEP = { key: 'returned', label: 'Returned' };
+
+/** Which Supply Requests tab holds each stage, so a chevron opens the page already on the right list. */
+const STAGE_TAB = {
+  submitted: 'under_review',
+  under_review: 'under_review',
+  returned: 'under_review',
+  waiting_logistics: 'scheduled_preparing',
+  scheduled: 'scheduled_preparing',
+  preparing: 'scheduled_preparing',
+  dispatched: 'dispatched',
+  delivered: 'dispatched',
+};
+
+/** A stage with requests links to that exact status on the Supply Requests page. */
+const stageHref = (key) => `/supply-requests?tab=${STAGE_TAB[key] || 'all'}&stage=${key}`;
+
+const stageCountLabel = (label, count) => `${label}: ${count} ${count === 1 ? 'request' : 'requests'}`;
+
+/** Chevron entrance: each step slides in from the left, staggered, then the numbers count up. */
+const STEP_STAGGER_MS = 65;
+const STEP_SLIDE_MS = 420;
+
+const ROWS_PER_PAGE = 7;
+
+/** How many product categories a row shows before the rest go behind the toggle. */
+const CATEGORY_PREVIEW = 2;
+
+/** Product categories as chips: two by default, all of them when expanded, so the row grows instead of the text shrinking. */
+function CategoryList({ value }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const list = items.length ? items : ['General'];
+  const hidden = list.length - CATEGORY_PREVIEW;
+  const shown = expanded || hidden <= 0 ? list : list.slice(0, CATEGORY_PREVIEW);
+  return (
+    <div className="stage-cat-cell">
+      {shown.map((item) => <span className="stage-cat-tag" key={item}>{item}</span>)}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="stage-cat-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? 'Show less' : `+${hidden} more`}
+          <FaChevronDown className={`stage-cat-arrow${expanded ? ' is-open' : ''}`} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The chevron row on its own: one step per stage after submission, plus Returned as its own tile. */
+export function StageChevronChart({ stages = [], avgCycleTime }) {
+  const counts = stages.reduce((acc, stage) => ({ ...acc, [stage.key]: Number(stage.count || 0) }), {});
+  const shownStages = [...STAGE_STEPS, RETURNED_STEP];
+  // Denominator is every open request the API counts — including On hold and Discrepancy review,
+  // which are held aside instead of drawn — so a stage's share is out of all active requests.
+  const totalCount = stages.reduce((sum, stage) => sum + Number(stage.count || 0), 0);
+  const heldCount = counts.on_hold ?? 0;
+  const discrepancyCount = counts.discrepancy_review ?? 0;
+  const maxCount = shownStages.reduce((max, stage) => Math.max(max, counts[stage.key] ?? 0), 0);
+  const shareOf = (count) => (totalCount > 0 ? Math.round((count / totalCount) * 100) : 0);
+  // Darker tint = more requests, relative to the busiest stage.
+  const heatOf = (count) => {
+    const ratio = maxCount > 0 ? count / maxCount : 0;
+    return ratio <= 0.34 ? 1 : ratio <= 0.67 ? 2 : 3;
+  };
+  // Counts roll up when the chart mounts (a route or tab change), and again when the data changes.
+  // The chevrons slide in from the left one after another; the numbers start once the last one lands.
+  const [landed, setLanded] = useState(() => typeof window !== 'undefined'
+    && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches));
+  useEffect(() => {
+    if (landed) return undefined;
+    const timer = window.setTimeout(() => setLanded(true), STAGE_STEPS.length * STEP_STAGGER_MS + STEP_SLIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [landed]);
+  const stageBody = (label, count) => (
+    <>
+      <span className="stage-step-value">
+        <strong><CountUp value={count} start={landed} /></strong>
+        {count > 0 && <em><CountUp value={shareOf(count)} start={landed} />%</em>}
+      </span>
+      <span className="stage-step-name">{label}</span>
+    </>
+  );
+
+  return (
+    <section className="stage-chart-card">
+      <div className="stage-chart-head">
+        <h2>Requests by stage</h2>
+        <p className="stage-chart-sub">
+          Current count per stage · average cycle time {formatNumber(avgCycleTime, 1)} days
+          {(heldCount > 0 || discrepancyCount > 0) && (
+            <>
+              {' · '}{heldCount} on hold{' · '}{discrepancyCount} in discrepancy review
+            </>
+          )}
+        </p>
+      </div>
+      <ol className="stage-steps" aria-label="Requests by stage">
+        {STAGE_STEPS.map((stage, index) => {
+          const count = counts[stage.key] ?? 0;
+          const live = count > 0;
+          const label = stageCountLabel(stage.label, count);
+          const tone = !live ? '' : stage.key === 'delivered' ? ' stage-step--delivered' : ` stage-step--heat${heatOf(count)}`;
+          const className = `stage-step${index === 0 ? ' stage-step--first' : ''}${live ? ' stage-step--live stage-step--on' : ''}${tone}`;            return (
+              <li
+                key={stage.key}
+                className={className}
+                style={{ '--step-index': index }}
+                aria-label={label}
+                aria-disabled={live ? undefined : 'true'}
+                title={live ? `${label} · open in Supply Requests` : label}
+              >
+              {live
+                ? <Link to={stageHref(stage.key)} className="stage-step-body" aria-label={`${label} · open in Supply Requests`}>{stageBody(stage.label, count)}</Link>
+                : <span className="stage-step-body">{stageBody(stage.label, count)}</span>}
+            </li>
+          );
+        })}
+        {(() => {
+          const count = counts[RETURNED_STEP.key] ?? 0;
+          const live = count > 0;
+          const label = stageCountLabel(RETURNED_STEP.label, count);
+          return (              <li
+                className={`stage-step stage-step-returned${live ? ' stage-step--live stage-step--on stage-step--returned' : ''}`}
+                style={{ '--step-index': STAGE_STEPS.length }}
+                aria-label={label}
+              aria-disabled={live ? undefined : 'true'}
+              title={live ? `${label} · open in Supply Requests` : label}
+            >
+              {live
+                ? <Link to={stageHref(RETURNED_STEP.key)} className="stage-step-body" aria-label={`${label} · open in Supply Requests`}>{stageBody(RETURNED_STEP.label, count)}</Link>
+                : <span className="stage-step-body">{stageBody(RETURNED_STEP.label, count)}</span>}
+            </li>
+          );
+        })()}
+      </ol>
+    </section>
+  );
+}
+
 export function SupplyStageTracker({ data, loading, error }) {
+  // Table paging state is declared before the early returns; the page is clamped below, so no reset effect is needed.
+  const [page, setPage] = useState(0);
   if (loading) return <LoadingState label="Loading supply pipeline…" />;
   if (error) return <Notice type="error" inline>{error}</Notice>;
 
   const stages = data?.stages || [];
   const kpis = data?.kpis || {};
   const rows = data?.rows || [];
+  // Requests table: 7 rows a page.
+  const pageCount = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageStart = currentPage * ROWS_PER_PAGE;
+  const visibleRows = rows.slice(pageStart, pageStart + ROWS_PER_PAGE);
+  // A short window of page numbers with gaps, so long lists stay one row of buttons.
+  const pageNumbers = (() => {
+    if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i);
+    const from = Math.max(1, Math.min(currentPage - 1, pageCount - 4));
+    return [0, ...Array.from({ length: 3 }, (_, i) => from + i), pageCount - 1];
+  })();
 
   return (
-    <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:[.dashboard-page_&]:border-[color:color-mix(in_srgb,_var(--accent)_24%,_var(--border))] [.dashboard-page_&]:[background:radial-gradient(circle_at_14%_0%,_color-mix(in_srgb,_var(--accent)_9%,_transparent),_transparent_42%),_color-mix(in_srgb,_var(--panel)_96%,_transparent)]">
-      <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
-        <div className="panel-heading-copy flex flex-col later:gap-1 [&_span]:text-muted later:[&_span]:text-[8px]">
-          <h2>Integrated supply pipeline analytics</h2>
-          <span>
-            Real-time stage tracking · average cycle time {formatNumber(data?.avg_cycle_time, 1)} days
-          </span>
-        </div>
-      </div>
-
-      <div className="[.dashboard-page_&]:grid [.dashboard-page_&]:grid-cols-[repeat(6,_minmax(0,_1fr))] [.dashboard-page_&]:p-[24px_26px_14px] max-[981px]:later:[.dashboard-page_&]:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[981px]:[.dashboard-page_&]:gap-y-[18px] max-[681px]:later-2:[.dashboard-page_&]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[681px]:later:[.dashboard-page_&]:p-[20px_16px_12px]">
-        {stages.map((stage, index) => {
-          const Icon = STAGE_ICONS[stage.key] || FaClipboardList;
-          return (
-            <div className="tracker-step [.dashboard-page_&]:relative [.dashboard-page_&]:min-w-0 [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:items-center [.dashboard-page_&]:gap-[9px]" key={stage.key} data-stage={stage.key}>
-              <span className="[.dashboard-page_&]:text-text-secondary [.dashboard-page_&]:text-[9.5px] [.dashboard-page_&]:font-[740] [.dashboard-page_&]:text-center [.dashboard-page_&]:whitespace-nowrap">{stage.label}</span>
-              <div className="[.dashboard-page_&]:relative [.dashboard-page_&]:w-full [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-center">
-                <span className="[.dashboard-page_&]:[--stage-c:var(--accent)] [.dashboard-page_&]:relative [.dashboard-page_&]:z-1 [.dashboard-page_&]:w-[48px] [.dashboard-page_&]:h-[48px] [.dashboard-page_&]:grid [.dashboard-page_&]:place-items-center [.dashboard-page_&]:[border:1px_solid_color-mix(in_srgb,_var(--stage-c)_55%,_transparent)] [.dashboard-page_&]:rounded-[50%] [.dashboard-page_&]:text-[color:var(--stage-c)] [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--stage-c)_13%,_var(--panel-2))] [.dashboard-page_&]:[box-shadow:0_0_0_7px_color-mix(in_srgb,_var(--stage-c)_8%,_transparent),_0_0_20px_color-mix(in_srgb,_var(--stage-c)_38%,_transparent)] [.dashboard-page_&]:text-[17px] [.dashboard-page_.tracker-step[data-stage='submitted']_&]:[--stage-c:#54a8ff] later:[.dashboard-page_.tracker-step[data-stage='under\_review']_&]:[--stage-c:#6687ff] later-2:[.dashboard-page_.tracker-step[data-stage='waiting\_logistics']_&]:[--stage-c:#8b6dff] later-3:[.dashboard-page_.tracker-step[data-stage='preparing']_&]:[--stage-c:#f4b84a] later-4:[.dashboard-page_.tracker-step[data-stage='dispatched']_&]:[--stage-c:#9db2ff] later-5:[.dashboard-page_.tracker-step[data-stage='delivered']_&]:[--stage-c:#32c997]"><Icon aria-hidden="true" /></span>
-                {index < stages.length - 1 && <span className="[.dashboard-page_&]:absolute [.dashboard-page_&]:left-[50%] [.dashboard-page_&]:-right-[50%] [.dashboard-page_&]:top-[50%] [.dashboard-page_&]:h-[2px] [.dashboard-page_&]:[transform:translateY(-50%)] [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:[background:linear-gradient(_90deg,_color-mix(in_srgb,_var(--accent)_75%,_transparent),_color-mix(in_srgb,_var(--accent-2)_55%,_transparent)_)] max-[981px]:[.dashboard-page_&]:hidden" aria-hidden="true" />}
-              </div>
-              <span className="[.dashboard-page_&]:min-w-[36px] [.dashboard-page_&]:p-[3px_9px] [.dashboard-page_&]:border [.dashboard-page_&]:border-line [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:text-text-secondary [.dashboard-page_&]:[background:var(--surface-subtle)] [.dashboard-page_&]:text-[8.5px] [.dashboard-page_&]:font-[780] [.dashboard-page_&]:text-center">{formatNumber(stage.count)}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="[.dashboard-page_&]:grid [.dashboard-page_&]:grid-cols-[repeat(5,_minmax(0,_1fr))] [.dashboard-page_&]:gap-3 [.dashboard-page_&]:p-[12px_18px_8px] max-[981px]:later:[.dashboard-page_&]:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[681px]:later-2:[.dashboard-page_&]:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[681px]:later:[.dashboard-page_&]:p-[10px_14px_6px] max-[481px]:later-3:[.dashboard-page_&]:grid-cols-[1fr]">
+    <>
+      <div className="stage-metric-grid">
         {TRACKER_CARDS.map((card) => {
           const payload = kpis[card.key] || {};
           const critical = Number(payload.critical || 0);
-          const showCritical = card.key === 'queue';
+          const caption = card.key === 'queue'
+            ? (critical > 0 ? `Critical: ${critical}` : 'Nothing overdue')
+            : (payload.meta || '');
           return (
-            <article
-              className={`[.dashboard-page_&]:min-w-0 [.dashboard-page_&]:flex [.dashboard-page_&]:flex-col [.dashboard-page_&]:gap-2 [.dashboard-page_&]:p-[15px] [.dashboard-page_&]:border [.dashboard-page_&]:border-line [.dashboard-page_&]:rounded-[15px] [.dashboard-page_&]:[background:linear-gradient(_160deg,_color-mix(in_srgb,_var(--panel-2)_94%,_transparent),_color-mix(in_srgb,_var(--panel)_92%,_transparent)_)] [.dashboard-page_&]:[box-shadow:var(--shadow-sm)] [.dashboard-page_&]:[transition:transform_0.2s_ease,_border-color_0.2s_ease,_box-shadow_0.2s_ease] [.dashboard-page_&:hover]:[transform:translateY(-2px)] [.dashboard-page_&:hover]:border-line-strong [.dashboard-page_&:hover]:[box-shadow:var(--shadow-md)] later-2:[.dashboard-page_&_strong]:text-text later-5:[.dashboard-page_&_strong]:text-[clamp(23px,_2.2vw,_28px)] later-3:[.dashboard-page_&_strong]:tracking-[-0.045em] later:[.dashboard-page_&_strong]:leading-[1] [.dashboard-page_&_small]:min-h-[12px] [.dashboard-page_&_small]:text-muted [.dashboard-page_&_small]:text-[8px] later:[.dashboard-page_&.has-critical]:border-[color:color-mix(in_srgb,_var(--danger)_45%,_var(--border))] later:[.dashboard-page_&.has-critical]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--danger)_10%,_transparent),_var(--shadow-sm)] [.dashboard-page_&.has-critical_strong]:text-danger-text later:[.dashboard-page_&.has-critical_small]:text-danger-text tracker-tone-${card.tone}${showCritical && critical > 0 ? ' has-critical' : ''}`}
-              key={card.key}
-            >
-              <div className="[.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:justify-between [.dashboard-page_&]:gap-2 [.dashboard-page_&>span:first-child]:text-muted later:[.dashboard-page_&>span:first-child]:text-[8.5px] [.dashboard-page_&>span:first-child]:font-[760] [.dashboard-page_&>span:first-child]:tracking-[0.05em] [.dashboard-page_&>span:first-child]:uppercase">
+            <article className="stage-metric-card" key={card.key}>
+              <div className="stage-metric-head">
                 <span>{card.label}</span>
-                <span className="[.dashboard-page_&]:w-[30px] [.dashboard-page_&]:h-[30px] [.dashboard-page_&]:grid [.dashboard-page_&]:place-items-center [.dashboard-page_&]:flex-[0_0_auto] [.dashboard-page_&]:rounded-[10px] [.dashboard-page_&]:text-accent-text [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--accent)_11%,_transparent)] [.dashboard-page_&]:text-[13px] [.dashboard-page_.tracker-tone-success_&]:text-success-text [.dashboard-page_.tracker-tone-success_&]:[background:color-mix(in_srgb,_var(--success)_11%,_transparent)] later:[.dashboard-page_.tracker-tone-danger_&]:text-danger-text later:[.dashboard-page_.tracker-tone-danger_&]:[background:color-mix(in_srgb,_var(--danger)_11%,_transparent)] later-2:[.dashboard-page_.tracker-tone-info_&]:text-[color:var(--info)] later-2:[.dashboard-page_.tracker-tone-info_&]:[background:color-mix(in_srgb,_var(--info)_12%,_transparent)] later-2:[.dashboard-page_.tracker-tone-confirm_&]:text-[color:var(--info)] later-2:[.dashboard-page_.tracker-tone-confirm_&]:[background:color-mix(in_srgb,_var(--info)_12%,_transparent)]"><card.Icon aria-hidden="true" /></span>
+                <card.Icon className="stage-metric-icon" aria-hidden="true" />
               </div>
-              <strong>{formatNumber(payload.value)}</strong>
+              <strong><CountUp value={payload.value} /></strong>
               <small>
-                {showCritical
-                  ? (critical > 0 ? `Critical: ${critical}` : 'Nothing overdue')
-                  : (payload.meta || '')}
+                {card.key === 'queue' && critical > 0 && <i className="stage-metric-dot" aria-hidden="true" />}
+                {caption}
               </small>
             </article>
           );
         })}
       </div>
 
+      <StageChevronChart stages={stages} avgCycleTime={data?.avg_cycle_time} />
+
+      <section className="data-panel stage-requests overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:[.dashboard-page_&]:border-[color:color-mix(in_srgb,_var(--accent)_24%,_var(--border))] [.dashboard-page_&]:[background:radial-gradient(circle_at_14%_0%,_color-mix(in_srgb,_var(--accent)_9%,_transparent),_transparent_42%),_color-mix(in_srgb,_var(--panel)_96%,_transparent)]">
       {rows.length === 0 ? (
         <EmptyState label="No supply requests yet." detail="The tracker fills in as soon as a branch submits a request." />
       ) : (
+        <>
         <div className="table-wrap overflow-x-auto [.data-panel_&_table_tbody_tr[data-applicant-id]_td]:[vertical-align:middle]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pt-[14px]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td]:pb-[14px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:font-[400]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:leading-[1.35]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:font-[500]! later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)_small]:mt-[3px]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.875rem]! later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:font-[400]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:text-[0.8125rem]! later-3:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(5)]:font-[450]! max-[721px]:later:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_strong]:text-[1rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(3)]:text-[0.9375rem]! max-[721px]:later-4:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(4)]:text-[0.9375rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(1)_small]:text-[0.8125rem]! max-[721px]:later-2:[.data-panel_&_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[0.8125rem]! [.data-panel_&_table_tbody_tr.ap-row-readable]:cursor-pointer [.data-panel_&_table_tbody_tr.ap-row-readable]:[transition:background_.15s_ease] [.data-panel_&_table_tbody_tr.ap-row-readable:hover]:[background:rgba(123,_136,_255,_.06)] [.data-panel_&_table_tbody_tr.ap-row-readable.is-selected]:[background:rgba(123,_136,_255,_.12)] [.data-panel_&_table_tbody_tr.ap-row-readable_button]:cursor-pointer [.dashboard-page_&]:pt-[6px]">
           <table>
             <thead>
@@ -735,11 +862,11 @@ export function SupplyStageTracker({ data, loading, error }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.id}>
                   <td><strong>{row.id}</strong></td>
                   <td>{row.branch}</td>
-                  <td>{row.category}</td>
+                  <td><CategoryList key={row.id} value={row.category} /></td>
                   <td><StatusBadge value={row.stage} /></td>
                   <td>{formatNumber(row.queue_days, 1)}</td>
                   <td>{row.last_update}</td>
@@ -749,7 +876,47 @@ export function SupplyStageTracker({ data, loading, error }) {
             </tbody>
           </table>
         </div>
+        <div className="stage-pager">
+          <span className="stage-pager-info">
+            Showing {pageStart + 1}–{pageStart + visibleRows.length} of {rows.length}
+          </span>
+          <div className="stage-pager-buttons">
+            <button
+              type="button"
+              className="stage-pager-step"
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage === 0}
+            >
+              Prev
+            </button>
+            {pageNumbers.map((number, index) => (
+              <React.Fragment key={number}>
+                {index > 0 && number - pageNumbers[index - 1] > 1 && (
+                  <span className="stage-pager-ellipsis" aria-hidden="true">…</span>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Page ${number + 1}`}
+                  aria-current={number === currentPage ? 'page' : undefined}
+                  onClick={() => setPage(number)}
+                >
+                  {number + 1}
+                </button>
+              </React.Fragment>
+            ))}
+            <button
+              type="button"
+              className="stage-pager-step"
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage === pageCount - 1}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+        </>
       )}
     </section>
+    </>
   );
 }

@@ -57,7 +57,7 @@ async function create(branch: { token: string; id: number }, items: [{ id: numbe
 }
 const detail = async (token: string, id: number) => (await call('GET', `/supply-requests/${id}`, { token })).json.data;
 const DRIVER = { driver_name: 'Jose P. Rizal', driver_contact: '09181112222', plate_number: 'NAB 4521' };
-const dispatch = (id: number, extra: object = {}) => act(logistics, id, 'dispatch', { ...DRIVER, departed_at: minutesAgo(60), eta_at: minutesAgo(-60), ...extra });
+const dispatch = (id: number, extra: object = {}) => act(logistics, id, 'dispatch', { ...DRIVER, departed_at: minutesAgo(3 * 24 * 60), eta_at: minutesAgo(-60), ...extra });
 async function pod(id: number, actual = minutesAgo(5), status = 201) {
   const form = new FormData();
   form.set('file', new File([new Uint8Array([137, 80, 78, 71])], 'pod.png', { type: 'image/png' }));
@@ -292,7 +292,7 @@ test('7. Logistics reports a shortage per item, back to Admin for a new decision
   const pending = await detail(admin, sr.id);
   assert.deepEqual(pending.owners, ['admin']);
   assert.equal(pending.pending_shortage_report.items[0].actual_count, 7);
-  assert.match((await act(logistics, sr.id, 'dispatch', { ...DRIVER, departed_at: minutesAgo(5), eta_at: minutesAgo(-5) }, 422)).errors.status[0], /shortage report/, 'dispatch waits for Admin');
+  assert.match((await act(logistics, sr.id, 'dispatch', { ...DRIVER, departed_at: minutesAgo(5), eta_at: minutesAgo(-2 * 24 * 60) }, 422)).errors.status[0], /shortage report/, 'dispatch waits for Admin');
   const preview = (await act(admin, sr.id, 'fulfillment/preview', { type: 'partial_ship_now' })).data;
   assert.deepEqual(preview.items.map((i: any) => i.max_available), [7, 20]);
   assert.equal(preview.message, `${sr.request_number}-B will be created for Black tea 3 box`);
@@ -319,13 +319,14 @@ test('8. dispatched Thursday, ETA Sunday: the branch confirms Sunday, the POD is
   await act(logistics, sr.id, 'accept-schedule');
   await act(logistics, sr.id, 'prepare');
   const sent = await dispatch(sr.id, { departed_at: at(thursday, 15), eta_at: at(sunday, 10) });
-  assert.deepEqual(sent.data.warnings, ['The ETA is on a weekend. Make sure the branch can receive.']);
+  assert.deepEqual(sent.data.warnings, ['The ETA is on a weekend. Branches can receive it, but Admin processes the papers on the next working day.']);
   assert.match((await detail(admin, sr.id)).overdue_reason, /POD/, 'past the ETA with no POD after one working day');
 
   const received = await receipt(A, sr.id, allGood(sent.data));
   assert.equal(received.data.status, 'dispatched', 'received before the POD');
   assert.equal(await branchStock(A, rice), 12, 'credited at once');
   assert.match((await pod(sr.id, at(thursday, 14), 422)).errors.actual_delivered_at[0], /on or after the departure/);
+  assert.match((await pod(sr.id, at(thursday, 20), 422)).errors.actual_delivered_at[0], /at least a day after the dispatch date/, 'never the dispatch day itself');
   const done = await pod(sr.id, at(sunday, 11));
   assert.equal(done.data.status, 'completed');
   assert.equal(new Date(done.data.delivery.actual_delivered_at).toISOString(), at(sunday, 11));

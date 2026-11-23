@@ -15,14 +15,14 @@ import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../c
 import BranchCombobox from '../components/BranchCombobox';
 import DatePickerField from '../components/DatePickerField';
 import { rowActionLabel } from '../lib/supplyActions';
-import { supplyStatusLabel } from '../lib/supplyStatus';
+import { STATUSES, supplyStatusLabel } from '../lib/supplyStatus';
 import SupplyDrawer from '../components/supply/SupplyDrawer';
 import MarkDispatchedModal from '../components/supply/MarkDispatchedModal';
 import MarkDeliveredModal from '../components/supply/MarkDeliveredModal';
 import DateRevisionModal from '../components/supply/DateRevisionModal';
 import EstimateHint from '../components/supply/EstimateHint';
 import {
-  FulfillmentModal, ReasonModal, RequestDateModal, ResolveDiscrepancyModal, RestockDateModal, ShortageModal, SupplySettingsModal,
+  ConfirmActionModal, FulfillmentModal, ReasonModal, RequestDateModal, ResolveDiscrepancyModal, RestockDateModal, ShortageModal, SupplySettingsModal,
 } from '../components/supply/SupplyModals';
 import { Chip, StatusChip, Stepper, UrgencyChip } from '../components/supply/supplyUi';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SMALL, TOOL, PANEL, branchLabel, waitingText } from '../components/supply/supplyStyles';
@@ -52,12 +52,14 @@ const COUNT_TONE = {
   under_review: 'accent', on_hold: 'accent', scheduled_preparing: 'accent', dispatched: 'accent',
   completed: 'success',
 };
+// Deep, natural tone with a bright digit: visible in both themes at 11px.
 const COUNT_CLASS = {
-  danger: 'text-danger-text font-[750] [background:color-mix(in_srgb,_var(--danger)_38%,_transparent)]',
-  accent: 'text-accent-text font-[750] [background:color-mix(in_srgb,_var(--accent)_38%,_transparent)]',
-  success: 'text-success-text font-[750] [background:color-mix(in_srgb,_var(--success)_38%,_transparent)]',
+  danger: 'text-[#ffdfe4] font-[750] [background:color-mix(in_srgb,_var(--danger)_52%,_#0b0f1b)]',
+  accent: 'text-[#dde5ff] font-[750] [background:color-mix(in_srgb,_var(--accent)_54%,_#0b0f1b)]',
+  success: 'text-[#d9fbee] font-[750] [background:color-mix(in_srgb,_var(--success)_50%,_#0b0f1b)]',
 };
-const countClass = (key, value) => (value > 0 && COUNT_TONE[key] ? COUNT_CLASS[COUNT_TONE[key]] : '[background:var(--surface-strong)]');
+const COUNT_NEUTRAL = 'text-muted font-[700] [background:var(--surface-strong)]';
+const countClass = (key, value) => (value > 0 && COUNT_TONE[key] ? COUNT_CLASS[COUNT_TONE[key]] : COUNT_NEUTRAL);
 const TABS = [
   ['needs_action', 'Needs my action'], ['all', 'All'], ['under_review', 'Under review'], ['on_hold', 'On hold'],
   ['scheduled_preparing', 'Scheduled / Preparing'], ['dispatched', 'Dispatched'], ['discrepancy', 'Discrepancy'],
@@ -65,12 +67,22 @@ const TABS = [
 ];
 /** Rows per page in the list. */
 const PAGE_SIZE = 7;
+/** One full lap of the action button's loading ring — kept in step with the CSS animation. */
+const ORBIT_MS = 900;
+/** Drawer actions that post straight away — they confirm once before running. */
+const DIRECT_ACTIONS = {
+  start_review: ['start-review', 'Review started.'],
+  endorse: ['endorse', 'Endorsed – Full: stock reserved and sent to Logistics.'],
+  resume: ['resume', 'Resumed: stock reserved and sent to Logistics.'],
+  accept_schedule: ['accept-schedule', 'Schedule accepted. The branch was notified.'],
+  start_preparing: ['prepare', 'Preparing started.'],
+};
 /** Finished statuses: shown only under the Completed tab. */
 const DONE_STATUSES = ['completed', 'completed_with_discrepancy'];
 /** Overdue is a filter on open requests, so it lives here as its own category. */
 const OVERDUE_TAB = { key: 'overdue', label: 'Overdue', target: { tab: 'all', overdue: '1' } };
-const SORTS = [['priority', 'Priority'], ['newest', 'Date requested: newest'], ['oldest', 'Date requested: oldest'], ['target', 'Target delivery date'], ['branch', 'Branch A–Z'], ['brand', 'Brand']];
-const EMPTY_FILTERS = { search: '', brand_id: '', urgency: '', from: '', to: '', sort: 'priority' };
+const SORTS = [['activity', 'Recent activity'], ['priority', 'Priority'], ['newest', 'Date requested: newest'], ['oldest', 'Date requested: oldest'], ['target', 'Target delivery date'], ['branch', 'Branch A–Z'], ['brand', 'Brand']];
+const EMPTY_FILTERS = { search: '', brand_id: '', urgency: '', from: '', to: '', sort: 'activity' };
 /** What an empty tab means, in words. */
 const EMPTY = {
   needs_action: ['Nothing is waiting for you.', 'New requests and steps for your role appear here.'],
@@ -88,6 +100,20 @@ const EMPTY = {
 function itemsSummary(request) {
   const names = (request.items || []).map((i) => i.product?.name || i.product_name_snapshot || 'Item');
   return { count: names.length, first: names.slice(0, 2).join(', ') + (names.length > 2 ? '…' : '') };
+}
+
+/** When the branch sent the request — the timestamp the drawer calls "Requested on". */
+/** The newest thing that happened to a request: a status/step change or any other update. */
+function latestActivity(request) {
+  const times = [request.status_changed_at, request.updated_at, request.created_at]
+    .map((v) => (v ? new Date(v).getTime() : 0))
+    .filter((t) => Number.isFinite(t));
+  return times.length ? Math.max(...times) : 0;
+}
+
+function RequestedCell({ request }) {
+  const date = request.submitted_at || request.created_at;
+  return <span className="block text-text text-[13.5px] font-[650] whitespace-nowrap">{date ? formatDate(date) : '—'}</span>;
 }
 
 function TargetCell({ request }) {
@@ -215,6 +241,9 @@ export default function SupplyRequests() {
   const tab = params.get('tab') || 'needs_action';
   const overdue = params.get('overdue') === '1';
   const locationId = params.get('location_id') || '';
+  // A dashboard chevron links here with one exact stage, which narrows the list below its tab.
+  const stageParam = params.get('stage') || '';
+  const stage = STATUSES.includes(stageParam) ? stageParam : '';
   const page = Number(params.get('page') || 1);
   const [filters, setFilters] = useState(() => ({ ...EMPTY_FILTERS, ...Object.fromEntries([...params.entries()].filter(([k]) => k in EMPTY_FILTERS)) }));
   const [search, setSearch] = useState(filters.search);
@@ -228,11 +257,17 @@ export default function SupplyRequests() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAllTabs, setShowAllTabs] = useState(false);
   const [pageDir, setPageDir] = useState(1);
+  // Key of the drawer action currently in flight — its button shows the loading ring.
+  const [busyAction, setBusyAction] = useState('');
+  // The one-click action waiting for its second confirmation.
+  const [confirming, setConfirming] = useState(null);
 
   const update = useCallback((patch) => {
     const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) { if (v === '' || v === null || v === undefined) next.delete(k); else next.set(k, v); }
+    for (const [k, v] of Object.entries(patch)) {    if (v === '' || v === null || v === undefined) next.delete(k); else next.set(k, v); }
     if (!('page' in patch)) next.delete('page');
+    // Switching tabs drops a chevron's stage narrowing; paging and filters keep it.
+    if ('tab' in patch && !('stage' in patch)) next.delete('stage');
     setParams(next, { replace: true });
   }, [params, setParams]);
 
@@ -260,16 +295,29 @@ export default function SupplyRequests() {
     return () => { cancelled = true; };
   }, []);
 
-  const query = useMemo(() => ({ tab, page: tab === 'all' ? 1 : page, per_page: tab === 'all' ? 100 : PAGE_SIZE, overdue: overdue ? 1 : '', location_id: locationId, ...filters }), [tab, page, overdue, locationId, filters]);
+  // A stage view needs the whole open list ("all") so it can narrow and page it here; so does
+  // "Recent activity", which is ordered on this side so it works before the API is deployed.
+  const wideList = tab === 'all' || Boolean(stage) || filters.sort === 'activity';
+  const query = useMemo(() => ({
+    tab: stage ? 'all' : tab, page: wideList ? 1 : page, per_page: wideList ? 100 : PAGE_SIZE,
+    overdue: overdue ? 1 : '', location_id: locationId, ...filters,
+    // Ordered locally, so the API never has to know this sort and the list still loads today.
+    ...(filters.sort === 'activity' ? { sort: '' } : {}),
+  }), [tab, stage, wideList, page, overdue, locationId, filters]);
   const remote = useRemote(async () => api.get('/supply-requests', query), [JSON.stringify(query), reloadKey]);
   // All leaves out finished requests (they stay under Completed). Filtered and paged here so it works before the API is deployed.
   const fetchedRows = remote.data?.data || [];
-  const allOpen = fetchedRows.filter((r) => !DONE_STATUSES.includes(r.status));
-  const allLast = Math.max(1, Math.ceil(allOpen.length / PAGE_SIZE));
+  const openRows = tab === 'all' || stage ? fetchedRows.filter((r) => !DONE_STATUSES.includes(r.status)) : fetchedRows;
+  const stagedRows = stage ? openRows.filter((r) => r.status === stage) : openRows;
+  // Most recent activity first — a request that just moved a step jumps to the top of the table.
+  const listRows = filters.sort === 'activity'
+    ? [...stagedRows].sort((a, b) => latestActivity(b) - latestActivity(a) || Number(b.id) - Number(a.id))
+    : stagedRows;
+  const allLast = Math.max(1, Math.ceil(listRows.length / PAGE_SIZE));
   const allPage = Math.min(page, allLast);
-  const allMeta = { current_page: allPage, per_page: PAGE_SIZE, total: allOpen.length, last_page: allLast };
-  const rows = tab === 'all' ? allOpen.slice((allPage - 1) * PAGE_SIZE, allPage * PAGE_SIZE) : fetchedRows;
-  const meta = tab === 'all' ? allMeta : remote.data?.meta;
+  const allMeta = { current_page: allPage, per_page: PAGE_SIZE, total: listRows.length, last_page: allLast };
+  const rows = wideList ? listRows.slice((allPage - 1) * PAGE_SIZE, allPage * PAGE_SIZE) : fetchedRows;
+  const meta = wideList ? allMeta : remote.data?.meta;
   const tabs = remote.data?.meta?.tabs || {};
   const kpis = remote.data?.meta?.kpis || {};
 
@@ -292,24 +340,41 @@ export default function SupplyRequests() {
   const setFilter = (key, value) => { setFilters((f) => ({ ...f, [key]: value })); update({ [key]: value }); };
   const branchName = locationId ? (rows[0]?.location?.name || `Branch #${locationId}`) : '';
 
-  /** Simple actions run at once; the others open their modal. */
-  const onAction = async (key, request) => {
-    const direct = { start_review: ['start-review', 'Review started.'], endorse: ['endorse', 'Endorsed – Full: stock reserved and sent to Logistics.'], resume: ['resume', 'Resumed: stock reserved and sent to Logistics.'], accept_schedule: ['accept-schedule', 'Schedule accepted. The branch was notified.'], start_preparing: ['prepare', 'Preparing started.'] };
-    if (direct[key]) {
-      try {
-        await api.post(`/supply-requests/${request.id}/${direct[key][0]}`, {});
-        say(`${request.request_number}: ${direct[key][1]}`);
-      } catch (e) {
-        say(`${request.request_number}: ${firstValidationMessage(e)}`, 'error');
-      }
-      refresh();
-      return;
-    }
+  /** Simple actions ask for confirmation first; the others open their modal. */
+  const onAction = (key, request) => {
+    if (DIRECT_ACTIONS[key]) { setConfirming({ key, request }); return; }
     setModal({ key, request });
+  };
+  /** Runs a confirmed one-click action: the drawer button shows its loading ring until it settles. */
+  const runDirect = async (key, request) => {
+    const direct = DIRECT_ACTIONS[key];
+    if (!direct) return;
+    if (busyAction) return;
+    setBusyAction(key);
+    const started = Date.now();
+    try {
+      await api.post(`/supply-requests/${request.id}/${direct[0]}`, {});
+      // The pressed button runs one lap of its loading ring; let it finish before the notice.
+      await new Promise((done) => window.setTimeout(done, Math.max(0, ORBIT_MS - (Date.now() - started))));
+      say(`${request.request_number}: ${direct[1]}`);
+    } catch (e) {
+      await new Promise((done) => window.setTimeout(done, Math.max(0, ORBIT_MS - (Date.now() - started))));
+      say(`${request.request_number}: ${firstValidationMessage(e)}`, 'error');
+    } finally {
+      setBusyAction('');
+    }
+    refresh();
   };
   const closeModal = () => setModal(null);
   const done = (text) => () => { setModal(null); say(text); refresh(); };
 
+  // "All" = every tab group added up. Derived from the groups, not from meta.tabs.all, so it stays
+  // right whether or not the live API already excludes Completed from that total.
+  const ALL_GROUPS = ['under_review', 'on_hold', 'scheduled_preparing', 'dispatched', 'discrepancy', 'closed'];
+  const allCount = ALL_GROUPS.some((key) => key in tabs)
+    ? ALL_GROUPS.reduce((sum, key) => sum + Number(tabs[key] || 0), 0)
+    : (tabs.all ?? 0) - (tabs.completed ?? 0);
+  const countOf = (key) => (key === 'all' ? allCount : (tabs[key] ?? 0));
   const isMainTab = (key) => key === 'all' || (key === tab && !overdue);
   const tabButton = ([key, label]) => {
     const TabIcon = TAB_ICONS[key];
@@ -318,7 +383,7 @@ export default function SupplyRequests() {
       className={`whitespace-nowrap inline-flex items-center gap-[7px] p-[8px_13px] border rounded-[11px] text-[12.5px] font-[680] cursor-pointer ${tab === key && !overdue ? 'border-accent text-text [background:color-mix(in_srgb,_var(--accent)_14%,_transparent)]' : 'border-line text-text-secondary [background:var(--surface-subtle)] hover:border-line-strong'}`}
       onClick={() => update({ tab: key, overdue: '' })}
     >
-      {TabIcon && <TabIcon aria-hidden="true" className="text-[16px] shrink-0" />}{label}<span className={`min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] ${countClass(key, key === 'all' ? (tabs.all ?? 0) - (tabs.completed ?? 0) : (tabs[key] ?? 0))}`}>{formatNumber(key === 'all' ? (tabs.all ?? 0) - (tabs.completed ?? 0) : (tabs[key] ?? 0))}</span>
+      {TabIcon && <TabIcon aria-hidden="true" className="text-[16px] shrink-0" />}{label}<span className={`min-w-[22px] p-[1px_7px] rounded-[8px] text-[11px] ${countClass(key, countOf(key))}`}>{formatNumber(countOf(key))}</span>
     </button>
     );
   };
@@ -392,18 +457,36 @@ export default function SupplyRequests() {
           <button type="button" className={BTN_GHOST} onClick={() => { setFilters(EMPTY_FILTERS); setSearch(''); update({ ...Object.fromEntries(Object.keys(EMPTY_FILTERS).map((k) => [k, ''])), location_id: '' }); }}>Clear filters</button>
         )}
       </div>
+      {stage && (
+        <div className="mb-[10px]">
+          <Chip tone="accent">Stage: {supplyStatusLabel(stage)} <button type="button" aria-label="Clear the stage filter" className="ml-[2px] cursor-pointer [background:none] border-0 text-inherit" onClick={() => update({ stage: '' })}><FaXmark /></button></Chip>
+        </div>
+      )}
       {locationId && <div className="mb-[10px]"><Chip tone="accent">Branch: {branchName} <button type="button" aria-label="Show every branch" className="ml-[2px] cursor-pointer [background:none] border-0 text-inherit" onClick={() => update({ location_id: '' })}><FaXmark /></button></Chip></div>}
 
       <section className={`${PANEL} overflow-hidden mb-[16px]`}>
         {remote.loading && !remote.data ? <LoadingState label="Loading supply requests…" /> : remote.error && !remote.data ? (
           <EmptyState label="The list is not available right now." detail="Check the connection, then press Retry above." />
         ) : !rows.length ? (
-          <EmptyState label={EMPTY[overdue ? 'overdue' : tab]?.[0] || 'No requests in this view.'} detail={filtersOn ? 'Nothing matches these filters. Clear them to see more.' : (EMPTY[overdue ? 'overdue' : tab]?.[1] || 'Choose another tab.')} />
+          <EmptyState
+            label={stage ? `No requests are at the ${supplyStatusLabel(stage).toLowerCase()} stage right now.` : (EMPTY[overdue ? 'overdue' : tab]?.[0] || 'No requests in this view.')}
+            detail={stage ? 'Clear the stage chip to see the whole tab.' : (filtersOn ? 'Nothing matches these filters. Clear them to see more.' : (EMPTY[overdue ? 'overdue' : tab]?.[1] || 'Choose another tab.'))}
+          />
         ) : (
           <div key={`page-${allPage}-${tab}-${page}`} className={`supply-page-slide ${pageDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}`}>
             <div className="overflow-x-auto max-[760px]:hidden">
-              <table className="w-full min-w-[960px] [border-collapse:collapse] [&_th]:p-[11px_14px] [&_th]:text-left [&_th]:text-muted [&_th]:text-[10.5px] [&_th]:font-[800] [&_th]:tracking-[.12em] [&_th]:uppercase [&_th]:[background:var(--surface-subtle)] [&_td]:p-[13px_14px] [&_td]:border-t [&_td]:border-line [&_td]:align-middle">
-                <thead><tr><th>Branch / request</th><th>Items</th><th>Urgency</th><th>Progress</th><th>Target</th><th className="!text-right">Next step</th></tr></thead>
+              <table className="w-full min-w-[1040px] [border-collapse:collapse] [&_th]:p-[11px_14px] [&_th]:text-left [&_th]:text-muted [&_th]:text-[10.5px] [&_th]:font-[800] [&_th]:tracking-[.12em] [&_th]:uppercase [&_th]:[background:var(--surface-subtle)] [&_td]:p-[13px_14px] [&_td]:border-t [&_td]:border-line [&_td]:align-middle">
+                {/* Column widths, so the branch column cannot push Items and the dates out of place. */}
+                <colgroup>
+                  <col className="w-[26%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col />
+                  <col className="w-[13%]" />
+                </colgroup>
+                <thead><tr><th>Branch / request</th><th className="whitespace-nowrap">Items</th><th className="whitespace-nowrap">Urgency</th><th className="whitespace-nowrap">Requested</th><th className="whitespace-nowrap">Target</th><th>Progress</th><th className="!text-right">Next step</th></tr></thead>
                 <tbody>
                   {rows.map((r) => {
                     const items = itemsSummary(r);
@@ -414,10 +497,11 @@ export default function SupplyRequests() {
                           <div className="text-text text-[14px] font-[720]">{branchLabel(r.location)}</div>
                           <div className="text-muted text-[11.5px] [font-family:ui-monospace,monospace]">{r.request_number}</div>
                         </td>
-                        <td><div className="text-text text-[13px]">{items.count} item{items.count === 1 ? '' : 's'}</div><div className="text-muted text-[11.5px] max-w-[220px] truncate">{items.first}</div></td>
-                        <td><UrgencyChip urgency={r.urgency} /></td>
-                        <td><ProgressCell request={r} /></td>
+                        <td><strong className="text-text text-[13px] font-[750] whitespace-nowrap">{items.count} item{items.count === 1 ? '' : 's'}</strong></td>
+                        <td className="whitespace-nowrap"><UrgencyChip urgency={r.urgency} /></td>
+                        <td><RequestedCell request={r} /></td>
                         <td><TargetCell request={r} /></td>
+                        <td><ProgressCell request={r} /></td>
                         <td className="text-right" onClick={(e) => e.stopPropagation()}>
                           {label ? <button type="button" className={`supply-action-btn ${BTN_PRIMARY} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>{actionIcon(label)}{label}</button> : <button type="button" className={`${BTN_GHOST} ${BTN_SMALL}`} onClick={() => setDrawerId(r.id)}>View</button>}
                         </td>
@@ -452,7 +536,12 @@ export default function SupplyRequests() {
       </section>
 
       {openId && (
-        <SupplyDrawer requestId={openId} role={role} reloadKey={reloadKey} onClose={closeDrawer} onAction={onAction} onOpenRequest={(id) => setDrawerId(id)} />
+        <SupplyDrawer requestId={openId} role={role} reloadKey={reloadKey} onClose={closeDrawer} onAction={onAction} onOpenRequest={(id) => setDrawerId(id)} busyKey={busyAction} />
+      )}
+
+      {confirming && (
+        <ConfirmActionModal actionKey={confirming.key} request={confirming.request} onClose={() => setConfirming(null)}
+          onConfirm={() => { const { key, request } = confirming; setConfirming(null); void runDirect(key, request); }} />
       )}
 
       {modal && ['return', 'reject', 'cancel'].includes(modal.key) && <ReasonModal kind={modal.key} request={modal.request} onClose={closeModal} onDone={done({ return: 'Returned to the branch for correction.', reject: 'Request rejected.', cancel: 'Request cancelled; reserved stock released.' }[modal.key])} />}

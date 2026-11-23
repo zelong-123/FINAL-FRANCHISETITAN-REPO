@@ -107,7 +107,7 @@ export async function seedSupplyDemo(pg: PG, app: App, options: { local?: boolea
 
   // 1. Normal, full stock, completed.
   const s1 = await make(branch, SAMPLE, items(['Coffee beans', 10], ['Cup lids', 200]));
-  await toPreparing(s1.id); const d1 = await act(logistics, s1.id, 'dispatch', driver(ago(600), ago(480))); await pod(s1.id);
+  await toPreparing(s1.id); const d1 = await act(logistics, s1.id, 'dispatch', driver(ago(2 * 1440), ago(60))); await pod(s1.id);
   await call(branch, 'POST', `/supply-requests/${s1.id}/receipt`, { lines: d1.items.map((i: Row) => ({ item_id: i.id, good: Number(i.quantity_prepared), damaged: 0, short: 0 })) });
   made.completed = s1.request_number;
   // 2. Short, not urgent: Hold for Restock (resume after Logistics adds caramel syrup).
@@ -146,7 +146,7 @@ export async function seedSupplyDemo(pg: PG, app: App, options: { local?: boolea
   made.weekend = s8.request_number;
   // 9. Damaged items: discrepancy review with the branch's photo.
   const s9 = await make(branch, SAMPLE, items(['Paper cups 12oz', 200]));
-  await toPreparing(s9.id); const d9 = await act(logistics, s9.id, 'dispatch', driver(ago(300), ago(200))); await pod(s9.id);
+  await toPreparing(s9.id); const d9 = await act(logistics, s9.id, 'dispatch', driver(ago(2 * 1440), ago(60))); await pod(s9.id);
   const rf = new FormData();
   rf.append('lines', JSON.stringify([{ item_id: d9.items[0].id, good: 190, damaged: 10, short: 0, damage_reason: 'Crushed box' }]));
   rf.append(`photo_${d9.items[0].id}`, new File([PNG], 'damage.png', { type: 'image/png' }));
@@ -159,7 +159,7 @@ export async function seedSupplyDemo(pg: PG, app: App, options: { local?: boolea
   made.consolidated = s4.request_number;
   // Delivered (POD in), waiting for the branch's Confirm Receipt.
   const s10 = await make(branch, SAMPLE, items(['Cup lids', 150]));
-  await toPreparing(s10.id); await act(logistics, s10.id, 'dispatch', driver(ago(180), ago(60))); await pod(s10.id);
+  await toPreparing(s10.id); await act(logistics, s10.id, 'dispatch', driver(ago(2 * 1440), ago(60))); await pod(s10.id);
   made.delivered = s10.request_number;
   // 10. For the permissions walkthrough: one submitted (branch can still cancel), one under review,
   // and one Admin has left for a week (overdue).

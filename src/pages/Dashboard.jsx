@@ -29,6 +29,7 @@ import {
   ProductionTrendCombo,
   SourceDonut,
   StageBarChart,
+  StageChevronChart,
   SupplyStageTracker,
   TopBranchesBars,
 } from '../components/dashboard/Charts';
@@ -101,7 +102,7 @@ function presetRange(key) {
   return { from: localDateInputValue(from), to: localDateInputValue(to), preset: key };
 }
 
-function DateRangeFilter({ value, onChange, compact = false, variant = 'chips' }) {
+function DateRangeFilter({ value, onChange, compact = false, variant = 'chips', plain = false }) {
   // Dropdown variant only: an invalid custom range (start after end) is held here
   // and reported inline, so the last valid range keeps driving the data.
   const [pending, setPending] = useState(null);
@@ -130,7 +131,7 @@ function DateRangeFilter({ value, onChange, compact = false, variant = 'chips' }
 
   if (variant === 'dropdown') {
     return (
-      <div className={`date-filter-bar [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:flex-wrap [.dashboard-page_&]:gap-[10px] [.dashboard-page_&]:mb-[18px] [.dashboard-page_&]:p-[10px_14px] [.dashboard-page_&]:border [.dashboard-page_&]:border-line [.dashboard-page_&]:rounded-[14px] [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--panel)_94%,_transparent)] [.dashboard-page_&]:[box-shadow:var(--shadow-sm)] [.dashboard-page_&.is-compact]:mb-0 [.dashboard-page_&.is-compact]:p-0 [.dashboard-page_&.is-compact]:border-0 [.dashboard-page_&.is-compact]:[background:transparent] [.dashboard-page_&.is-compact]:[box-shadow:none] max-[681px]:later:[.dashboard-page_&]:items-start max-[681px]:[.dashboard-page_&]:flex-col ${compact ? ' is-compact' : ''}`}>
+      <div className={`date-filter-bar [.dashboard-page_&]:flex [.dashboard-page_&]:items-center [.dashboard-page_&]:flex-wrap [.dashboard-page_&]:gap-[10px] [.dashboard-page_&]:mb-[18px] [.dashboard-page_&]:p-[10px_14px] [.dashboard-page_&]:border [.dashboard-page_&]:border-line [.dashboard-page_&]:rounded-[14px] [.dashboard-page_&]:[background:color-mix(in_srgb,_var(--panel)_94%,_transparent)] [.dashboard-page_&]:[box-shadow:var(--shadow-sm)] [.dashboard-page_&.is-compact]:mb-0 [.dashboard-page_&.is-compact]:p-0 [.dashboard-page_&.is-compact]:border-0 [.dashboard-page_&.is-compact]:[background:transparent] [.dashboard-page_&.is-compact]:[box-shadow:none] max-[681px]:later:[.dashboard-page_&]:items-start max-[681px]:[.dashboard-page_&]:flex-col ${compact ? ' is-compact' : ''}${plain ? ' is-plain' : ''}`}>
         <span className="[.dashboard-page_&]:text-accent-text [.dashboard-page_&]:text-[8px] [.dashboard-page_&]:font-[850] [.dashboard-page_&]:tracking-[0.13em] [.dashboard-page_&]:uppercase [.dashboard-page_&]:whitespace-nowrap">Date filter</span>
         <select
           className="[.dashboard-page_&]:min-h-[30px] [.dashboard-page_&]:p-[0_28px_0_12px] [.dashboard-page_&]:border [.dashboard-page_&]:border-input-line [.dashboard-page_&]:rounded-[999px] [.dashboard-page_&]:[background:var(--input-bg)] [.dashboard-page_&]:text-accent-text [.dashboard-page_&]:text-[9px] [.dashboard-page_&]:font-[700] [.dashboard-page_&]:tracking-[0.08em] [.dashboard-page_&]:uppercase [.dashboard-page_&]:cursor-pointer"
@@ -744,7 +745,7 @@ function renderPanelList(panels, renderPanel) {
 const ADMIN_PANEL_GROUPS = {
   inquiries: ['inquiryAcquisition', 'inquirySource', 'applicantFunnel', 'followUpBySales', 'recentApplications'],
   operation: ['salesTrend', 'topBranches', 'insights'],
-  supply: ['inventoryHealth', 'transactions'],
+  supply: ['stageChevrons', 'inventoryHealth', 'fulfillmentTrend', 'transactions'],
 };
 
 const ADMIN_TABS = [
@@ -805,7 +806,7 @@ function DashboardBody({ role, panels }) {
     [needsFranchise, period, rangeQuery.from, rangeQuery.to, rangeQuery.include_archived],
   );
 
-  const needsPipeline = panels.includes('stageTracker') || panels.includes('stageBreakdown');
+  const needsPipeline = panels.includes('stageTracker') || panels.includes('stageBreakdown') || panels.includes('stageChevrons');
   const pipeline = useRemote(
     async () => (needsPipeline
       ? (await api.get('/supply-requests/pipeline', { from: rangeQuery.from, to: rangeQuery.to })).data
@@ -833,7 +834,7 @@ function DashboardBody({ role, panels }) {
       case 'dateFilter':
         return (
           <div key="dateFilter" className="[.dashboard-page_.dashboard-control-row>&]:mb-[14px] [.dashboard-page_.dashboard-control-row>&]:flex-[0_1_auto] [.dashboard-page_.dashboard-control-row>&]:justify-end [.dashboard-page_.dashboard-control-row>&]:min-w-0 [.dashboard-page_.dashboard-control-row>&]:max-w-full [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:flex-[0_1_auto] [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:min-h-[46px] [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:[box-sizing:border-box] [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:mb-0 [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:pt-0 [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:pb-0 [.dashboard-page_.dashboard-control-row_&_.date-filter-bar]:items-center max-[681px]:later:[.dashboard-page_.dashboard-control-row>&]:mt-[10px] [.dashboard-page_&]:flex [.dashboard-page_&]:items-stretch [.dashboard-page_&]:flex-wrap [.dashboard-page_&]:gap-[10px] [.dashboard-page_&]:mb-[18px] [.dashboard-page_&_.date-filter-bar]:flex-[1_1_auto] [.dashboard-page_&_.date-filter-bar]:min-w-0 [.dashboard-page_&_.date-filter-bar]:max-w-full [.dashboard-page_&_.date-filter-bar]:mb-0">
-            <DateRangeFilter value={range} onChange={setRange} variant="dropdown" />
+            <DateRangeFilter value={range} onChange={setRange} variant="dropdown" plain={role === 'logistics'} />
             {/* Sales has no archive: the Active/All switch is hidden and the API
                 ignores include_archived for roles outside the permission. */}
             {can(role, 'analytics.include_archived') && (
@@ -932,6 +933,16 @@ function DashboardBody({ role, panels }) {
         return <TransactionsPanel key="transactions" from={activeRange?.from} to={activeRange?.to} />;
       case 'stageTracker':
         return <SupplyStageTracker key="tracker" data={pipeline.data} loading={pipeline.loading} error={pipeline.error} />;
+      case 'stageChevrons':
+        if (pipeline.loading) return <LoadingState key="chevrons" label="Loading supply pipeline…" />;
+        if (pipeline.error) return <Notice key="chevrons" type="error" inline>{pipeline.error}</Notice>;
+        return (
+          <StageChevronChart
+            key="chevrons"
+            stages={pipeline.data?.stages}
+            avgCycleTime={pipeline.data?.avg_cycle_time}
+          />
+        );
       case 'stageBreakdown':
         return <StageBreakdownPanel key="stages" stages={pipeline.data?.stages} loading={pipeline.loading} error={pipeline.error} />;
       case 'fulfillmentTrend':

@@ -116,6 +116,30 @@ export function ResolveDiscrepancyModal({ request, onClose, onDone }) {
   );
 }
 
+/**
+ * The one-click actions in the drawer change stock or booking right away, so they ask once more
+ * before running. The modal-driven actions already confirm through their own form and button.
+ */
+const CONFIRM_COPY = {
+  start_review: { question: 'Start reviewing this request?', confirm: 'Yes, start review', note: 'It moves to Admin review and stays there until you endorse it.' },
+  endorse: { question: 'Endorse – Full?', confirm: 'Yes, endorse – full', note: 'The full requested quantity is reserved from the warehouse and sent to Logistics. The stock stays reserved until the request is held, returned or cancelled.' },
+  resume: { question: 'Resume this request?', confirm: 'Yes, resume', note: 'Stock is reserved again and the request goes back to Logistics for confirmation.' },
+  accept_schedule: { question: 'Accept the delivery schedule?', confirm: 'Yes, accept schedule', note: 'The delivery date is confirmed and the branch is notified.' },
+  start_preparing: { question: 'Start preparing this request?', confirm: 'Yes, start preparing', note: 'The items are picked and packed, ready for dispatch.' },
+};
+
+export function ConfirmActionModal({ actionKey, request, onClose, onConfirm }) {
+  const copy = CONFIRM_COPY[actionKey];
+  if (!copy) return null;
+  return (
+    <Modal title="Please confirm" size="small" onClose={onClose} footer={<Footer onClose={onClose} label={copy.confirm} onConfirm={onConfirm} />}>
+      <p className="m-0 text-text text-[14px] font-[700]">{copy.question}</p>
+      <p className="m-[4px_0_0] text-muted text-[12px] [font-family:ui-monospace,monospace]">{request.request_number}</p>
+      <p className="m-[10px_0_0] text-text-secondary text-[12.5px] leading-[1.55]">{copy.note}</p>
+    </Modal>
+  );
+}
+
 const TYPES = [
   ['hold', 'Hold for Restock', 'Nothing ships yet; the request waits on hold.'],
   ['partial_ship_now', 'Partial – Ship Now', 'The available part ships; the rest becomes a -B backorder on hold.'],
