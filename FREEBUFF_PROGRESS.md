@@ -55,6 +55,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Inquiries (Sales view) → **table layout**: the **Actions** column is no longer rendered for a role that has no inquiry actions (Sales has none), so the empty track at the end is gone; every remaining column gets the space. Column padding went from `15px` to `22px` a side (`20px` on the first and last) so the columns are not crammed together. `src/pages/Inquiries.jsx`, `src/tailwind.css`
 
+- Inquiries (all roles) → **less dead space at the top**: the gap between the date-range row and the toolbar is one flex gap (`12px`) instead of the old margin-plus-gap stack, and the page's top padding drops from `14px` to `8px`, so the filters, toolbar and table all sit ~20px higher. `src/pages/Inquiries.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 
