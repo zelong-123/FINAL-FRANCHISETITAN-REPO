@@ -531,7 +531,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Supply requests"
-        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests] [&_.panel-title]:min-h-[58px] [&_.panel-title_h2]:text-[17.5px] [&_.panel-title_h2]:uppercase [&_.panel-title_h2]:tracking-[.05em] [&_.panel-title_span]:text-[14px]"
+        className="[.bp-drawer-scroll_&]:[order:-1] [grid-area:requests] [&_.panel-title]:[background:color-mix(in_srgb,_var(--bg)_94%,_transparent)] [&_.panel-title]:min-h-[58px] [&_.panel-title_h2]:text-[17.5px] [&_.panel-title_h2]:uppercase [&_.panel-title_h2]:tracking-[.05em] [&_.panel-title_span]:text-[14px]"
         meta={activeRequests.length ? `${activeRequests.length} open` : 'No open requests'}
       >
         {activeRequests.length > 0 && (
@@ -560,7 +560,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Needs attention"
-        className="[grid-area:attention] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
+        className="[grid-area:attention] [&_.panel-title]:[background:color-mix(in_srgb,_var(--bg)_94%,_transparent)] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={attentionTotal ? (thresholds.description || "Based on each material's low and critical levels") : 'Nothing needs attention'}
       >
         {error ? (
@@ -722,7 +722,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
       <Section
         title="Delivery fulfillment"
-        className="bp-sec-deliveries [grid-area:deliveries] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
+        className="bp-sec-deliveries [grid-area:deliveries] [&_.panel-title]:[background:color-mix(in_srgb,_var(--bg)_94%,_transparent)] [@container_bp-full_(min-width:860px)]:[.bp-full-grid_&]:self-stretch [&_.panel-title_h2]:text-[16px] [&_.panel-title_span]:text-[14px]"
         meta={loading && !deliveries.length ? 'Loading…' : `${filteredDeliveries.length} delivered`}
       >
         {/* Filters stay put while the list scrolls. */}

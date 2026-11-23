@@ -43,7 +43,7 @@ Last updated: 2026-11-23 (session setup)
 
 - Branches full view → **banner stroke removed**: the brand-tinted 1px border around the full-view header is gone; the gradient, blur and shadow carry the shape. `src/pages/Branches.jsx`
 
-- Branches full view → **Branch Inventory header tones swapped**: the panel title row now carries the darker `--bg 94%` band and the Material/Source/On hand column header sits on the panel tone, so the title reads as the header instead of the column strip. `src/pages/Branches.jsx`
+- Branches full view → **Branch Inventory header tones swapped**: the panel title row now carries the darker `--bg 94%` band and the Material/Source/On hand column header sits on the panel tone, so the title reads as the header instead of the column strip. The same darker title band now also sits on Supply requests, Needs attention and Delivery fulfillment. `src/pages/Branches.jsx`
 
 ## In progress
 - Nothing half-done. Waiting for the next request.
