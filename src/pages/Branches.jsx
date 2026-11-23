@@ -366,10 +366,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
   const attentionGroupsView = ATTENTION_STATUSES
     .map((status) => ({ status, rows: attentionShown.filter((item) => item.status === status) }))
     .filter((group) => group.rows.length > 0);
-  const attentionChipClass = (active) => `min-h-[32px] inline-flex items-center gap-[6px] p-[0_12px] border rounded-[999px] text-[13.5px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:[background:var(--hover)]'}`;
-  const openAttentionMaterial = (item) => onEditLevels?.(ops.inventory?.find((row) => Number(row.id) === Number(item.material_id)) || {
-    id: item.material_id, name: item.label, unit: item.unit, low_level: item.low_level, critical_level: item.critical_level, on_hand: item.on_hand,
-  });
+  const attentionChipClass = (active) => `min-h-[29px] inline-flex items-center gap-[6px] p-[0_11px] border rounded-[999px] text-[12.5px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:[background:var(--hover)]'}`;
   const deliveries = ops.deliveries || [];
   const sortedDeliveries = [...deliveries].sort((a, b) => new Date(b.delivered_at || 0) - new Date(a.delivered_at || 0));
   const deliveryHasRange = Boolean(deliveryFrom || deliveryTo);
@@ -577,14 +574,14 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
             >
               <FaCheck />
             </span>
-            <p className="m-0 text-text text-[16px] font-[760]">All materials are above their low levels</p>
-            <p className="m-0 max-w-[430px] text-text-secondary text-[14.5px] leading-[1.55]">
+            <p className="m-0 text-text text-[15px] font-[760]">All materials are above their low levels</p>
+            <p className="m-0 max-w-[430px] text-text-secondary text-[13.5px] leading-[1.55]">
               Nothing needs your attention right now. Items will appear here when their stock reaches the low or critical level.
             </p>
           </div>
         ) : (
           <>
-            <div className="flex-none flex flex-col gap-[10px] p-[10px_16px_12px] border-b border-b-line">
+            <div className="flex-none flex flex-col gap-[8px] p-[8px_14px_10px] border-b border-b-line">
               <div className="flex flex-wrap items-center gap-[6px]" role="group" aria-label="Filter by stock status">
                 {attentionChips.map((chip) => (
                   <button
@@ -605,11 +602,13 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                 onChange={(event) => setAttentionSearch(event.target.value)}
                 placeholder="Search material"
                 aria-label="Search material"
-                className="min-h-[38px] w-full p-[7px_12px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[14px] [outline:none] placeholder:text-placeholder focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]"
+                className="min-h-[34px] w-full p-[6px_11px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[13.5px] [outline:none] placeholder:text-placeholder focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]"
               />
             </div>
 
             <div ref={attentionListRef} className="h-[480px] overflow-y-auto [overscroll-behavior:contain]">
+              {/* Switching status filters slides the new list in. */}
+              <div key={attentionStatus} className="ap-attention-slide">
               {loading && attentionTotal === 0 && (
                 <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
                   {[0, 1, 2].map((row) => (
@@ -622,15 +621,15 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
               )}
               {(!loading || attentionTotal > 0) && attentionFiltered.length === 0 && (
                 <div className="p-[28px_18px] text-center">
-                  <p className="m-0 text-text text-[15px] font-[720]">Nothing matches</p>
-                  <p className="m-0 mt-[4px] text-text-secondary text-[14px]">Try another status or clear the search.</p>
+                  <p className="m-0 text-text text-[14px] font-[720]">Nothing matches</p>
+                  <p className="m-0 mt-[4px] text-text-secondary text-[13px]">Try another status or clear the search.</p>
                 </div>
               )}
               {attentionGroupsView.map((group) => {
                 const tone = ATTENTION_TONES[group.status];
                 return (
                   <div key={group.status}>
-                    <div className="sticky top-0 z-[2] flex items-center gap-[7px] px-[16px] py-[7px] border-b border-b-line [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [backdrop-filter:blur(8px)] text-text-secondary text-[13.5px] font-[720]">
+                    <div className="sticky top-0 z-[2] flex items-center gap-[7px] px-[14px] py-[6px] border-b border-b-line [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [backdrop-filter:blur(8px)] text-text-secondary text-[12.5px] font-[720]">
                       <span aria-hidden="true" className="w-[7px] h-[7px] rounded-[50%]" style={{ background: tone.dot }} />
                       {tone.label} · {group.rows.length}
                     </div>
@@ -644,38 +643,30 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                         return (
                           <li
                             key={item.material_id ?? item.label}
-                            className="flex flex-wrap items-start justify-between gap-[10px_16px] px-[16px] py-[13px] border-b border-b-line last:border-b-0 scroll-mt-[40px]"
+                            className="flex items-start gap-[12px] px-[14px] py-[10px] border-b border-b-line last:border-b-0"
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-[8px]">
-                                <strong className="text-text text-[17px] font-[760] leading-[1.25]">{item.label}</strong>
+                              <div className="flex flex-wrap items-center gap-[7px]">
+                                <strong className="text-text text-[15.5px] font-[760] leading-[1.25]">{item.label}</strong>
                                 <span
-                                  className="inline-flex flex-none items-center gap-[6px] min-h-[24px] p-[2px_10px] border rounded-[999px] text-[13px] font-[720] whitespace-nowrap"
-                                  style={{ color: tone.text, borderColor: `color-mix(in srgb, ${tone.mix} 48%, transparent)` }}
+                                  className="inline-flex flex-none items-center gap-[5px] text-[12px] font-[720] whitespace-nowrap"
+                                  style={{ color: tone.text }}
                                 >
                                   <span aria-hidden="true" className="w-[6px] h-[6px] rounded-[50%]" style={{ background: tone.dot }} />
                                   {tone.label}
                                 </span>
                               </div>
-                              <p className="m-0 mt-[5px] text-text-secondary text-[15px] leading-[1.45]">
+                              <p className="m-0 mt-[4px] text-text-secondary text-[13.5px] leading-[1.45]">
                                 {group.status === 'out'
                                   ? <><strong className="text-text font-[750]">Out of stock</strong>{` · critical at ${criticalLabel}`}</>
                                   : <><strong className="text-text font-[750]">{qty}</strong>{` left · ${group.status === 'critical' ? 'critical' : 'low'} at ${group.status === 'critical' ? criticalLabel : lowLabel}`}</>}
                               </p>
-                              <div className="relative mt-[9px] h-[6px] w-full max-w-[340px] rounded-[999px] [background:color-mix(in_srgb,_var(--border)_70%,_transparent)]">
+                              <div className="relative mt-[7px] h-[5px] w-full max-w-[300px] rounded-[999px] [background:color-mix(in_srgb,_var(--border)_70%,_transparent)]">
                                 <span className="absolute left-0 top-0 bottom-0 rounded-[999px]" style={{ width: `${pct(item.on_hand)}%`, background: tone.dot }} />
                                 <span aria-hidden="true" className="absolute top-[-3px] bottom-[-3px] w-[2px] [background:color-mix(in_srgb,_var(--text)_45%,_transparent)]" style={{ left: `${pct(item.critical_level)}%` }} />
                                 <span aria-hidden="true" className="absolute top-[-3px] bottom-[-3px] w-[2px] [background:color-mix(in_srgb,_var(--text)_45%,_transparent)]" style={{ left: `${pct(item.low_level)}%` }} />
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              aria-label={`Edit levels for ${item.label}`}
-                              onClick={() => openAttentionMaterial(item)}
-                              className="ghost-button ml-auto max-[560px]:ml-0 max-[560px]:w-full min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
-                            >
-                              Edit levels
-                            </button>
                           </li>
                         );
                       })}
@@ -683,17 +674,18 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
                   </div>
                 );
               })}
+              </div>
             </div>
 
-            <div className="flex-none flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
-              <span className="text-text-secondary text-[14px] font-[600]">
+            <div className="flex-none flex items-center justify-between gap-[12px] p-[8px_14px] border-t border-t-line">
+              <span className="text-text-secondary text-[13px] font-[600]">
                 Showing {attentionShown.length} of {attentionFiltered.length} items that need attention
               </span>
               {attentionFiltered.length > attentionVisible && (
                 <button
                   type="button"
                   onClick={() => setAttentionVisible((count) => count + ATTENTION_PAGE_SIZE)}
-                  className="ghost-button min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+                  className="ghost-button min-h-[32px] inline-flex items-center justify-center p-[0_12px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[13px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
                 >
                   Load 10 more
                 </button>
@@ -703,7 +695,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
         )}
         {!error && attentionTotal === 0 && !loading && (
           <div className="flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
-            <span className="text-text-secondary text-[14px] font-[600]">All materials checked</span>
+            <span className="text-text-secondary text-[13px] font-[600]">All materials checked</span>
           </div>
         )}
       </Section>
