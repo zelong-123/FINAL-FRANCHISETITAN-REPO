@@ -559,6 +559,17 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   75%  { border-color: #39ffb0; box-shadow: 0 10px 16px -8px rgba(57, 255, 176, 0.95), inset 0 0 6px rgba(57, 255, 176, 0.3); }
   100% { border-color: #39ffb0; box-shadow: -10px 0 16px -8px rgba(57, 255, 176, 0.95), inset 0 0 6px rgba(57, 255, 176, 0.3); }
 }
+/* Branch half-view: the full-view (expand) icon itself zooms in/out and glows near-white. */
+@keyframes bpFullIconGlow {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0));
+  }
+  50% {
+    transform: scale(1.22);
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, .95)) drop-shadow(0 0 9px rgba(255, 255, 255, .6));
+  }
+}
 @keyframes apDotBounce {
   0%, 80%, 100% { opacity: .28; transform: translateY(0); }
   40% { opacity: 1; transform: translateY(-3px); }
@@ -644,6 +655,16 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   .bp-alert-rows > li { animation: none; }
 }
 
+/* Branch panels: switching a status filter or date preset slides the new list into place. */
+@keyframes apListSlide {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+.ap-list-slide { animation: apListSlide .26s cubic-bezier(.22, .8, .24, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .ap-list-slide { animation: none; }
+}
+
 /* Make actionable Branches summary cards read as interactive without changing their dimensions. */
 .branches-page .metric-card-action {
   cursor: pointer;
@@ -717,6 +738,65 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 .applicant-pipeline-page .table-wrap table,
 .activities-page .table-wrap table {
   min-width: 760px;
+}
+
+/* Inquiries: a little more air between the columns so the rows do not read as one block. */
+.inquiries-page .table-wrap th,
+.inquiries-page .table-wrap td {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.inquiries-page .table-wrap th:first-child,
+.inquiries-page .table-wrap td:first-child {
+  padding-left: 20px;
+}
+
+.inquiries-page .table-wrap th:last-child,
+.inquiries-page .table-wrap td:last-child {
+  padding-right: 20px;
+}
+
+/* Franchisees list: the owner, brand, location and date read as facts, so they get a
+   firmer weight and a little more size while the five columns still fit. */
+.applicant-pipeline-page .data-panel .franchisees-table th {
+  padding: 14px 15px;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+}
+
+.applicant-pipeline-page .data-panel .franchisees-table table td {
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.applicant-pipeline-page .data-panel .franchisees-table table td strong {
+  font-size: 16px !important;
+  font-weight: 730 !important;
+}
+
+.applicant-pipeline-page .data-panel .franchisees-table table td small {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+.franchisees-table .franchisee-create-account {
+  margin-top: 10px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-text);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.franchisees-table .franchisee-create-account:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* Tablets and narrow browser zoom: toolbars wrap and fields take full rows. */

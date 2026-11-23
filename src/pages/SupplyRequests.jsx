@@ -10,6 +10,7 @@ import {
 } from 'react-icons/md';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
+import { setHeaderCrumb } from '../lib/headerCrumbs';
 import { formatDate, formatNumber } from '../lib/format';
 import { EmptyState, Field, LoadingState, Modal, Notice, Pagination } from '../components/ApiUi';
 import BranchCombobox from '../components/BranchCombobox';
@@ -270,6 +271,22 @@ export default function SupplyRequests() {
     if ('tab' in patch && !('stage' in patch)) next.delete('stage');
     setParams(next, { replace: true });
   }, [params, setParams]);
+
+  // The header trail names the category you are looking at: Operations / Supply requests /
+  // Needs my action. "All" is the default view, so it adds no crumb; the Supply requests
+  // crumb then links back to All.
+  const activeCategory = overdue
+    ? 'Overdue'
+    : stage
+      ? supplyStatusLabel(stage)
+      : (TABS.find(([key]) => key === tab)?.[1] || '');
+  useEffect(() => {
+    if (!overdue && !stage && tab === 'all') return undefined;
+    setHeaderCrumb({ label: activeCategory, back: () => update({ tab: 'all', overdue: '' }) });
+    return () => setHeaderCrumb(null);
+    // `update` is rebuilt from the URL each render; only the category should re-register.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCategory, overdue, stage, tab]);
 
   // Search waits for typing to pause.
   useEffect(() => {

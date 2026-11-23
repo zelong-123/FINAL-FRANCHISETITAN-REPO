@@ -100,7 +100,7 @@ export function PageHeader({ actions }) {
   );
 }
 
-export function Modal({ title, onClose, children, footer, size = 'normal', chromeColor }) {
+export function Modal({ title, onClose, children, footer, size = 'normal', chromeColor, className = '' }) {
   const titleId = useId();
   const cardRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -149,7 +149,7 @@ export function Modal({ title, onClose, children, footer, size = 'normal', chrom
     <div className="modal-backdrop fixed inset-0 z-150 grid place-items-center p-5 overflow-hidden [background:rgba(2,_5,_12,_.66)] [backdrop-filter:blur(12px)_saturate(120%)] [animation:overlayFade_.18s_ease_both] max-[451px]:later:p-[10px]" role="presentation" onMouseDown={onClose}>
       <div
         ref={cardRef}
-        className={`w-[min(720px,_100%)] max-h-[calc(100dvh_-_40px)] flex flex-col overflow-hidden border border-line-strong rounded-[20px] [background:var(--panel)] [box-shadow:var(--shadow-xl)] [animation:modalIn_.26s_cubic-bezier(.2,.8,.2,1)_both] max-[781px]:later:w-full max-[451px]:later:max-h-[calc(100dvh_-_20px)] max-[451px]:later:rounded-[17px] modal-${size}`}
+        className={`w-[min(720px,_100%)] max-h-[calc(100dvh_-_40px)] flex flex-col overflow-hidden border border-line-strong rounded-[20px] [background:var(--panel)] [box-shadow:var(--shadow-xl)] [animation:modalIn_.26s_cubic-bezier(.2,.8,.2,1)_both] max-[781px]:later:w-full max-[451px]:later:max-h-[calc(100dvh_-_20px)] max-[451px]:later:rounded-[17px] modal-${size} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -167,12 +167,12 @@ export function Modal({ title, onClose, children, footer, size = 'normal', chrom
   );
 }
 
-export function Pagination({ meta, onPage }) {
+export function Pagination({ meta, onPage, className = '' }) {
   if (!meta || meta.last_page <= 1) return null;
   const firstRecord = ((meta.current_page - 1) * meta.per_page) + 1;
   const lastRecord = Math.min(meta.current_page * meta.per_page, meta.total);
   return (
-    <nav className="later:[&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-2:[&_button]:border-line later-2:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-2:[&_button]:text-[9px] later-2:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] later-2:[&_button:hover:not(:disabled)]:[transform:translateY(-1px)] min-h-[58px] flex items-center justify-between gap-[14px] p-[11px_15px] border-t border-t-line text-muted text-[8px] max-[681px]:later:items-stretch max-[681px]:flex-col" aria-label="Pagination">
+    <nav className={`later:[&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-2:[&_button]:border-line later-2:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-2:[&_button]:text-[9px] later-2:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] later-2:[&_button:hover:not(:disabled)]:[transform:translateY(-1px)] min-h-[58px] flex items-center justify-between gap-[14px] p-[11px_15px] border-t border-t-line text-muted text-[8px] max-[681px]:later:items-stretch max-[681px]:flex-col ${className}`} aria-label="Pagination">
       <span className="pagination-summary">Showing {firstRecord}–{lastRecord} of {meta.total}</span>
       <div className="flex items-center gap-[9px] [&>span]:min-w-[100px] [&>span]:text-center max-[681px]:justify-between max-[681px]:[&_button]:flex-1">
         <button type="button" disabled={meta.current_page <= 1} onClick={() => onPage(meta.current_page - 1)}>Previous</button>
