@@ -233,7 +233,14 @@ function centrePanel(event) {
   const panel = event.currentTarget;
   if (!panel.closest('.bp-full-grid')) return;
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-  panel.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+  const rect = panel.getBoundingClientRect();
+  const top = window.scrollY + rect.top;
+  const header = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 0;
+  // Centre the panel, but a panel taller than the screen stops just below the sticky header
+  // so its title and first row stay in view instead of being cut off.
+  const centred = top + rect.height / 2 - window.innerHeight / 2;
+  const belowHeader = top - header - 12;
+  window.scrollTo({ top: Math.max(0, Math.min(centred, belowHeader)), behavior: reduced ? 'auto' : 'smooth' });
 }
 
 function Section({ title, meta, className = '', titleClassName = '', children }) {
