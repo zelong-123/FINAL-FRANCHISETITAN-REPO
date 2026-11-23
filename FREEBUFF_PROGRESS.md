@@ -65,6 +65,8 @@ Last updated: 2026-11-23 (session setup)
 
 - Applicants → Pipeline (and the other filter tabs) → **compact date range**: `From` / `To` no longer reserve 175px around a long placeholder — 140px, short placeholders (`From`, `To`), and the box only shows the value. `DatePickerField` got two opt-in props used only here: `pickerOnly` (read-only input, opens the calendar on click) and `clearable` (an X inside the field that empties that date). The separate "Clear filters" button is gone; Brand / Assigned Sales / Date basis still reset from their own placeholder options. `src/components/DatePickerField.jsx`, `src/pages/Applicants.jsx`
 
+- Applicants → Pipeline table → **pagination already existed** (`ApplicantPagination` reading the API `meta`, per_page sent as `PAGE_SIZE`), it just never showed with 8 or fewer records. `PAGE_SIZE` is now **7**, so the footer (record count + Previous / page numbers / Next) appears as soon as there are more than 7 records, and each page holds 7 rows. Same footer the Franchisees tab uses. `src/pages/Applicants.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 

@@ -75,7 +75,9 @@ const REVISE_STAGES = [
 ];
 
 // ---- Pagination settings (same behavior as the Leads & inquiries table) ----
-const PAGE_SIZE = 8;   // records per page
+// Seven rows per page: one more record than that and the pagination footer appears,
+// so the pipeline never grows into a long scroll.
+const PAGE_SIZE = 7;
 const PAGE_WINDOW = 4; // page numbers visible at a time
 // Application Detail folders: a multiple of the 5- and 3-column grid widths,
 // so a full page never ends on a half row on desktop or tablet.
