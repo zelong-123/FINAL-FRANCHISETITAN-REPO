@@ -396,8 +396,8 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
     setDeliveryPreset('');
     setDeliveryVisible(DELIVERY_PAGE_SIZE);
   };
-  const deliveryChipClass = (active) => `min-h-[34px] inline-flex items-center p-[0_14px] border rounded-[999px] text-[14px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:border-line-strong hover:[background:var(--hover)]'}`;
-  const deliveryInputClass = 'min-h-[36px] p-[4px_10px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[14px] font-[600] [outline:none] focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]';
+  const deliveryChipClass = (active) => `min-h-[29px] inline-flex items-center p-[0_11px] border rounded-[999px] text-[12.5px] font-[650] cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] ${active ? 'border-transparent text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]' : 'border-line-strong text-text-secondary [background:transparent] hover:text-text hover:border-line-strong hover:[background:var(--hover)]'}`;
+  const deliveryInputClass = 'min-h-[32px] p-[3px_9px] border border-line-strong rounded-[9px] [background:var(--input-bg)] text-text text-[13px] font-[600] [outline:none] focus:border-accent focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_14%,_transparent)]';
   const branch = ops.branch || {};
   const brand = getBrand(branch);
   const thresholds = ops.thresholds || {};
@@ -608,7 +608,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
 
             <div ref={attentionListRef} className="h-[480px] overflow-y-auto [overscroll-behavior:contain]">
               {/* Switching status filters slides the new list in. */}
-              <div key={attentionStatus} className="ap-attention-slide">
+              <div key={attentionStatus} className="ap-list-slide">
               {loading && attentionTotal === 0 && (
                 <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
                   {[0, 1, 2].map((row) => (
@@ -706,7 +706,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
         meta={loading && !deliveries.length ? 'Loading…' : `${filteredDeliveries.length} delivered`}
       >
         {/* Filters stay put while the list scrolls. */}
-        <div className="flex-none flex flex-col gap-[10px] p-[10px_16px_12px] border-b border-b-line">
+        <div className="flex-none flex flex-col gap-[8px] p-[8px_14px_10px] border-b border-b-line">
           <div className="flex flex-wrap items-center gap-[6px]" role="group" aria-label="Delivery date presets">
             <button type="button" aria-pressed={!deliveryHasRange} onClick={clearDeliveryFilter} className={deliveryChipClass(!deliveryHasRange)}>All</button>
             {DELIVERY_PRESETS.map((preset) => (
@@ -722,16 +722,16 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-[10px]">
-            <label className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
+            <label className="inline-flex items-center gap-[6px] text-text-secondary text-[13px] font-[600]">
               From
               <input type="date" aria-label="Deliveries from date" value={deliveryFrom} onChange={editDeliveryDate(setDeliveryFrom)} className={deliveryInputClass} />
             </label>
-            <label className="inline-flex items-center gap-[8px] text-text-secondary text-[14px] font-[600]">
+            <label className="inline-flex items-center gap-[6px] text-text-secondary text-[13px] font-[600]">
               To
               <input type="date" aria-label="Deliveries to date" value={deliveryTo} onChange={editDeliveryDate(setDeliveryTo)} className={deliveryInputClass} />
             </label>
             {deliveryHasRange && (
-              <button type="button" onClick={clearDeliveryFilter} className="text-accent-text text-[14px] font-[650] underline cursor-pointer [background:none] border-0 focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]">
+              <button type="button" onClick={clearDeliveryFilter} className="text-accent-text text-[13px] font-[650] underline cursor-pointer [background:none] border-0 focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]">
                 Clear filter
               </button>
             )}
@@ -739,6 +739,8 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
         </div>
 
         <div className="h-[480px] overflow-y-auto [overscroll-behavior:contain] @container" aria-live="polite">
+          {/* Switching presets or dates slides the new list in. */}
+          <div key={`${deliveryPreset}|${deliveryFrom}|${deliveryTo}`} className="ap-list-slide">
           {loading && !deliveries.length && (
             <div className="flex flex-col gap-[12px] p-[14px_16px]" aria-hidden="true">
               {[0, 1, 2].map((row) => (
@@ -805,15 +807,16 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
               </article>
             );
           })}
+          </div>
         </div>
 
-        <div className="flex-none flex items-center justify-between gap-[12px] p-[10px_16px] border-t border-t-line">
-          <span className="text-text-secondary text-[14px] font-[600]">Showing {visibleDeliveries.length} of {filteredDeliveries.length}</span>
+        <div className="flex-none flex items-center justify-between gap-[12px] p-[8px_14px] border-t border-t-line">
+          <span className="text-text-secondary text-[13px] font-[600]">Showing {visibleDeliveries.length} of {filteredDeliveries.length}</span>
           {visibleDeliveries.length < filteredDeliveries.length && (
             <button
               type="button"
               onClick={() => setDeliveryVisible((count) => count + DELIVERY_PAGE_SIZE)}
-              className="ghost-button min-h-[36px] inline-flex items-center justify-center p-[0_14px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[14px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
+              className="ghost-button min-h-[32px] inline-flex items-center justify-center p-[0_12px] border border-line-strong rounded-[9px] text-text-secondary [background:transparent] text-[13px] font-[650] cursor-pointer hover:text-text hover:border-accent focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px]"
             >
               Load 10 more
             </button>

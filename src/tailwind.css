@@ -655,14 +655,14 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   .bp-alert-rows > li { animation: none; }
 }
 
-/* Needs attention: switching status filters slides the new list into place. */
-@keyframes apAttentionSlide {
+/* Branch panels: switching a status filter or date preset slides the new list into place. */
+@keyframes apListSlide {
   from { opacity: 0; transform: translateX(14px); }
   to { opacity: 1; transform: none; }
 }
-.ap-attention-slide { animation: apAttentionSlide .26s cubic-bezier(.22, .8, .24, 1) both; }
+.ap-list-slide { animation: apListSlide .26s cubic-bezier(.22, .8, .24, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .ap-attention-slide { animation: none; }
+  .ap-list-slide { animation: none; }
 }
 
 /* Make actionable Branches summary cards read as interactive without changing their dimensions. */
