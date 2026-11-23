@@ -67,6 +67,10 @@ Last updated: 2026-11-23 (session setup)
 
 - Applicants → Pipeline table → **pagination already existed** (`ApplicantPagination` reading the API `meta`, per_page sent as `PAGE_SIZE`), it just never showed with 8 or fewer records. `PAGE_SIZE` is now **7**, so the footer (record count + Previous / page numbers / Next) appears as soon as there are more than 7 records, and each page holds 7 rows. Same footer the Franchisees tab uses. `src/pages/Applicants.jsx`
 
+- Applicants → Applicant modal → **REJECT removed** (footer button, its confirmation dialog, its handler and its state). Archive is now the way a record leaves the pipeline; the footer's left button is **ARCHIVE** (admin only, hidden for an active franchisee or an already-archived record). `src/pages/Applicants.jsx`
+- Applicants → **Archive asks for a reason**: the archive dialog has a required “Reason for archiving” field (min 5 chars, 500 max, live counter, Archive button disabled until valid) instead of a bare confirmation, and the reason is stored on the record + in the audit log. The Archive tab line now reads `Archived <date> · <reason>`. Same dialog is opened by the pipeline row's Archive button. `src/pages/Applicants.jsx`
+- Applicants → **double confirmation when something is still waiting**: if the applicant has a booked / Admin-unconfirmed session, is still in the Scheduling stage, or has an open follow-up (Overdue / Stalled / On hold), step 1 becomes Cancel / Continue, and step 2 lists what is waiting (session date + venue, follow-up state) with the reason for archiving and a warning that those sessions/follow-ups are not cancelled. Nothing waiting → one step only. `pendingCommitmentsOf()` in `src/pages/Applicants.jsx`
+
 ## In progress
 - Nothing half-done. Waiting for the next request.
 
@@ -74,10 +78,14 @@ Last updated: 2026-11-23 (session setup)
 - (empty — no pending requests)
 
 ## API/backend changes
-- none yet (frontend only so far)
+- `POST /applicants/:applicant/archive` now accepts an optional `reason` (5–500 chars when given), saves it to `applicants.archive_reason` and records it in the audit entry. Backward compatible: a request without a reason archives exactly as before (Activities page still calls it that way). No migration — the `archive_reason` column already exists. `supabase/functions/api/routes/applicants.ts`
+- `npm run test:api` → 282 passed, 0 failed.
 - NOT deployed yet.
 
 ## Notes / questions for me
+- I touched `supabase/functions` (applicant archive reason), so the “Live API is older than this app” banner will show on your local dev until it is deployed — expected, nothing to fix.
+- Reject is gone from the Applicant modal: an existing `rejected` record stays visible under the Rejected status filter, but there is no longer any way to create a new rejection — Archive (with its reason) replaces it. Tell me if you want the old Rejected records cleaned up differently.
+- The Activities page archives an applicant with one plain confirmation (no reason). Say the word if that flow should ask for a reason too.
 - Local dev server running at http://localhost:5173 (started fresh this session).
 - Local `.env.local` is LIVE data — I only look, never write, in the browser.
 - Stock-levels modal: whole numbers are enforced for count units (pcs / packs / boxes), but weight & volume materials (g, kg, ml, L) still accept up to 3 decimals, because their stored levels can legitimately be fractional. Say the word if you want decimals blocked everywhere.

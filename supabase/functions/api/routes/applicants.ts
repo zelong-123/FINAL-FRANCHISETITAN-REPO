@@ -1080,8 +1080,11 @@ applicantRoutes.post('/applicants/:applicant/archive', admin, async (c) => {
   const hasFranchisee = (await db.query(`select 1 from franchisees where applicant_id = $1 limit 1`, [a.id])).length > 0;
   if (a.status === 'active_franchisee' || hasFranchisee) fail('applicant', 'An active franchisee cannot be archived.');
   if (a.archived_at) return ok(c, applicantJson(a), 'Applicant is already archived.');
-  const saved = await updateRow(db, 'applicants', a.id, { archived_at: new Date(), archived_by_user_id: c.get('user').id });
-  await audit(c, db, 'applicant.archived', { type: APPLICANT_MODEL, id: a.id }, a, saved);
+  // The UI always asks why; older callers that send no reason still archive as before.
+  const input = await readInput(c);
+  const reason = optionalReason(input.reason, 'reason', 'the reason for archiving');
+  const saved = await updateRow(db, 'applicants', a.id, { archived_at: new Date(), archived_by_user_id: c.get('user').id, archive_reason: reason });
+  await audit(c, db, 'applicant.archived', { type: APPLICANT_MODEL, id: a.id }, a, { ...saved, archive_reason: reason });
   return ok(c, applicantJson(saved!), 'Applicant archived.');
 });
 

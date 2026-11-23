@@ -381,6 +381,51 @@ const STATE_LABELS = {
   attended: 'Attended',
 };
 
+/*
+ * What an applicant still has waiting before it can leave the pipeline: a session
+ * already booked (or one Sales created and Admin has not confirmed yet) and an
+ * open follow-up. Archiving keeps all of it, so the second confirmation lists it.
+ */
+function pendingCommitmentsOf(applicant) {
+  const items = [];
+  const infoOf = (type) => applicant?.activity_state?.[type] || {};
+  const sessionOf = (type) => (applicant?.schedule_sessions || [])
+    .filter((session) => session.activity_type === type
+      && session.status !== 'cancelled'
+      && !['removed', 'cancelled'].includes(session.attendance_status))
+    .sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
+  TRACKED_ACTIVITIES.forEach(({ type, label }) => {
+    const info = infoOf(type);
+    const state = info.state || 'not_scheduled';
+    if (!['scheduled', 'pending_admin'].includes(state)) return;
+    const session = sessionOf(type);
+    const when = [info.starts_at, session?.starts_at].filter(Boolean).map(manilaDateTimeLabel)[0] || '';
+    const detail = state === 'pending_admin'
+      ? 'Sales created this session; Admin has not confirmed it yet.'
+      : [when, session?.venue].filter(Boolean).join(' · ') || 'Session booked in the Master Schedule.';
+    items.push({ label, detail });
+  });
+  // Still in Scheduling with nothing booked yet: the stage itself is the pending work.
+  if (!items.length && applicant?.status === 'scheduled') {
+    const outstanding = TRACKED_ACTIVITIES
+      .filter(({ type }) => !(infoOf(type).attended || ['completed', 'attended'].includes(infoOf(type).state)))
+      .map(({ label }) => label);
+    if (outstanding.length) {
+      items.push({ label: 'Scheduling', detail: `Still in the Scheduling stage: ${outstanding.join(', ')} not completed yet.` });
+    }
+  }
+  const followUp = applicant?.follow_up;
+  if (followUp && ['overdue', 'stalled', 'on_hold'].includes(followUp.state)) {
+    items.push({
+      label: 'Follow-up',
+      detail: followUp.state === 'on_hold'
+        ? 'On hold — an open follow-up is waiting on this applicant.'
+        : `${FOLLOW_UP_STATES[followUp.state]?.label || 'Open'} follow-up is being tracked.`,
+    });
+  }
+  return items;
+}
+
 /* Last activity_state signature this viewer saw per applicant (in-memory,
  * viewer-session only — no server roundtrip): the Schedule Activity auto-scroll
  * fires exclusively when THIS value changes for that applicant. */
@@ -2637,6 +2682,8 @@ export default function Applicants() {
   const pipelineColumnsRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
+  // Archive dialog: { applicant, reason, step } — step 2 is the extra confirmation
+  // shown only when something is still waiting on the applicant.
   const [archiveTarget, setArchiveTarget] = useState(null);
   // Blue dots cleared in this session (the server clears them on mark-seen).
   const [seenActivityDots, setSeenActivityDots] = useState(() => new Set());
@@ -2665,7 +2712,6 @@ export default function Applicants() {
   // For Approval decisions.
   const [approveForm, setApproveForm] = useState(null);
   const [reviseForm, setReviseForm] = useState(null);
-  const [rejectForm, setRejectForm] = useState(null);
   // Application Detail read-only report.
   const [report, setReport] = useState(null);
   const [activateForm, setActivateForm] = useState(null);
@@ -2828,7 +2874,7 @@ export default function Applicants() {
     setLoiDraft(null);
     setApproveForm(null);
     setReviseForm(null);
-    setRejectForm(null);
+    setArchiveTarget(null);
     setQualifiedConfirm(false);
   };
 
@@ -2840,7 +2886,6 @@ export default function Applicants() {
     setScheduleRevealed(false);
     setApproveForm(null);
     setReviseForm(null);
-    setRejectForm(null);
     setQualifiedConfirm(false);
     setOpeningId({ id, status: previewStatus });
     try {
@@ -2970,18 +3015,41 @@ export default function Applicants() {
     }
   };
 
-  const archiveApplicant = async (applicant) => {
-    setArchiveTarget(null);
-    setUpdatingId(applicant.id);
+  /** Archive (reason required): a second confirmation follows when a session or
+   *  a follow-up is still waiting on the applicant. */
+  const openArchive = async (applicant) => {
+    setActionError('');
+    setSuccess('');
+    setArchiveTarget({ applicant, reason: '', step: 1 });
+    // A list row carries no session dates, so the full record decides whether the
+    // second confirmation is needed. Failing to load it never blocks archiving.
+    try {
+      const detail = await loadDetail(applicant.id);
+      setArchiveTarget((current) => (current?.applicant?.id === applicant.id ? { ...current, applicant: detail } : current));
+    } catch {
+      /* keep the row data */
+    }
+  };
+
+  const archiveApplicant = async () => {
+    const target = archiveTarget?.applicant;
+    if (!target) return;
+    const reason = archiveTarget.reason.trim();
+    if (reason.length < 5) return;
+    setActing(true);
+    setUpdatingId(target.id);
     setActionError('');
     setSuccess('');
     try {
-      await api.post(`/applicants/${applicant.id}/archive`);
-      setSuccess(`${applicant.full_name} moved to the archive.`);
+      await api.post(`/applicants/${target.id}/archive`, { reason });
+      setArchiveTarget(null);
+      if (editing?.id === target.id) closeEditor();
+      setSuccess(`${target.full_name} moved to the archive.`);
       await remote.reload();
     } catch (error) {
       setActionError(firstValidationMessage(error));
     } finally {
+      setActing(false);
       setUpdatingId(null);
     }
   };
@@ -3294,28 +3362,6 @@ export default function Applicants() {
       setReviseForm(null);
       setSuccess(`Returned to ${label} for revision.`);
       await refreshApplicant(editing.id);
-    } catch (error) {
-      setActionError(firstValidationMessage(error));
-    } finally {
-      setActing(false);
-    }
-  };
-
-  /** Reject (with confirmation): the applicant is rejected and archived. */
-  const rejectApplicant = async () => {
-    if (!editing || !rejectForm) return;
-    setActing(true);
-    setActionError('');
-    setSuccess('');
-    try {
-      await api.patch(`/applicants/${editing.id}/status`, {
-        status: 'rejected',
-        remarks: rejectForm.remarks.trim(),
-      });
-      setRejectForm(null);
-      closeEditor();
-      setSuccess(`${editing.full_name} rejected and moved to the archive.`);
-      await remote.reload();
     } catch (error) {
       setActionError(firstValidationMessage(error));
     } finally {
@@ -3809,20 +3855,22 @@ export default function Applicants() {
   }, [location]);
 
   // Escape closes the Update dialog only when no smaller dialog is open on top of it.
-  const updateEscapeEnabled = !mark && !editRequiredOpen && !activateForm
-    && !approveForm && !reviseForm && !rejectForm;
+  // What the second archive confirmation lists: sessions and follow-ups still waiting.
+  const archiveCommitments = pendingCommitmentsOf(archiveTarget?.applicant);
 
-  // Escape closes the approval/rejection confirmations (never mid-request).
+  const updateEscapeEnabled = !mark && !editRequiredOpen && !activateForm
+    && !approveForm && !reviseForm;
+
+  // Escape closes the approval confirmation (never mid-request).
   useEffect(() => {
-    if (!rejectForm && !approveForm) return undefined;
+    if (!approveForm) return undefined;
     const onKey = (event) => {
       if (event.key !== 'Escape' || acting) return;
-      if (rejectForm) setRejectForm(null);
-      else setApproveForm(null);
+      setApproveForm(null);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [rejectForm, approveForm, acting]);
+  }, [approveForm, acting]);
 
   return (
     <div className="page-container w-full m-[0_auto] p-[clamp(10px,_1.2vw,_16px)] max-[861px]:later:p-[22px_17px_30px] [--sr-accent:var(--accent,_#2f7de1)] [--sr-accent-soft:rgba(47,_125,_225,_0.18)] [--sr-text:var(--text,_#f4f4f5)] [--sr-muted:var(--text-muted,_#a1a1aa)] [--sr-border:var(--border,_#2e2e33)] [--sr-border-strong:var(--border-strong,_#3f3f46)] [--sr-surface-hover:var(--surface-hover,_rgba(255,_255,_255,_0.04))] [--sr-danger:var(--danger-text,_#f87171)] [--sr-success:var(--success-text,_#4ade80)] [--sr-todo:#3a3a40] applicant-pipeline-page later-6:[&.page-container]:flex! [&.page-container]:flex-col! [&.page-container]:justify-start! [&.page-container]:gap-3! [&.page-container]:pt-[14px]! later-7:[&>:empty]:hidden! [&_.unified-toolbar-container]:m-0 [&_.data-panel]:m-0 [&_.table-wrap_th]:text-[11px] [&_.table-wrap_th]:tracking-[.08em] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_td]:h-[62px] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_td:nth-child(2)]:text-[16px]! [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[10px]! [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_td:nth-child(2)_small]:text-[#8b93a5]! [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions]:flex [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions]:items-center [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions]:gap-2 [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions]:flex-wrap [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:min-h-[30px] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:p-[6px_11px] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:border [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:border-[#2c3549] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:rounded-[8px] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:[background:#111827] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:text-[#e7ebf5] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:[box-shadow:none] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:text-[12px] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button]:font-[600] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button:hover:not(:disabled)]:border-[#4b477d] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button:hover:not(:disabled)]:[background:#1a2133] [&_.data-panel_.table-wrap_table_tbody_tr[data-applicant-id]_.row-actions_button:hover:not(:disabled)]:text-[#f5f4ff] [&_.data-panel_.table-wrap_table_tbody_td]:text-[12px] [&_.data-panel_.table-wrap_table_tbody_td]:leading-[1.5] [&_.data-panel_.table-wrap_table_tbody_td]:pt-3 [&_.data-panel_.table-wrap_table_tbody_td]:pb-3 [&_.data-panel_.table-wrap_table_tbody_td_strong]:text-[13px] [&_.data-panel_.table-wrap_table_tbody_td_small]:text-[11px]">
@@ -4080,7 +4128,10 @@ export default function Applicants() {
                           </StatusHover>
                         )}
                         {tab === 'archived' && applicant.archived_at && (
-                          <small>Archived {formatDate(applicant.archived_at)}</small>
+                          <small title={applicant.archive_reason || undefined}>
+                            Archived {formatDate(applicant.archived_at)}
+                            {applicant.archive_reason ? ` · ${applicant.archive_reason}` : ''}
+                          </small>
                         )}
                         {typeof applicant.days_in_stage === 'number' && (
                           <small className="block text-[#9aa6c4]">
@@ -4124,7 +4175,7 @@ export default function Applicants() {
                                 )}
                               </button>
                               {role === 'admin' && (
-                                <button disabled={updatingId === applicant.id} onClick={() => setArchiveTarget(applicant)}>
+                                <button disabled={updatingId === applicant.id} onClick={() => openArchive(applicant)}>
                                   Archive
                                 </button>
                               )}
@@ -4144,34 +4195,94 @@ export default function Applicants() {
 
       {archiveTarget && (
         <Dialog
-          title="Archive applicant?"
+          title={archiveTarget.step === 2 ? 'Confirm archive' : 'Archive applicant?'}
           size="small"
-          onClose={() => setArchiveTarget(null)}
+          onClose={() => { if (!acting) setArchiveTarget(null); }}
           footer={(
             <>
               <button
                 type="button"
-                className="min-h-[36px] p-[0_16px] border border-[#2a3550] rounded-[7px] [background:transparent] text-[#c5cde0] text-[12px] font-[700] cursor-pointer hover:[background:#1a2133]"
+                className="min-h-[36px] p-[0_16px] border border-[#2a3550] rounded-[7px] [background:transparent] text-[#c5cde0] text-[12px] font-[700] cursor-pointer hover:[background:#1a2133] disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={acting}
                 onClick={() => setArchiveTarget(null)}
               >
                 Cancel
               </button>
+              {archiveTarget.step === 2 && (
+                <button
+                  type="button"
+                  className="min-h-[36px] p-[0_16px] border border-[#2a3550] rounded-[7px] [background:transparent] text-[#c5cde0] text-[12px] font-[700] cursor-pointer hover:[background:#1a2133] disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={acting}
+                  onClick={() => setArchiveTarget({ ...archiveTarget, step: 1 })}
+                >
+                  Back
+                </button>
+              )}
               <button
                 type="button"
-                className="min-h-[36px] p-[0_16px] border border-[#a94450] rounded-[7px] [background:rgba(127,_29,_45,_.35)] text-[#ffb3ba] text-[12px] font-[750] cursor-pointer hover:[background:rgba(127,_29,_45,_.55)]"
-                onClick={() => archiveApplicant(archiveTarget)}
+                className="min-h-[36px] p-[0_16px] border border-[#a94450] rounded-[7px] [background:rgba(127,_29,_45,_.35)] text-[#ffb3ba] text-[12px] font-[750] cursor-pointer hover:[background:rgba(127,_29,_45,_.55)] disabled:border-[#4a2b36] disabled:[background:#2a1a21] disabled:text-[#a4787e] disabled:cursor-not-allowed"
+                disabled={acting || archiveTarget.reason.trim().length < 5}
+                onClick={() => {
+                  if (archiveTarget.step === 1 && archiveCommitments.length) {
+                    setArchiveTarget({ ...archiveTarget, step: 2 });
+                    return;
+                  }
+                  void archiveApplicant();
+                }}
               >
-                Archive
+                {acting ? 'Archiving…' : archiveTarget.step === 1 && archiveCommitments.length ? 'Continue' : 'Archive applicant'}
               </button>
             </>
           )}
         >
-          <p className="m-0 text-[#c5cde0] text-[13px] leading-[1.5]">
-            <strong className="text-[#f1f3fb]">{archiveTarget.full_name}</strong> will move to the Archive tab. Nothing is deleted, and you can restore them later.
-          </p>
+          {archiveTarget.step === 1 ? (
+            <div className="grid gap-[14px]">
+              <p className="m-0 text-[#c5cde0] text-[13px] leading-[1.5]">
+                <strong className="text-[#f1f3fb]">{archiveTarget.applicant.full_name}</strong> will move to the Archive tab. Nothing is deleted, and you can restore them later.
+              </p>
+              <label className="grid gap-[6px]" htmlFor="ap-archive-reason">
+                <span className="text-[#c3cbe0] text-[12px] font-[600]">Reason for archiving <em className="text-[#8f99b1] not-italic font-[500]">(required)</em></span>
+                <textarea
+                  id="ap-archive-reason"
+                  autoFocus
+                  rows={3}
+                  maxLength={500}
+                  value={archiveTarget.reason}
+                  placeholder="Why is this applicant being archived?"
+                  aria-required="true"
+                  className="w-full min-h-[84px] p-[9px_10px] border border-[#2c3752] rounded-[8px] [background:#0b101c] text-[#eef1f9] text-[12.5px] leading-[1.5] [font-family:inherit] [resize:vertical] placeholder:text-[#6f7b96] focus:outline-none focus:border-[#d45160] focus:[box-shadow:0_0_0_3px_rgba(209,_81,_96,_.18)]"
+                  onChange={(event) => setArchiveTarget({ ...archiveTarget, reason: event.target.value })}
+                />
+                <small className="justify-self-end text-[#7b86a0] text-[12px]">{archiveTarget.reason.length}/500</small>
+              </label>
+              <p className="m-0 text-[#8f99b1] text-[12px] leading-[1.5]">
+                The reason is saved on the record and in the audit log.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-[14px]">
+              <p className="m-0 text-[#c5cde0] text-[13px] leading-[1.5]">
+                <strong className="text-[#f1f3fb]">{archiveTarget.applicant.full_name}</strong> still has work waiting in the pipeline:
+              </p>
+              <ul className="m-0 p-0 list-none grid gap-[8px]">
+                {archiveCommitments.map((item) => (
+                  <li key={item.label} className="p-[10px_12px] border border-[#4a3d24] rounded-[8px] [background:rgba(120,_86,_26,_.16)] text-[12.5px] leading-[1.5]">
+                    <strong className="block text-[#f5d08a] text-[12px] font-[700]">{item.label}</strong>
+                    <span className="text-[#c5cde0]">{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="m-0 text-[#f5c97b] text-[12.5px] leading-[1.5]">
+                Archiving removes the record from the pipeline, but these sessions and follow-ups are not cancelled. Clear them first if they should not stay on the schedule.
+              </p>
+              <div className="p-[10px_12px] border border-[#2a3550] rounded-[8px] [background:#0b101c]">
+                <span className="block text-[#8f99b1] text-[11px] font-[700] tracking-[.08em] uppercase">Reason for archiving</span>
+                <span className="text-[#e7ebf5] text-[12.5px] leading-[1.5] [overflow-wrap:anywhere]">{archiveTarget.reason.trim()}</span>
+              </div>
+            </div>
+          )}
         </Dialog>
       )}
-
       {openingId && !editing && (
         <Dialog
           title="Opening applicant…"
@@ -4192,15 +4303,16 @@ export default function Applicants() {
           animated
           footer={(
             <>
-              {/* Section 8: no Cancel beside Save Applicant — Reject sits there. */}
-              {isAdminRole && editing.status !== 'active_franchisee' && draft.status !== 'rejected' && (
+              {/* Section 8: no Cancel beside Save Applicant. Closing a record is the
+                  Archive flow (with a reason) instead of a separate Reject. */}
+              {isAdminRole && editing.status !== 'active_franchisee' && !editing.archived_at && (
                 <button
                   type="button"
-                  className="[.ap-dialog-foot_&]:mr-auto [.ap-dialog-foot_&]:min-h-[32px] [.ap-dialog-foot_&]:p-[0_14px] [.ap-dialog-foot_&]:border [.ap-dialog-foot_&]:border-[#a94450] [.ap-dialog-foot_&]:rounded-[7px] [.ap-dialog-foot_&]:[background:transparent] [.ap-dialog-foot_&]:text-[#ff858f] [.ap-dialog-foot_&]:text-[12px] [.ap-dialog-foot_&]:font-[750] [.ap-dialog-foot_&]:tracking-[.08em] [.ap-dialog-foot_&]:[box-shadow:none] [.ap-dialog-foot_&:hover:not(:disabled)]:border-[#d45160] [.ap-dialog-foot_&:hover:not(:disabled)]:[background:rgba(127,_29,_45,_.16)] [.ap-dialog-foot_&:hover:not(:disabled)]:[box-shadow:none] [.ap-dialog-foot_&:hover:not(:disabled)]:[filter:none] [.ap-dialog-foot_&:hover:not(:disabled)]:[transform:none]"
+                  className="[.ap-dialog-foot_&]:mr-auto [.ap-dialog-foot_&]:min-h-[32px] [.ap-dialog-foot_&]:p-[0_14px] [.ap-dialog-foot_&]:border [.ap-dialog-foot_&]:border-[#3d4a6b] [.ap-dialog-foot_&]:rounded-[7px] [.ap-dialog-foot_&]:[background:transparent] [.ap-dialog-foot_&]:text-[#c5cde0] [.ap-dialog-foot_&]:text-[12px] [.ap-dialog-foot_&]:font-[750] [.ap-dialog-foot_&]:tracking-[.08em] [.ap-dialog-foot_&]:[box-shadow:none] [.ap-dialog-foot_&:hover:not(:disabled)]:border-[#5a6a8f] [.ap-dialog-foot_&:hover:not(:disabled)]:[background:rgba(255,_255,_255,_.06)] [.ap-dialog-foot_&:hover:not(:disabled)]:text-[#eef1f9] [.ap-dialog-foot_&:hover:not(:disabled)]:[box-shadow:none] [.ap-dialog-foot_&:hover:not(:disabled)]:[filter:none] [.ap-dialog-foot_&:hover:not(:disabled)]:[transform:none]"
                   disabled={acting || saving}
-                  onClick={() => setRejectForm({ remarks: '' })}
+                  onClick={() => openArchive(editing)}
                 >
-                  REJECT
+                  ARCHIVE
                 </button>
               )}
               {/* For Approval: the footer action is the approval itself, with a
@@ -4676,86 +4788,6 @@ export default function Applicants() {
           </button>
           <img src={loiLightbox.url} alt={loiLightbox.name} />
           <p>{loiLightbox.name}</p>
-        </div>,
-        document.body,
-      )}
-
-      {/* Reject confirmation — the record is archived, never deleted. */}
-      {rejectForm && editing && createPortal(
-        <div
-          className="fixed inset-0 later:z-2147483001 grid place-items-center later:p-[18px] later:[background:rgba(4,_7,_14,_.72)] [backdrop-filter:blur(3px)]"
-          onMouseDown={(e) => { if (e.target === e.currentTarget && !acting) setRejectForm(null); }}
-        >
-          <div
-            className="flex flex-col w-[min(440px,_100%)] max-h-[calc(100vh_-_36px)] overflow-auto border border-[#4a2b36] rounded-[14px] [background:#101725] [box-shadow:0_24px_60px_rgba(0,_0,_0,_.55)] text-[#e6eaf5]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ap-reject-title"
-            aria-describedby="ap-reject-help"
-          >
-            <header className="flex items-start gap-3 p-[18px_18px_14px] border-b border-b-[#262f45]">
-              <span className="grid flex-none place-items-center w-[36px] h-[36px] border border-[rgba(209,_81,_96,_.36)] rounded-[10px] [background:rgba(150,_40,_56,_.18)] text-[#ff8d94] text-[16px]" aria-hidden="true"><FaXmark /></span>
-              <div className="flex-1 min-w-0 later-4:[&_h3]:m-[4px_0_0] later-3:[&_h3]:text-[#f4f6fc] later-7:[&_h3]:text-[16px] [&_h3]:leading-[1.35] [&_h3]:[overflow-wrap:anywhere]">
-                <span className="block text-[#c98a92] text-[12px] font-[700] tracking-[.1em] uppercase">Confirm rejection</span>
-                <h3 id="ap-reject-title">Reject {editing.full_name}?</h3>
-              </div>
-              <button
-                type="button"
-                className="grid flex-none place-items-center w-[28px] h-[28px] p-0 border border-[#2c3752] rounded-[8px] [background:transparent] text-[#9aa6c4] text-[13px] [box-shadow:none] [&:hover:not(:disabled)]:border-[#3d4a6b] [&:hover:not(:disabled)]:[background:rgba(255,_255,_255,_.04)] [&:hover:not(:disabled)]:text-[#e6eaf5] [&:hover:not(:disabled)]:[filter:none] [&:hover:not(:disabled)]:[transform:none] [&:hover:not(:disabled)]:[box-shadow:none]"
-                aria-label="Close"
-                disabled={acting}
-                onClick={() => setRejectForm(null)}
-              >
-                <FaXmark aria-hidden="true" />
-              </button>
-            </header>
-
-            <div className="grid gap-[14px] p-[16px_18px]">
-              <dl className="grid gap-2 m-0">
-                <div className="grid grid-cols-[104px_1fr] gap-[10px] [align-items:start] later-3:[&_dt]:text-[#8f99b1] later-2:[&_dt]:text-[12px] [&_dd]:m-0 later-2:[&_dd]:text-[#e2e7f4] later-2:[&_dd]:text-[12.5px] [&_dd]:leading-[1.45] max-[481px]:later:grid-cols-[1fr] max-[481px]:later:gap-[3px]">
-                  <dt>Applicant</dt>
-                  <dd>{editing.full_name}</dd>
-                </div>
-                <div className="grid grid-cols-[104px_1fr] gap-[10px] [align-items:start] later-3:[&_dt]:text-[#8f99b1] later-2:[&_dt]:text-[12px] [&_dd]:m-0 later-2:[&_dd]:text-[#e2e7f4] later-2:[&_dd]:text-[12.5px] [&_dd]:leading-[1.45] max-[481px]:later:grid-cols-[1fr] max-[481px]:later:gap-[3px]">
-                  <dt>Record</dt>
-                  <dd>Moves to the Archive — nothing is deleted.</dd>
-                </div>
-              </dl>
-
-              <label className="relative grid gap-[6px] later-3:[&>span]:text-[#c3cbe0] later:[&>span]:text-[12px] [&>span]:font-[600] [&>span_em]:text-[#8f99b1] [&>span_em]:not-italic [&>span_em]:font-[500] [&_textarea]:w-full [&_textarea]:min-h-[84px] [&_textarea]:p-[9px_10px_22px] [&_textarea]:border [&_textarea]:border-[#2c3752] [&_textarea]:rounded-[8px] [&_textarea]:[background:#0b101c] [&_textarea]:text-[#eef1f9] [&_textarea]:[font-family:inherit] [&_textarea]:[font-weight:inherit] [&_textarea]:[font-style:inherit] [&_textarea]:text-[12.5px] [&_textarea]:leading-[1.5] [&_textarea]:[resize:vertical] [&_textarea::placeholder]:text-[#6f7b96] [&_textarea:focus]:[outline:none] [&_textarea:focus]:border-[#d45160] [&_textarea:focus]:[box-shadow:0_0_0_3px_rgba(209,_81,_96,_.18)]" htmlFor="ap-reject-remarks">
-                <span>Remarks <em>(required)</em></span>
-                <textarea
-                  id="ap-reject-remarks"
-                  autoFocus
-                  rows={3}
-                  maxLength={500}
-                  value={rejectForm.remarks}
-                  placeholder="Reason for rejecting this applicant"
-                  aria-required="true"
-                  onChange={(e) => setRejectForm({ ...rejectForm, remarks: e.target.value })}
-                />
-                <small className="absolute right-[10px] bottom-[7px] text-[#7b86a0] text-[12px]">{rejectForm.remarks.length}/500</small>
-              </label>
-
-              <p className="m-0 text-[#8f99b1] text-[12px] leading-[1.5]" id="ap-reject-help">
-                The reason is kept in the status history and the audit log.
-              </p>
-            </div>
-
-            <footer className="flex justify-end gap-[10px] p-[14px_18px_16px] border-t border-t-[#262f45] [background:rgba(8,_12,_22,_.5)] max-[481px]:flex-wrap">
-              <button type="button" className="min-h-[34px] p-[0_16px] rounded-[8px] text-[12px] font-[700] tracking-[.02em] [box-shadow:none] border border-[#2c3752] [background:transparent] text-[#b7c0d6] [&:hover:not(:disabled)]:border-[#3d4a6b] [&:hover:not(:disabled)]:[background:rgba(255,_255,_255,_.04)] [&:hover:not(:disabled)]:text-[#eef1f9] [&:hover:not(:disabled)]:[filter:none] [&:hover:not(:disabled)]:[transform:none] [&:hover:not(:disabled)]:[box-shadow:none]" disabled={acting} onClick={() => setRejectForm(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="min-h-[34px] p-[0_16px] rounded-[8px] text-[12px] font-[700] tracking-[.02em] [box-shadow:none] border border-[#d45160] [background:#c2404f] text-[#fff] [&:hover:not(:disabled)]:border-[#d45160] [&:hover:not(:disabled)]:[background:#d45160] [&:hover:not(:disabled)]:[filter:none] [&:hover:not(:disabled)]:[transform:none] disabled:border-[#4a2b36] disabled:[background:#2a1a21] later-5:disabled:text-[#a4787e] disabled:cursor-not-allowed"
-                disabled={acting || rejectForm.remarks.trim().length < 5}
-                onClick={() => void rejectApplicant()}
-              >
-                {acting ? 'Rejecting…' : 'Reject applicant'}
-              </button>
-            </footer>
-          </div>
         </div>,
         document.body,
       )}
