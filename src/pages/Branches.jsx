@@ -223,8 +223,21 @@ function BranchCard({ branch, active, onOpen, role, onEditLocation, highlighted 
  * Branch sections (half + full view). `inventory` is the branch's own
  * raw-material ledger: the same rows the branch portal reads.
  * ------------------------------------------------------------------ */
+/* Full view: a click anywhere on a panel (not on one of its controls) centres it on screen. */
+const PANEL_CLICK_IGNORE = 'button, a, input, select, textarea, label, summary, [role="button"], [role="tab"], [contenteditable="true"]';
+function centrePanel(event) {
+  if (event.target.closest?.(PANEL_CLICK_IGNORE)) return;
+  // Leave text selection alone: a drag that ends inside the panel is not a click-to-centre.
+  const selection = window.getSelection?.();
+  if (selection && !selection.isCollapsed) return;
+  const panel = event.currentTarget;
+  if (!panel.closest('.bp-full-grid')) return;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  panel.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+}
+
 function Section({ title, meta, className = '', titleClassName = '', children }) {
-  return (                    <section className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[9px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
+  return (                    <section onClick={centrePanel} className={`data-panel overflow-hidden mb-[18px] border border-line rounded-[9px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65] later:m-0 later:hover:[box-shadow:none] [&_.panel-title]:min-h-[46px] [&_.panel-title]:p-[11px_15px] [&_.panel-title_span]:text-right [&_.panel-state]:min-h-[150px] later-2:[&_.panel-title_h2]:text-[14.5px] later-2:[&_.panel-title_span]:text-[12px] [&_.panel-title:last-child]:border-b-0 ${className}`}>
       <div className="panel-title min-h-[58px] flex items-center justify-between gap-3 p-[14px_18px] border-b border-b-line [&_h2]:m-0 [&_h2]:text-text [&_h2]:text-[11px] [&_h2]:font-[780] [&_h2]:tracking-[-.01em] [&_span]:text-muted later:[&_span]:text-[8px] [&_small]:text-muted [&_small]:text-[8px]">
         <h2 className={titleClassName}>{title}</h2>
         {meta && <span>{meta}</span>}
@@ -606,7 +619,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
               />
             </div>
 
-            <div ref={attentionListRef} className="h-[480px] overflow-y-auto [overscroll-behavior:contain]">
+            <div ref={attentionListRef} className="h-[480px] overflow-y-auto">
               {/* Switching status filters slides the new list in. */}
               <div key={attentionStatus} className="ap-list-slide">
               {loading && attentionTotal === 0 && (
@@ -738,7 +751,7 @@ function BranchSections({ ops, loading, error, role, onOpenRequests, onEditLevel
           </div>
         </div>
 
-        <div className="h-[480px] overflow-y-auto [overscroll-behavior:contain] @container" aria-live="polite">
+        <div className="h-[480px] overflow-y-auto @container" aria-live="polite">
           {/* Switching presets or dates slides the new list in. */}
           <div key={`${deliveryPreset}|${deliveryFrom}|${deliveryTo}`} className="ap-list-slide">
           {loading && !deliveries.length && (
