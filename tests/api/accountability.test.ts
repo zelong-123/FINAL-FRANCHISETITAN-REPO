@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
+import { openAll, realFile } from '../support/files.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
 import { createStaff } from '../support/accounts.ts';
 
@@ -141,7 +142,7 @@ test('LOI: stage-gated, franchisee refused, Admin only verifies, files locked on
   const path = `/applicants/${a.id}`;
   const scan = () => {
     const f = new FormData();
-    f.set('file', new File([new Uint8Array([9, 9])], 'scan.png', { type: 'image/png' }));
+    f.set('file', realFile('scan.png'));
     f.set('submission_type', 'physical');
     return f;
   };
@@ -166,6 +167,7 @@ test('LOI: stage-gated, franchisee refused, Admin only verifies, files locked on
   const second = await call('POST', `${path}/loi`, { token: sales, form: scan() });
   const verify = new FormData();
   verify.set('verification_status', 'verified');
+  await openAll(call, admin, a.id);
   assert.equal((await call('POST', `${path}/loi`, { token: admin, form: verify })).status, 200);
   const [verified] = await history(a.id, 'loi_verification_changed');
   assert.equal(verified.old_values.loi_verification_status, 'not_verified');

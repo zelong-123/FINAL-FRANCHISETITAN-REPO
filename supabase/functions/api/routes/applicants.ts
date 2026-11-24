@@ -5,7 +5,8 @@ import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
 import { abort, boolParam, fail, Filter, insertRow, intParam, manilaToday, ok, paginate, perPage, pick, routeId, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
-import { downloadDocument, MAX_UPLOAD_KB, storeDocument } from '../lib/files.ts';
+import { downloadDocument, MAX_UPLOAD_KB, sniffFileType, storeDocument } from '../lib/files.ts';
+import { assertFilesOpened, recordAdminView } from '../services/documentViews.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit, assignPublicCode, publicUser } from '../services/users.ts';
 import { notifyRoles, notifyUser } from '../services/notifications.ts';
@@ -418,8 +419,9 @@ applicantRoutes.get('/applicants/:applicant', viewers, async (c) => {
   );
   const documents = await db.query(
     `select d.*, ${NAME('d.uploaded_by_user_id')} as uploaded_by, ${NAME('d.removed_by_user_id')} as removed_by,
-       case when d.removed_at is not null then 'removed' when d.replaced_at is not null then 'replaced' else 'current' end as file_state
-     from documents d where d.documentable_type = $1 and d.documentable_id = $2 order by d.id`, [APPLICANT_MODEL, id],
+       case when d.removed_at is not null then 'removed' when d.replaced_at is not null then 'replaced' else 'current' end as file_state,
+       exists (select 1 from activity_document_views v where v.document_id = d.id and v.user_id = $3) as viewed_by_me
+     from documents d where d.documentable_type = $1 and d.documentable_id = $2 order by d.id`, [APPLICANT_MODEL, id, c.get('user').id],
   );
   const [statusLabelValue, stateValue, brandValue, requirementsValue, followUpsValue] = await Promise.all([
     statusLabel(db, a),
@@ -1088,12 +1090,38 @@ applicantRoutes.post('/applicants/:applicant/archive', admin, async (c) => {
   return ok(c, applicantJson(saved!), 'Applicant archived.');
 });
 
+/**
+ * What Admin already verified for an applicant. Any of these blocks a permanent delete: the proof and its
+ * history must stay (archive instead). An applicant with none of them (a test or a mistaken entry) can go.
+ */
+export async function verifiedRecords(db: Db, a: Row): Promise<string[]> {
+  const [row] = await db.query(
+    `select
+       (select count(*)::int from payments where applicant_id = $1 and status = 'verified') as payments,
+       (select count(*)::int from applicant_requirements where applicant_id = $1 and status = 'accepted') as requirements,
+       (select count(*)::int from activity_schedules where applicant_id = $1 and review_status = 'accepted') as activities`,
+    [a.id],
+  );
+  const found: string[] = [];
+  if (row.payments) found.push(`${row.payments} verified payment${row.payments === 1 ? '' : 's'}`);
+  if (row.requirements) found.push(`${row.requirements} accepted requirement${row.requirements === 1 ? '' : 's'}`);
+  if (a.loi_verification_status === 'verified' || a.loi_status === 'complete') found.push('a verified LOI');
+  if (row.activities) found.push(`${row.activities} verified activit${row.activities === 1 ? 'y' : 'ies'}`);
+  else if ((a.milestones ?? {}).orientation_attended || (a.milestones ?? {}).training_completed) found.push('an attended activity');
+  if (['approved', 'active_franchisee'].includes(a.status) || a.approved_at) found.push('an approval');
+  return found;
+}
+
 applicantRoutes.delete('/applicants/:applicant', admin, async (c) => {
   const { db, files } = c.get('deps');
   const a = await load(c);
   authorize(c, a, true);
   const hasFranchisee = (await db.query(`select 1 from franchisees where applicant_id = $1 limit 1`, [a.id])).length > 0;
   if (a.status === 'active_franchisee' || hasFranchisee) fail('applicant', 'An active franchisee cannot be removed. Archive the record instead.');
+  const verified = await verifiedRecords(db, a);
+  if (verified.length) {
+    fail('applicant', `This applicant has verified records (${verified.join(', ')}). Permanent delete would erase that proof, so archive the applicant instead.`);
+  }
   const documents = await db.query(
     `select disk, path from documents where path is not null and ((documentable_type = $1 and documentable_id = $2)
        or (documentable_type = $3 and documentable_id in (select id from payments where applicant_id = $2)))`,
@@ -1329,12 +1357,19 @@ applicantRoutes.post('/applicants/:applicant/loi', viewers, async (c) => {
       const loi = await loiRequirement(db, a);
       if (!loi.scan) fail('verification_status', 'There is no LOI scan to verify yet. The assigned Sales user must upload it first.');
       if (loi.status === 'returned') fail('verification_status', 'This scan was returned. Wait for the corrected scan from Sales.');
+      await assertFilesOpened(db, { model: APPLICANT_MODEL, ownerId: Number(a.id), types: ['loi'] }, Number(user.id), 'verification_status', 'verify the LOI');
     }
   } else {
     await assertAssignedSales(c, a);
     if (verificationChange) abort(403, 'Only Admin can set the LOI verification.');
     if (v.file && (a.loi_verification_status === 'verified' || a.loi_status === 'complete')) {
       fail('file', 'The LOI is already verified. Admin must set it back to Not verified before the scan can be replaced.');
+    }
+    if (v.file instanceof File) {
+      // The contents must really be what the name says: a renamed file is refused.
+      const ext = (v.file.name.split('.').pop() ?? '').toLowerCase();
+      const expected = ext === 'pdf' ? 'application/pdf' : ext === 'png' ? 'image/png' : 'image/jpeg';
+      if ((await sniffFileType(v.file)) !== expected) fail('file', `The LOI file "${v.file.name}" is not a real PDF, JPG or PNG (its contents do not match its type).`);
     }
   }
   // The LOI file is required: the LOI cannot be saved (submitted) without one attached.
@@ -1469,7 +1504,11 @@ applicantRoutes.get('/applicants/:applicant/documents/:document/download', viewe
   const a = await load(c);
   authorize(c, a);
   if (!canSeeRequirementFiles(c.get('user'), a)) abort(403, 'Only Admin and the assigned Sales user can open applicant files.');
-  return downloadDocument(c, await loadDocument(c, APPLICANT_MODEL, a.id));
+  const d = await loadDocument(c, APPLICANT_MODEL, a.id);
+  const response = await downloadDocument(c, d);
+  // A small thumbnail drawn by the page is not an open: only [View] counts for "open before you verify".
+  if (!c.req.query('thumbnail')) await recordAdminView(c.get('deps').db, c.get('user'), d, response);
+  return response;
 });
 
 applicantRoutes.delete('/applicants/:applicant/documents/:document', viewers, async (c) => {
@@ -1502,7 +1541,10 @@ applicantRoutes.get('/applicants/:applicant/payments/:payment/documents/:documen
   if (!canSeeRequirementFiles(c.get('user'), a)) abort(403, 'Only Admin and the assigned Sales user can open payment receipts.');
   const [p] = await db.query(`select id from payments where id = $1 and applicant_id = $2`, [routeId(c, 'payment'), a.id]);
   requireFound(p);
-  return downloadDocument(c, await loadDocument(c, PAYMENT_MODEL, p.id));
+  const d = await loadDocument(c, PAYMENT_MODEL, p.id);
+  const response = await downloadDocument(c, d);
+  await recordAdminView(db, c.get('user'), d, response);
+  return response;
 });
 
 // ---- payments ----

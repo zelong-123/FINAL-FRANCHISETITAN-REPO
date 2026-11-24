@@ -62,13 +62,8 @@ export const currentDocuments = (db: Db, activityId: number): Promise<Row[]> => 
   [ACTIVITY_MODEL, activityId, `{${ORIENTATION_DOC_TYPES.join(',')}}`],
 );
 
-/** Records that an Admin opened a file. */
-export async function recordView(db: Db, documentId: number, userId: number) {
-  await db.query(
-    `insert into activity_document_views (document_id, user_id) values ($1, $2)
-     on conflict (document_id, user_id) do update set last_viewed_at = now()`, [documentId, userId],
-  );
-}
+/** Records that an Admin opened a file (shared with every other "open before you verify" check). */
+export { recordView } from './documentViews.ts';
 
 /** The current files this Admin has not opened since the latest submission. */
 export async function unviewedDocuments(db: Db, activity: Row, userId: number): Promise<Row[]> {

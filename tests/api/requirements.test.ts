@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
 import { createStaff } from '../support/accounts.ts';
+import { openAll, realFile } from '../support/files.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -49,11 +50,11 @@ test('each requirement validates its details and its proof files', async () => {
   wrongType.set('bank_certificate', new File(['x'], 'statement.exe'));
   assert.match((await submit(id, 'proof_of_funds', wrongType)).json.errors.bank_certificate[0], /PDF, JPG, JPEG, PNG/);
   const twoForms = requirementForm('application_form');
-  twoForms.append('form', new File([new Uint8Array([1])], 'b.pdf', { type: 'application/pdf' }));
+  twoForms.append('form', realFile('b.pdf'));
   assert.ok((await submit(id, 'application_form', twoForms)).json.errors.form, 'one file only where one is expected');
   const atLoi = await applicant('loi_submitted');
   const photos = requirementForm('proposed_site', 'loi');
-  photos.append('site_photos', new File([new Uint8Array([1])], 'front.png', { type: 'image/png' }));
+  photos.append('site_photos', realFile('front.png'));
   const site = await submit(atLoi, 'proposed_site', photos);
   assert.equal(site.status, 201, JSON.stringify(site.json));
   assert.equal(site.json.data.files.length, 2, 'several site photos');
@@ -81,6 +82,7 @@ test('Sales submits, Admin Accepts or Returns with a reason, Sales corrects and 
   const docs = await q(`select replaced_at from documents where documentable_type = 'App\\Models\\ApplicantRequirement' and documentable_id = $1 order by id`, [first.json.data.id]);
   assert.equal(docs.length, 2);
   assert.ok(docs[0].replaced_at, 'the old sheet is kept, marked Replaced');
+  await openAll(call, admin, id);
   const accepted = await call('POST', `${path}/accept`, { token: admin, body: {} });
   assert.equal(accepted.json.data.items.find((i: any) => i.key === 'initial_interview').status, 'accepted');
   assert.equal((await submit(id, 'initial_interview', requirementForm('initial_interview'))).status, 422, 'an Accepted requirement is final');
@@ -140,7 +142,7 @@ test('LOI: the scan is required for every LOI and Admin can return it', async ()
   const verify = () => { const f = new FormData(); f.set('verification_status', 'verified'); return f; };
   assert.match((await call('POST', `${path}/loi`, { token: admin, form: verify() })).json.errors.verification_status[0], /no LOI scan to verify/);
   assert.match((await call('POST', `${path}/loi/complete`, { token: admin, body: {} })).json.errors.loi[0], /required for every LOI, hard copies included/);
-  const scan = () => { const f = new FormData(); f.set('file', new File([new Uint8Array([3])], 'loi.pdf', { type: 'application/pdf' })); return f; };
+  const scan = () => { const f = new FormData(); f.set('file', realFile('loi.pdf')); return f; };
   await call('POST', `${path}/loi`, { token: sales, form: scan() });
   assert.equal((await call('GET', path, { token: admin })).json.data.requirements.loi.status, 'submitted');
   assert.ok((await call('POST', `${path}/loi/return`, { token: admin, body: {} })).json.errors.reason);
@@ -151,6 +153,7 @@ test('LOI: the scan is required for every LOI and Admin can return it', async ()
   assert.equal(view.return_reason, 'The scan is cut off at the bottom.');
   assert.match((await call('POST', `${path}/loi`, { token: admin, form: verify() })).json.errors.verification_status[0], /returned/);
   await call('POST', `${path}/loi`, { token: sales, form: scan() });
+  await openAll(call, admin, id);
   assert.equal((await call('POST', `${path}/loi`, { token: admin, form: verify() })).status, 200);
   assert.equal((await call('GET', path, { token: admin })).json.data.requirements.loi.status, 'accepted');
   const [log] = await events(id, 'loi_returned');

@@ -1,11 +1,12 @@
 // Test helpers for requirements per stage: a valid submission for every configured item.
 import assert from 'node:assert/strict';
 import { requirementsOf } from '../../supabase/functions/api/services/requirements.ts';
+import { openRequirement, realFile } from './files.ts';
 
 type Call = (method: string, path: string, options?: { token?: string; body?: unknown; form?: FormData }) => Promise<{ status: number; json: any }>;
 
 const SAMPLE: Record<string, string> = {
-  id_type: 'passport', investment_range: '1m_2m', interview_date: '2026-11-01', interviewer: 'Sales User',
+  id_type: 'passport', id_number: 'P1234567A', investment_range: '1m_2m', interview_date: '2026-11-01', interviewer: 'Sales User',
   notes: 'Applicant explained the business plan clearly.', address: '123 Real St, Las Pinas', ownership: 'leased',
   occupation: 'Restaurant manager', previous_experience: 'Ran a milk tea kiosk for two years.',
 };
@@ -31,7 +32,7 @@ export function requirementForm(key: string, stage = 'qualification', overrides:
   for (const slot of def!.files) {
     if (overrides[slot.key] === null) continue;
     const name = slot.accept.includes('pdf') ? `${slot.key}.pdf` : `${slot.key}.jpg`;
-    form.set(slot.key, new File([new Uint8Array([4, 2])], name, { type: name.endsWith('pdf') ? 'application/pdf' : 'image/jpeg' }));
+    form.set(slot.key, realFile(name));
   }
   return form;
 }
@@ -41,6 +42,7 @@ export async function completeStage(call: Call, sales: string, admin: string, ap
   for (const def of requirementsOf(stage)) {
     const submitted = await call('POST', `/applicants/${applicantId}/requirements/${def.key}`, { token: sales, form: requirementForm(def.key, stage) });
     assert.equal(submitted.status, 201, `${def.key}: ${JSON.stringify(submitted.json)}`);
+    await openRequirement(call, admin, applicantId, def.key, submitted.json.data.files ?? []);
     const accepted = await call('POST', `/applicants/${applicantId}/requirements/${def.key}/accept`, { token: admin, body: {} });
     assert.equal(accepted.status, 200, `${def.key}: ${JSON.stringify(accepted.json)}`);
   }

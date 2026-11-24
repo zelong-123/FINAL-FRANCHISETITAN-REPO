@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, SALES, setup } from '../support/harness.ts';
+import { openActivity } from '../support/files.ts';
 import { createStaff } from '../support/accounts.ts';
 import { orientationForm, pdf, viewAll } from '../support/orientation.ts';
 import { mergeProductTasting } from '../../supabase/scripts/merge_product_tasting.ts';
@@ -449,6 +450,8 @@ test('Activities & Schedules table: fully done people leave it; include_complete
   trainingForm.set('proof', pdf('training.pdf'));
   assert.equal((await complete(training.json.data.id, trainingForm)).status, 200);
   assert.equal((await call('GET', '/activities/grouped', { token: admin })).json.data.some((g: any) => g.applicant_id === done), true, 'Training submitted, not attended yet: still listed');
+  assert.match((await call('POST', `/activities/${training.json.data.id}/attended`, { token: admin })).json.errors.verify[0], /Not opened yet: training\.pdf/, 'Training proof must be opened first');
+  await openActivity(call, admin, training.json.data.id);
   assert.equal((await call('POST', `/activities/${training.json.data.id}/attended`, { token: admin })).status, 200);
   await started(pending);
 

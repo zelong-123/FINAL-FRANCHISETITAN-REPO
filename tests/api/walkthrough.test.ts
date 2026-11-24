@@ -8,6 +8,7 @@ import { requirementForm } from '../support/requirements.ts';
 import { requirementsOf } from '../../supabase/functions/api/services/requirements.ts';
 import { createStaff, signInInvited } from '../support/accounts.ts';
 import { orientationForm, viewAll } from '../support/orientation.ts';
+import { openActivity, openAll, openRequirement } from '../support/files.ts';
 
 const { pg, call, login } = await setup();
 const admin = await login(ADMIN);
@@ -89,7 +90,9 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   const returnAlert = await q(`select user_id, message from system_notifications where type = 'requirement_returned' and (data->>'applicant_id')::bigint = $1`, [id]);
   assert.deepEqual(returnAlert.map((r) => Number(r.user_id)), [salesUser.id], 'the NEW Sales user receives the alert');
   for (const def of requirementsOf('qualification')) {
-    okay(`submit ${def.key}`, await call('POST', `${path}/requirements/${def.key}`, { token: sales, form: requirementForm(def.key) }), 201);
+    const sent = okay(`submit ${def.key}`, await call('POST', `${path}/requirements/${def.key}`, { token: sales, form: requirementForm(def.key) }), 201).data;
+    if (def.key === 'application_form') blocked('Accept before opening the file', await call('POST', `${path}/requirements/${def.key}/accept`, { token: admin, body: {} }));
+    await openRequirement(call, admin, id, def.key, sent.files);
     okay(`accept ${def.key}`, await call('POST', `${path}/requirements/${def.key}/accept`, { token: admin, body: {} }));
   }
   blocked('Confirm Qualified without remarks', await call('POST', `${path}/confirm-qualified`, { token: admin, body: { confirmed: true } }));
@@ -117,6 +120,8 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   const training = await book('training', 'Training');
   await past(training);
   okay('Complete training', await call('POST', `/activities/${training}/complete`, { token: sales, form: completion() }));
+  blocked('Attended before opening the training proof', await call('POST', `/activities/${training}/attended`, { token: admin }));
+  await openActivity(call, admin, training);
   okay('Attended training', await call('POST', `/activities/${training}/attended`, { token: admin }));
 
   // ---- LOI ----
@@ -131,11 +136,17 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   scan.set('file', pdf('sample-loi.pdf'));
   scan.set('submission_type', 'physical');
   scan.set('submission_date', new Date().toISOString().slice(0, 10));
+  const renamed = new FormData();
+  renamed.set('file', new File([new TextEncoder().encode('just text')], 'renamed.pdf', { type: 'application/pdf' }));
+  blocked('a renamed file as the LOI scan', await call('POST', `${path}/loi`, { token: sales, form: renamed }));
   okay('Sales uploads the scan', await call('POST', `${path}/loi`, { token: sales, form: scan }), 201);
+  blocked('Admin verifies before opening the scan', await call('POST', `${path}/loi`, { token: admin, form: verify() }));
+  await openAll(call, admin, id);
   okay('Admin verifies', await call('POST', `${path}/loi`, { token: admin, form: verify() }));
   blocked('Complete LOI before the Proposed site is verified', await call('POST', `${path}/loi/complete`, { token: admin, body: {} }));
   blocked('Proposed site without photos', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi', { site_photos: null }) }));
   okay('Sales submits the Proposed site', await call('POST', `${path}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi') }), 201);
+  await openAll(call, admin, id);
   okay('Admin verifies the Proposed site', await call('POST', `${path}/requirements/proposed_site/accept`, { token: admin, body: {} }));
   assert.equal(okay('Complete LOI', await call('POST', `${path}/loi/complete`, { token: admin, body: { remarks: 'LOI verified.' } })).data.status, 'payment_submitted');
 
@@ -158,10 +169,13 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   const first = okay('first payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(reservationId, 'OR-W-1') }), 201).data.entry;
   blocked('the same OR number again', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-1') }));
   blocked('Sales verifies its own payment', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: sales, body: { revision: first.revision } }), 403);
+  blocked('verify before opening the receipt', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: { revision: first.revision } }));
+  await openAll(call, admin, id);
   okay('verify first', await call('POST', `${path}/payment-entries/${first.id}/verify`, { token: admin, body: { revision: first.revision } }));
   blocked('COMPLETED before every required payment is Verified', await call('POST', `${path}/payments/complete`, { token: admin, body: {} }));
   blocked('edit a payment through the old endpoint', await call('PATCH', `${path}/payments/${first.id}`, { token: sales, body: { amount: 1 } }));
   const second = okay('second payment', await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-W-2') }), 201).data.entry;
+  await openAll(call, admin, id);
   okay('verify second', await call('POST', `${path}/payment-entries/${second.id}/verify`, { token: admin, body: { revision: second.revision } }));
   const verifiedAlerts = await q(`select user_id from system_notifications where type = 'payment_entry_verified' and (data->>'applicant_id')::bigint = $1`, [id]);
   assert.ok(verifiedAlerts.some((r) => Number(r.user_id) === salesUser.id), 'the Sales user who encoded the entry is told it was verified');
@@ -178,6 +192,7 @@ test('one applicant from inquiry to Active Franchisee — every wrong step is bl
   const agreement = new FormData();
   agreement.set('agreement', pdf('sample-franchise-agreement.pdf'));
   okay('submit the agreement', await call('POST', `${path}/requirements/franchise_agreement`, { token: sales, form: agreement }), 201);
+  await openAll(call, admin, id);
   okay('accept the agreement', await call('POST', `${path}/requirements/franchise_agreement/accept`, { token: admin, body: {} }));
   const branchAccount = okay('branch account', await call('POST', `${path}/portal-user`, { token: admin, body: { email: 'demo.branch@example.test', phone: '09170000102' } }), 201);
   assert.equal(branchAccount.data.credentials.method, 'email_link', 'the franchisee gets an invitation email');

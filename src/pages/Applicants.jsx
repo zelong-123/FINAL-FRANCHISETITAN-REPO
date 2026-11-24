@@ -790,7 +790,7 @@ function ReceiptLinks({ applicantId, entry, busy, onError }) {
   ));
 }
 
-function EntryDetails({ applicantId, entry, busy, onError }) {
+function EntryDetails({ applicantId, entry, busy, onError, viewed = null, onOpened = null }) {
   const [viewing, setViewing] = useState(null);
   const cells = [
     ['Date paid', formatDate(entry.payment_date)],
@@ -821,6 +821,7 @@ function EntryDetails({ applicantId, entry, busy, onError }) {
                     onClick={() => setViewing(doc)}>
                     View
                   </button>
+                  {viewed && <OpenedChip viewed={viewed(doc)} />}
                 </span>
               ))}
             </dd>
@@ -838,6 +839,7 @@ function EntryDetails({ applicantId, entry, busy, onError }) {
         fetchPath={viewing ? `/applicants/${applicantId}/payments/${entry.id}/documents/${viewing.id}/download` : null}
         onClose={() => setViewing(null)}
         onError={onError}
+        onLoaded={onOpened}
       />
     </>
   );
@@ -960,7 +962,7 @@ function PaymentEntryForm({ item, record, existing, applicantId, busy, onCancel,
 }
 
 /** Admin: reason + Reject / Verify payment on an entry that is For verification. */
-function VerificationBox({ entry, busy, onVerify, onReject }) {
+function VerificationBox({ entry, busy, onVerify, onReject, unviewed = [] }) {
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const canReject = reason.trim().length >= 5;
@@ -984,13 +986,15 @@ function VerificationBox({ entry, busy, onVerify, onReject }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 mt-[20px] pt-[20px] border-t border-t-[#252c42]">
       <span className="flex flex-wrap items-center gap-[10px]">
-        <button type="button" className="inline-flex items-center gap-[8px] min-h-[44px] p-[0_18px] border-0 rounded-[10px] [background:#5160ee] text-[#fff] font-[600] hover:[background:#6070f5] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#aab4ff] focus-visible:outline-offset-2" disabled={busy} onClick={() => {
+        <button type="button" className="inline-flex items-center gap-[8px] min-h-[44px] p-[0_18px] border-0 rounded-[10px] [background:#5160ee] text-[#fff] font-[600] hover:[background:#6070f5] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#aab4ff] focus-visible:outline-offset-2" disabled={busy || unviewed.length > 0} title={unviewed.length ? 'Open every receipt first' : ''} onClick={() => {
           if (!window.confirm('Verify this payment? Once verified, the entry will be locked.')) return;
           onVerify(entry);
         }}><FaCheck aria-hidden="true" />Verify payment</button>
         <button type="button" className="min-h-[44px] p-[0_14px] border-0 rounded-[10px] [background:transparent] text-[#ff9d9d] font-[600] hover:[background:rgba(248,_113,_113,_.1)] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#5160ee] focus-visible:outline-offset-2" disabled={busy} onClick={() => setRejecting(true)}>Reject…</button>
       </span>
-      <span className="text-[#98a2b8] text-[13px]">Rejecting asks for a reason first.</span>
+      {unviewed.length > 0
+        ? <OpenFirstHint total={(entry.receipts || []).length} unviewed={unviewed} action="Verify" />
+        : <span className="text-[#98a2b8] text-[13px]">Rejecting asks for a reason first.</span>}
     </div>
   );
 }
@@ -1006,6 +1010,10 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
   const [hiddenVerified, setHiddenVerified] = useState({});
   // { id, mode: 'record' | 'edit' }; { id: -1 } means "no form" after Cancel.
   const [formFor, setFormFor] = useState(null);
+  // Receipts opened in this view since the page loaded (the server records every open too).
+  const [openedReceipts, setOpenedReceipts] = useState(() => new Set());
+  const markReceipt = (doc) => setOpenedReceipts((set) => new Set(set).add(doc.id));
+  const receiptViewed = (doc) => Boolean(doc.viewed_by_me) || openedReceipts.has(doc.id);
   const loadKey = `${editing?.id}:${editing?.updated_at ?? ''}:${JSON.stringify(editing?.payment_record?.required?.map((r) => [r.id, r.status, r.entry?.revision]) ?? null)}`;
   useEffect(() => {
     if (!editing?.id) return undefined;
@@ -1125,7 +1133,8 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
               {entry && !formHere && (
                 <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${verifiedHidden ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
                   <div className="min-h-0 overflow-hidden">
-                    <EntryDetails applicantId={editing.id} entry={entry} busy={busy} onError={onError} />
+                    <EntryDetails applicantId={editing.id} entry={entry} busy={busy} onError={onError} onOpened={markReceipt}
+                      viewed={isAdminRole && entry.reviewable && !readOnly ? receiptViewed : null} />
                     <AuditLine entry={entry} />
                   </div>
                 </div>
@@ -1147,7 +1156,8 @@ function PaymentRecordPanel({ editing, isAdminRole = false, readOnly = false, bu
                 />
               )}
               {!readOnly && isAdminRole && entry?.reviewable && (
-                <VerificationBox key={`${entry.id}-${entry.revision}`} entry={entry} busy={busy} onVerify={onVerify} onReject={onReject} />
+                <VerificationBox key={`${entry.id}-${entry.revision}`} entry={entry} busy={busy} onVerify={onVerify} onReject={onReject}
+                  unviewed={(entry.receipts || []).filter((doc) => !receiptViewed(doc))} />
               )}
               {!readOnly && isAdminRole && entry?.status === 'for_verification' && !entry.reviewable && (
                 <p className="m-[10px_0_0] text-[#fbbf24] text-[13px]">You encoded this entry, so another Admin must verify it.</p>
@@ -1339,6 +1349,23 @@ const REQUIREMENT_STATUS = {
   returned: { label: 'Returned', tone: 'text-[#fbbf24] border-transparent', color: '#fbbf24' },
 };
 
+/** "Open before you verify": whether the signed-in Admin opened a file (server flag or opened in this view). */
+function OpenedChip({ viewed }) {
+  return viewed
+    ? <span className="shrink-0 inline-flex items-center gap-[4px] text-[#7fd8a8] text-[11px] font-[600]"><FaCheck aria-hidden="true" /> Viewed</span>
+    : <span className="shrink-0 text-[#f2b866] text-[11px] font-[600]">Not viewed</span>;
+}
+
+/** The hint under a blocked Accept/Verify: how many of the current files this Admin has opened. */
+function OpenFirstHint({ total, unviewed, action }) {
+  if (!unviewed.length) return null;
+  return (
+    <small className="text-[#fbbf24]" role="status">
+      Open every file before {action} ({total - unviewed.length} of {total} viewed). Not viewed: {unviewed.map((doc) => doc.original_name).join(', ')}.
+    </small>
+  );
+}
+
 /** Requirement files are fetched through the API with role checks, then opened. */
 async function openRequirementFile(applicantId, key, document) {
   const token = await authToken.get();
@@ -1352,7 +1379,7 @@ async function openRequirementFile(applicantId, key, document) {
 }
 
 /** In-app preview of a requirement file: zoom, rotate, and full screen. Fetched as a blob, same route as the download. */
-function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, onError, fetchPath = null }) {
+function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, onError, fetchPath = null, onLoaded = null }) {
   const [src, setSrc] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [rotate, setRotate] = useState(0);
@@ -1369,7 +1396,7 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
         });
         if (!response.ok) throw new Error('The file could not be previewed.');
         url = URL.createObjectURL(await response.blob());
-        if (!cancelled) setSrc(url); else URL.revokeObjectURL(url);
+        if (!cancelled) { setSrc(url); onLoaded?.(doc); } else URL.revokeObjectURL(url);
       } catch (error) {
         onError(error.message);
         onClose();
@@ -1471,6 +1498,11 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
   const [reopening, setReopening] = useState(false);
   const [acceptConfirm, setAcceptConfirm] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
+  // Files opened in this view since the page loaded (the server records every open too).
+  const [opened, setOpened] = useState(() => new Set());
+  const markOpened = (doc) => setOpened((set) => new Set(set).add(doc.id));
+  const viewed = (doc) => Boolean(doc.viewed_by_me) || opened.has(doc.id);
+  const unviewedOf = (item) => (isAdminRole ? (item?.files || []).filter((doc) => !doc.replaced_at && !viewed(doc)) : []);
   const req = editing?.requirements;
   // Admin keyboard shortcuts on the Qualification review: Up/Down move, A accepts, R focuses the return note.
   useEffect(() => {
@@ -1486,7 +1518,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
         const index = keys.indexOf(current);
         setReviewKey(keys[(index + (e.key === 'ArrowDown' ? 1 : keys.length - 1)) % keys.length]);
         setReviewNote(''); setReturningKey(null); setReopening(false);
-      } else if (e.key.toLowerCase() === 'a' && item?.status === 'submitted' && !busy) {
+      } else if (e.key.toLowerCase() === 'a' && item?.status === 'submitted' && !busy && !unviewedOf(item).length) {
         onAccept(current, reviewNote.trim());
       } else if (e.key.toLowerCase() === 'r' && item?.status === 'submitted') {
         document.getElementById('qualification-return-note')?.focus();
@@ -1551,6 +1583,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
           doc={previewDoc?.doc}
           onClose={() => setPreviewDoc(null)}
           onError={onError}
+          onLoaded={markOpened}
         />
         <QualificationReview
           header={reviewHeader}
@@ -1574,6 +1607,7 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                             {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
                           </button>
                           <button type="button" className="text-[12px] font-[600] text-[#8fb4ff] bg-transparent border-0 cursor-pointer hover:underline disabled:opacity-50" disabled={busy} onClick={() => setPreviewDoc({ doc, key: activeDef.key })}>View</button>
+                          {canDecide && !doc.replaced_at && <OpenedChip viewed={viewed(doc)} />}
                         </span>
                       </li>
                     ))}
@@ -1614,8 +1648,9 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                     <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[30px] p-[0_12px] border border-[rgba(251,_191,_36,_.45)] rounded-[8px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[12px] font-[700] disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || sameNote.length < 5} onClick={() => { onReturn(activeDef.key, sameNote); setReviewNote(''); }}>
                       <FaRotateLeft aria-hidden="true" /> Return to Sales
                     </button>
-                    <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-1px)] [&:hover:not(:disabled)]:[box-shadow:0_8px_20px_color-mix(in_srgb,_var(--accent)_35%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.1)] disabled:opacity-50" disabled={busy} onClick={() => setAcceptConfirm(activeDef.key)}>Accept & next</button>
+                    <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-1px)] [&:hover:not(:disabled)]:[box-shadow:0_8px_20px_color-mix(in_srgb,_var(--accent)_35%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.1)] disabled:opacity-50" disabled={busy || unviewedOf(activeItem).length > 0} title={unviewedOf(activeItem).length ? 'Open every file first' : ''} onClick={() => setAcceptConfirm(activeDef.key)}>Accept & next</button>
                   </span>
+                  <OpenFirstHint total={(activeItem.files || []).filter((doc) => !doc.replaced_at).length} unviewed={unviewedOf(activeItem)} action="Accept" />
                 </div>
               )}
             </div>
@@ -1700,9 +1735,12 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                     <span className="text-[#c9d0e0]">Files:</span>
                     <span className="grid justify-items-end gap-[4px] text-right">
                       {item.files.map((doc) => (
-                        <button key={doc.id} type="button" className="p-[4px_10px] border border-[#2b344c] rounded-[6px] bg-[#1a2133] text-[#e6eaf5] text-[13px] cursor-pointer hover:border-[#7b88ff]" disabled={busy} onClick={() => openRequirementFile(editing.id, def.key, doc).catch((error) => onError(error.message))}>
-                          {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
-                        </button>
+                        <span key={doc.id} className="inline-flex items-center gap-2">
+                          <button type="button" className="p-[4px_10px] border border-[#2b344c] rounded-[6px] bg-[#1a2133] text-[#e6eaf5] text-[13px] cursor-pointer hover:border-[#7b88ff]" disabled={busy} onClick={() => openRequirementFile(editing.id, def.key, doc).then(() => markOpened(doc)).catch((error) => onError(error.message))}>
+                            {doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}
+                          </button>
+                          {canReview && !doc.replaced_at && <OpenedChip viewed={viewed(doc)} />}
+                        </span>
                       ))}
                     </span>
                   </div>
@@ -1756,6 +1794,8 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                           <input
                             type={field.type === 'date' ? 'date' : 'text'}
                             max={field.type === 'date' && field.not_future ? localDateInputValue() : undefined}
+                            maxLength={field.max_length || undefined}
+                            placeholder={field.placeholder || undefined}
                             value={values[field.key] || ''}
                             onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
                           />
@@ -1786,10 +1826,11 @@ function RequirementsPanel({ editing, stage, isAdminRole, isAssignedSales, busy,
                 )}
                 {canReview && returningKey !== def.key && (
                   <span className="flex flex-wrap gap-2">
-                    <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50" disabled={busy} onClick={() => onAccept(def.key)}>Accept</button>
+                    <button type="button" className="inline-flex items-center justify-center min-h-[30px] p-[0_12px] border border-transparent rounded-[8px] text-[#fff] text-[12px] font-[700] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50" disabled={busy || unviewedOf(item).length > 0} title={unviewedOf(item).length ? 'Open every file first' : ''} onClick={() => onAccept(def.key)}>Accept</button>
                     <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[30px] p-[0_12px] border border-[rgba(251,_191,_36,_.45)] rounded-[8px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[12px] font-[700] [transition:background_.15s_ease] hover:[background:rgba(251,_191,_36,_.16)] disabled:opacity-50" disabled={busy} onClick={() => { setReturningKey(def.key); setReason(''); }}>
                       <FaRotateLeft aria-hidden="true" /> Return to Sales
                     </button>
+                    <OpenFirstHint total={(item.files || []).filter((doc) => !doc.replaced_at).length} unviewed={unviewedOf(item)} action="Accept" />
                   </span>
                 )}
                 {canReview && returningKey === def.key && (
@@ -1879,7 +1920,8 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
   const viewed = (doc) => Boolean(doc.viewed_by_me) || opened.has(doc.id);
   const unviewed = current.filter((doc) => !viewed(doc));
   const ownSubmission = currentUserId != null && Number(activity.completion_submitted_by?.id) === Number(currentUserId);
-  const verifyBlocked = newFlow && (unviewed.length > 0 || ownSubmission);
+  // Every activity: Admin opens each current proof file before Verify / Mark Attended.
+  const verifyBlocked = unviewed.length > 0 || (newFlow && ownSubmission);
   const open = (doc) => openActivityProof(activity.id, doc)
     .then(() => setOpened((set) => new Set(set).add(doc.id)))
     .catch((error) => onError(error.message));
@@ -1888,7 +1930,7 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
       <FaFile aria-hidden="true" className="shrink-0 text-[#8E9BB3]" />
       <span className="min-w-0 truncate">{doc.original_name}{doc.replaced_at ? ' (Replaced)' : ''}</span>
       <span className="ml-auto shrink-0 text-[#6AA4F8] text-[12px] font-[600]">Preview</span>
-      {newFlow && isAdminRole && !doc.replaced_at && (viewed(doc)
+      {isAdminRole && !doc.replaced_at && (viewed(doc)
         ? <span className="shrink-0 text-[#7fd8a8] text-[11px] font-[600]"><FaCheck aria-hidden="true" /> Viewed</span>
         : <span className="shrink-0 text-[#f2b866] text-[11px] font-[600]">Not viewed</span>)}
     </button>
@@ -1946,16 +1988,16 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
               type="button"
               className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[38px] inline-flex items-center justify-center gap-2 p-[0_14px] border border-transparent rounded-[10px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] disabled:opacity-50"
               disabled={busy || verifyBlocked}
-              title={ownSubmission ? 'You encoded this submission: another Admin must verify it.' : unviewed.length && newFlow ? `Open every file first: ${unviewed.map((doc) => doc.original_name).join(', ')}` : ''}
+              title={newFlow && ownSubmission ? 'You encoded this submission: another Admin must verify it.' : unviewed.length ? `Open every file first: ${unviewed.map((doc) => doc.original_name).join(', ')}` : ''}
               onClick={() => onAttended(activity)}
             >
               {newFlow ? 'Verify' : 'Mark Attended'}
             </button>
           )}
           <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
-          {newFlow && verifyBlocked && (
+          {verifyBlocked && (
             <small className="text-[#fbbf24]" role="status">
-              {ownSubmission ? 'You encoded this submission: another Admin must verify it.' : `Open every file before Verify (${current.length - unviewed.length} of ${current.length} viewed).`}
+              {newFlow && ownSubmission ? 'You encoded this submission: another Admin must verify it.' : `Open every file before ${newFlow ? 'Verify' : 'Mark Attended'} (${current.length - unviewed.length} of ${current.length} viewed).`}
             </small>
           )}
         </span>
@@ -2273,9 +2315,10 @@ const isPdfFile = (name, mime) => String(mime || '') === 'application/pdf'
   || /\.pdf$/i.test(String(name || ''));
 
 /** The download route is authenticated, so a saved file is fetched as a blob. */
-async function fetchApplicantDocument(applicantId, document) {
+async function fetchApplicantDocument(applicantId, document, { thumbnail = false } = {}) {
   const token = await authToken.get();
-  const response = await fetch(`${API_BASE_URL}/applicants/${applicantId}/documents/${document.id}/download`, {
+  // A thumbnail is not counted as Admin opening the file (only [View] is).
+  const response = await fetch(`${API_BASE_URL}/applicants/${applicantId}/documents/${document.id}/download${thumbnail ? '?thumbnail=1' : ''}`, {
     headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
   if (!response.ok) throw new Error('The attached file could not be opened.');
@@ -2308,7 +2351,7 @@ function currentLoiDocument(documents) {
 }
 
 function LoiAttachment({
-  draft, savedDocument, applicantId, interactive, disabled, onChange, onPreview, onError,
+  draft, savedDocument, applicantId, interactive, disabled, onChange, onPreview, onError, onOpened = null,
 }) {
   const attached = draft.file
     ? { kind: 'new', name: draft.file.name, size: draft.file.size, mime: draft.file.type }
@@ -2336,7 +2379,7 @@ function LoiAttachment({
     }
     let alive = true;
     let url = null;
-    fetchApplicantDocument(applicantId, attached)
+    fetchApplicantDocument(applicantId, attached, { thumbnail: true })
       .then((blob) => {
         if (!alive) return;
         url = URL.createObjectURL(blob);
@@ -2378,7 +2421,10 @@ function LoiAttachment({
     try {
       let blob;
       if (attached.kind === 'new') blob = draft.file;
-      else blob = await fetchApplicantDocument(applicantId, attached);
+      else {
+        blob = await fetchApplicantDocument(applicantId, attached);
+        onOpened?.(attached.id);
+      }
       const url = URL.createObjectURL(blob);
       if (isImageFile(attached.name, blob.type || attached.mime)) {
         // The lightbox owns this URL and revokes it when it closes.
@@ -2449,6 +2495,10 @@ function LoiPanel({
   // The assigned Sales user records the details and uploads the scan; Admin only verifies.
   const detailsEditable = interactive && canEditDetails;
   const verifyEditable = interactive && canVerify;
+  // Admin opens the saved scan ([View]) before it can be marked Verified (the API refuses it too).
+  const [openedScan, setOpenedScan] = useState(null);
+  const scanViewed = !savedDocument || Boolean(savedDocument.viewed_by_me) || openedScan === savedDocument.id;
+  const mustOpenScan = verifyEditable && !scanViewed && draft.verification_status !== 'verified';
   const typeLabels = { physical: 'Hard copy', digital: 'Soft copy', email: 'Email', other: 'Other' };
   const verifyLabels = { not_verified: 'Not verified', verified: 'Verified', rejected: 'Rejected' };
   // A submission can never be dated after today (the API rejects it too).
@@ -2478,6 +2528,7 @@ function LoiPanel({
           onChange={onChange}
           onPreview={onPreview}
           onError={onError}
+          onOpened={setOpenedScan}
         />
 
         <div className="grid gap-[9px] [align-content:start]">
@@ -2529,9 +2580,12 @@ function LoiPanel({
                     stays visible but can never be chosen again. */}
                 {draft.verification_status === 'rejected' && <option value="rejected">Rejected (legacy)</option>}
                 <option value="not_verified">Not verified</option>
-                <option value="verified">Verified</option>
+                <option value="verified" disabled={mustOpenScan}>Verified{mustOpenScan ? ' (view the scan first)' : ''}</option>
               </select>
             ) : <strong>{verifyLabels[draft.verification_status] || '—'}</strong>}
+            {mustOpenScan && (
+              <small className="col-start-2 text-[#fbbf24] leading-[1.35]" role="status">Open the LOI scan with [View] before you mark it Verified.</small>
+            )}
           </div>
           <div className="grid grid-cols-[130px_minmax(0,_1fr)] gap-[10px] text-[#b9c1d5] text-[11.5px] later:[&_strong]:text-[#edf0fa] later:[&_strong]:font-[600] [&_input]:w-full [&_select]:w-full [&_textarea]:w-full later:[align-items:start]">
             <span>Remarks</span>
