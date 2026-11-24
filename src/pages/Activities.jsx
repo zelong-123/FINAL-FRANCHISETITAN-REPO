@@ -89,6 +89,31 @@ const blankForm = () => ({
   ...blankScheduleFields(),
 });
 
+/**
+ * A long note in a table cell (e.g. Admin's return reason): kept narrow so it never stretches the
+ * table, cut to two lines with Show more / Show less. Expanded, it still wraps at the same width.
+ */
+function ClampedNote({ label, text, className = 'text-[#fbbf24]' }) {
+  const [open, setOpen] = useState(false);
+  const full = `${label}${text ?? ''}`;
+  const long = full.length > 60;
+  return (
+    <span className={`grid gap-[2px] w-full max-w-[15rem] text-[12px] leading-[1.5] [overflow-wrap:anywhere] ${className}`}>
+      <span className={long && !open ? 'line-clamp-2' : ''}>{full}</span>
+      {long && (
+        <button
+          type="button"
+          className="justify-self-start p-0 border-0 bg-transparent text-[#9aa6ff] text-[11.5px] font-[700] cursor-pointer hover:underline"
+          aria-expanded={open}
+          onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}
+        >
+          {open ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </span>
+  );
+}
+
 function formatDuration(minutes) {
   const value = Number(minutes || 0);
   if (value < 60) return `${value} min`;
@@ -1198,7 +1223,7 @@ export default function Activities() {
                                       <span className="muted-note text-muted text-[12px] leading-[1.6]">Available on {manilaDateTimeLabel(activity.starts_at)}</span>
                                     )}
                                     {activity.review_status === 'returned' && (
-                                      <span className="text-[12px] leading-[1.5] text-[#fbbf24]">Returned by Admin: {activity.return_reason}</span>
+                                      <ClampedNote label="Returned by Admin: " text={activity.return_reason} />
                                     )}
                                   </>
                                 )
@@ -1553,7 +1578,7 @@ export default function Activities() {
                         <span className="inline-flex w-fit p-[2px_8px] rounded-[999px] border border-[rgba(251,_191,_36,_0.45)] text-[#fbbf24] text-[11px] font-[700]">Completed before schedule (legacy)</span>
                       )}
                       {activity.review_status === 'submitted' && <small>Waiting for Admin to review the proof</small>}
-                      {activity.review_status === 'returned' && <small className="text-[#fbbf24]">Returned by Admin: {activity.return_reason}</small>}
+                      {activity.review_status === 'returned' && <ClampedNote label="Returned by Admin: " text={activity.return_reason} />}
                       {role === 'admin' && ['pending', 'confirmed'].includes(activity.status) && activity.approval_status !== 'rejected' && <div className="row-actions [&_button]:min-h-[34px] later:[&_button]:p-[0_10px] later-2:[&_button]:border later-3:[&_button]:border-line later-3:[&_button]:rounded-[9px] later:[&_button]:text-text-secondary later-2:[&_button]:[background:var(--surface-subtle)] later-3:[&_button]:text-[9px] later-3:[&_button]:font-[700] later:[&_button]:[transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease,_transform_.16s_ease] [&_button:hover:not(:disabled)]:text-text [&_button:hover:not(:disabled)]:border-line-strong [&_button:hover:not(:disabled)]:[background:var(--hover)] [&_button:hover:not(:disabled)]:[transform:translateY(-1px)] flex flex-wrap gap-[6px] [&_.icon-button]:inline-grid [&_.icon-button]:place-items-center [&_.icon-button]:w-[34px] [&_.icon-button]:h-[34px] [&_.icon-button]:p-0 [&_.icon-button]:border later:[&_.icon-button]:border-[#1f2842] [&_.icon-button]:rounded-[6px] later:[&_.icon-button]:[background:rgba(255,_255,_255,_0.04)] later:[&_.icon-button]:text-[#d5dbec] [&_.icon-button]:[box-shadow:none] [&_.icon-button]:cursor-pointer [&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [&_.icon-button_svg]:m-0 [&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.09)] [&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [&_.icon-button:focus-visible]:[outline:2px_solid_#7b88ff] [&_.icon-button:focus-visible]:[outline-offset:2px] [&_.icon-button:disabled]:opacity-[0.5] [&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between later:[.activities-page_&]:gap-4 [.activities-page_&]:flex-nowrap [.activities-page_&_.icon-button]:inline-grid [.activities-page_&_.icon-button]:place-items-center later:[.activities-page_&_.icon-button]:w-[36px] later:[.activities-page_&_.icon-button]:h-[36px] [.activities-page_&_.icon-button]:p-0 [.activities-page_&_.icon-button]:[border:1px_solid_var(--act-line)] [.activities-page_&_.icon-button]:rounded-[var(--act-radius-cell)] [.activities-page_&_.icon-button]:[background:var(--act-cell)] [.activities-page_&_.icon-button]:text-[color:var(--text,_inherit)] later:[.activities-page_&_.icon-button]:cursor-pointer [.activities-page_&_.icon-button]:[transition:background-color_0.2s_ease,_border-color_0.2s_ease] [.activities-page_&_.icon-button_svg]:m-0 [.activities-page_&_.icon-button:hover:not(:disabled)]:[background:rgba(255,_255,_255,_0.08)] [.activities-page_&_.icon-button:hover:not(:disabled)]:border-[rgba(255,_255,_255,_0.28)] [.activities-page_&_.icon-button:focus-visible]:[outline:2px_solid_var(--act-accent)] [.activities-page_&_.icon-button:focus-visible]:[outline-offset:2px] [.activities-page_&_.icon-button:disabled]:cursor-not-allowed [.activities-page_&_.icon-button:disabled]:opacity-[0.5] [&_.primary-button]:relative">
                         <button type="button" onClick={() => openEdit(activity)}>Adjust</button>
                         <button type="button" onClick={() => setDeleting({ ...shown, current: activity })}>Cancel schedule</button>
