@@ -229,8 +229,12 @@ analyticsRoutes.get('/analytics/franchising-dashboard', role('admin', 'sales'), 
   }
   const labelOf = (k: string) => (bucket === 'year' ? k : monthLabel(k));
 
+  // Branches have no POS: their recorded activity is production (units of the brand's products made
+  // from branch stock). The trend, the ranking and the demand insight read the non-voided production
+  // batches; `sales` = production transactions and `quantity` = units produced (the field names stay).
   const salesRows = await db.query(
-    `select ${key('s.created_at')} as period_key, count(distinct s.id)::int as sale_count, coalesce(sum(i.quantity), 0) as quantity from branch_sales s join branch_sale_items i on i.branch_sale_id = s.id where true ${within('s.created_at')} group by 1`, params,
+    `select ${key('b.created_at')} as period_key, count(*)::int as sale_count, coalesce(sum(b.quantity_pieces), 0) as quantity
+     from profittrack_production_batches b where b.voided_at is null ${within('b.created_at')} group by 1`, params,
   );
   const sales = new Map(salesRows.map((r) => [r.period_key, r]));
   const batchRows = await db.query(
@@ -242,17 +246,17 @@ analyticsRoutes.get('/analytics/franchising-dashboard', role('admin', 'sales'), 
 
   const topRows = await db.query(
     `select l.id, l.name, l.branch_code, (select b.name from brands b where b.id = l.brand_id) as brand, (select f.business_name from franchisees f where f.id = l.franchisee_id) as business_name,
-       (select count(*)::int from branch_sales s where s.location_id = l.id ${within('s.created_at')}) as sale_count,
-       (select coalesce(sum(i.quantity), 0) from branch_sales s join branch_sale_items i on i.branch_sale_id = s.id where s.location_id = l.id ${within('s.created_at')}) as quantity
-     from franchise_locations l where l.type = 'franchise' order by quantity desc, l.id limit ${limit}`, params,
+       (select count(*)::int from profittrack_production_batches b where b.location_id = l.id and b.voided_at is null ${within('b.created_at')}) as sale_count,
+       (select coalesce(sum(b.quantity_pieces), 0) from profittrack_production_batches b where b.location_id = l.id and b.voided_at is null ${within('b.created_at')}) as quantity
+     from franchise_locations l where l.type = 'franchise' and l.archived_at is null order by quantity desc, sale_count desc, l.id limit ${limit}`, params,
   );
 
   const demand = await db.query(
-    `select p.name, sum(i.quantity) as quantity from branch_sales s join branch_sale_items i on i.branch_sale_id = s.id join products p on p.id = i.product_id
-     where s.created_at >= ((now() at time zone 'Asia/Manila')::date - 6)::timestamp at time zone 'Asia/Manila' group by p.name order by quantity desc limit 3`,
+    `select r.name, sum(b.quantity_pieces) as quantity from profittrack_production_batches b join profittrack_recipes r on r.id = b.recipe_id
+     where b.voided_at is null and b.created_at >= ((now() at time zone 'Asia/Manila')::date - 6)::timestamp at time zone 'Asia/Manila' group by r.name order by quantity desc limit 3`,
   );
   const insights: Row[] = [];
-  if (demand.length) insights.push({ type: 'demand', message: `${demand.map((d) => d.name).join(', ')} ${demand.length === 1 ? 'is' : 'are'} in high demand this week.` });
+  if (demand.length) insights.push({ type: 'demand', message: `${demand.map((d) => d.name).join(', ')} ${demand.length === 1 ? 'is' : 'are'} the most produced this week across branches.` });
   const count = async (sql: string, values: unknown[] = []) => Number((await db.query(sql, values))[0].n);
   const activeApplicants = await count(`select count(*)::int as n from applicants where status not in ('rejected', 'active_franchisee') ${activeOnly}`);
   const completedApplicants = await count(`select count(*)::int as n from applicants where status in ('approved', 'active_franchisee') ${activeOnly}`);
@@ -290,7 +294,7 @@ analyticsRoutes.get('/analytics/franchising-dashboard', role('admin', 'sales'), 
     recent_applications: recent.map((a) => ({ id: a.id, applicant_code: a.applicant_code, full_name: a.full_name, brand: a.brand_name, status: a.status, application_date: dayOnly(a.application_date), progress: progress(a) })),
     summary: {
       active_applicants: activeApplicants, active_franchisees: await count(`select count(*)::int as n from franchisees where franchise_status = 'active'`),
-      branches_with_sales: await count(`select count(*)::int as n from franchise_locations l where exists (select 1 from branch_sales s where s.location_id = l.id)`),
+      branches_with_sales: await count(`select count(*)::int as n from franchise_locations l where exists (select 1 from profittrack_production_batches b where b.location_id = l.id and b.voided_at is null)`),
     },
   });
 });

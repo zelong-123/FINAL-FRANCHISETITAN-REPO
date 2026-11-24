@@ -1355,7 +1355,7 @@ function BranchPicker({ branches, value, onChange }) {
     setOpen((o) => !o);
   };
   const selected = branches.find((branch) => String(branch.id) === String(value));
-  const shown = branches.filter((branch) => branch.name.toLowerCase().includes(term.trim().toLowerCase()));
+  const shown = branches.filter((branch) => [branch.name, branch.operator?.full_name].filter(Boolean).join(' ').toLowerCase().includes(term.trim().toLowerCase()));
   const pick = (id) => { onChange(id); setOpen(false); setTerm(''); };
   return (
     <span className="relative inline-block">
@@ -1497,7 +1497,7 @@ function AlertList({ kind, closing = false, items, branches, newCount, marking, 
  * Typing filters the options; picking one narrows the card grid to that branch.
  * An × inside the field clears the typed text (and the picked branch).
  */
-function BranchLookup({ branches, value, onChange, placeholder = 'Search branches, locations or brands' }) {
+function BranchLookup({ branches, value, onChange, placeholder = 'Search branches, owners, locations or brands' }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -1509,7 +1509,8 @@ function BranchLookup({ branches, value, onChange, placeholder = 'Search branche
   const options = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return branches;
-    return branches.filter((branch) => [branch.name, branch.location_label, branch.brand?.name, branch.preferred_branch_type]
+    // The owner (operator) name finds the branch too, e.g. typing an owner's first name.
+    return branches.filter((branch) => [branch.name, branch.location_label, branch.brand?.name, branch.preferred_branch_type, branch.operator?.full_name, branch.franchisee?.business_name]
       .filter(Boolean).join(' ').toLowerCase().includes(needle));
   }, [branches, query]);
 
@@ -1587,7 +1588,7 @@ function BranchLookup({ branches, value, onChange, placeholder = 'Search branche
             >
               {branch.name}
               <small className="block text-muted text-[11.5px] font-[400]">
-                {[branch.location_label, branch.brand?.name].filter(Boolean).join(' · ') || 'Branch'}
+                {[branch.operator?.full_name, branch.location_label, branch.brand?.name].filter(Boolean).join(' · ') || 'Branch'}
               </small>
             </li>
           )) : <li className="p-[8px_11px] text-[13px] text-muted" role="option" aria-disabled="true" aria-selected="false">No branch matches</li>}

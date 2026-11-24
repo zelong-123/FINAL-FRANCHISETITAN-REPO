@@ -521,7 +521,7 @@ export function TopBranchesBars({ rows, metric }) {
   const empty = data.length === 0 || !hasData;
 
   const dataKey = metric === 'sales' ? 'sales' : 'quantity';
-  const unit = metric === 'sales' ? 'sales' : 'units';
+  const unit = metric === 'sales' ? 'transactions' : 'units';
 
   return (
     <div className="chart-surface">
@@ -532,7 +532,7 @@ export function TopBranchesBars({ rows, metric }) {
             <XAxis type="number" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} />
             <YAxis type="category" dataKey="name" tick={{ fill: '#c9d1e4', fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} width={116} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
-            <Bar dataKey={dataKey} name={metric === 'sales' ? 'Transactions' : 'Units sold'} radius={[0, 7, 7, 0]} maxBarSize={24}>
+            <Bar dataKey={dataKey} name={metric === 'sales' ? 'Production transactions' : 'Units produced'} radius={[0, 7, 7, 0]} maxBarSize={24}>
               {data.map((row, index) => (
                 <Cell key={row.location_id} fill={metric === 'sales' ? '#32c997' : PALETTE[index % PALETTE.length]} />
               ))}
@@ -543,8 +543,8 @@ export function TopBranchesBars({ rows, metric }) {
       </ChartFrame>
       <p className="muted-note text-muted text-[8px] leading-[1.6] chart-caption">
         {empty
-          ? 'No branch sales in this range — rankings appear once branches record sales.'
-          : `${metric === 'sales' ? 'Number of sale transactions per branch.' : 'Total units sold per branch.'} (${unit})`}
+          ? 'No branch production in this range — rankings appear once branches record production.'
+          : `${metric === 'sales' ? 'Number of production transactions per branch.' : 'Total units produced per branch.'} (${unit})`}
       </p>
     </div>
   );
