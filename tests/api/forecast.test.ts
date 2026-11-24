@@ -437,21 +437,40 @@ test('analytics: inventory movement and the franchising dashboard', async () => 
   assert.equal((await call('GET', '/analytics/inventory-movement?from=2024-01-01&to=2025-06-01', { token: admin })).status, 422);
   assert.equal((await call('GET', '/analytics/top-locations?limit=1', { token: admin })).json.data.length, 1);
 
-  // A sale and a production batch feed the two trends.
+  // Branches have no POS: production batches feed the trend, the ranking and the demand insight.
+  // A legacy branch sale is ignored, and a voided batch does not count.
   const [item] = await q(`select i.id from inventories i join products p on p.id = i.product_id where p.sku = 'FC-MILK' limit 1`);
   const [mine] = await q(`insert into inventories (location_id, product_id, current_stock, reorder_level, critical_level) select $1, product_id, 10, 1, 0 from inventories where id = $2 returning id`, [branch.id, item.id]);
-  const sale = await call('POST', '/branch/sales', { token: branch.token, body: { client_reference: 'fc-1', notes: 'Used', items: [{ inventory_id: mine.id, quantity: 4 }] } });
+  const sale = await call('POST', '/branch/sales', { token: branch.token, body: { client_reference: 'fc-1', notes: 'Used', items: [{ inventory_id: mine.id, quantity: 9 }] } });
   assert.equal(sale.status, 201, JSON.stringify(sale.json));
+  const [recipe] = await q(
+    `insert into profittrack_recipes (location_id, name, sku, standard_price_cents, created_by_user_id, updated_by_user_id) values ($1, 'Iced latte', 'FC-LATTE', 12000, $2, $2) returning id`, [branch.id, branch.userId],
+  );
+  const [version] = await q(`insert into profittrack_recipe_versions (location_id, recipe_id, version, created_by_user_id) values ($1, $2, 1, $3) returning id`, [branch.id, recipe.id, branch.userId]);
+  const batch = async (key: string, pieces: number, voided = false) => {
+    const [op] = await q(
+      `insert into profittrack_operations (location_id, type, idempotency_key, request_fingerprint, recorded_by_user_id, occurred_at) values ($1, 'production', $2, $2, $3, now()) returning id`, [branch.id, key, branch.userId],
+    );
+    await q(
+      `insert into profittrack_production_batches (location_id, operation_id, recipe_id, recipe_version_id, quantity_pieces, total_cost_cents, unit_cost_micropesos, voided_at) values ($1, $2, $3, $4, $5, 0, 0, $6)`,
+      [branch.id, op.id, recipe.id, version.id, pieces, voided ? new Date() : null],
+    );
+  };
+  await batch('fc-batch-1', 3);
+  await batch('fc-batch-2', 1);
+  await batch('fc-batch-void', 50, true);
 
   const dashboard = await call('GET', '/analytics/franchising-dashboard', { token: admin });
   assert.equal(dashboard.status, 200, JSON.stringify(dashboard.json));
   const data = dashboard.json.data;
   assert.equal(data.sales_trend.length, 12);
   assert.equal(data.sales_trend[11].period, day.slice(0, 7));
-  assert.equal(data.sales_trend[11].quantity, 4);
+  assert.equal(data.sales_trend[11].quantity, 4, 'units produced, voided batch and legacy sale left out');
+  assert.equal(data.sales_trend[11].sales, 2, 'production transactions');
   assert.equal(data.top_branches[0].location_id, branch.id);
   assert.equal(data.top_branches[0].quantity, 4);
-  assert.match(data.insights[0].message, /Fresh milk is in high demand/);
+  assert.equal(data.top_branches[0].sales, 2);
+  assert.match(data.insights[0].message, /Iced latte is the most produced this week across branches/);
   assert.ok(data.summary.branches_with_sales >= 1);
   const yearly = await call('GET', '/analytics/franchising-dashboard?period=year', { token: admin });
   assert.equal(yearly.json.data.sales_trend.length, 6);
