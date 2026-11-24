@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowDownWideShort,
+  FaArrowLeft,
+  FaArrowRight,
   FaArrowTrendUp,
   FaArrowUpWideShort,
   FaBoxesStacked,
@@ -259,11 +261,27 @@ function OneOffExclude({ locationId, item, day, onDone }) {
     }
   };
   return (
-    <form className="flex flex-wrap gap-[6px] items-center min-w-[240px] [&_input]:flex-[1_1_160px] [&_input]:min-w-0" onSubmit={submit}>
-      <input type="text" value={reason} required minLength={3} maxLength={500} aria-label="Reason for excluding this week" onChange={(event) => setReason(event.target.value)} />
-      <button type="submit" className={PRIMARY} disabled={busy}>Exclude</button>
-      <button type="button" className={GHOST} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
-      {error && <small className="block mt-[6px] text-danger-text">{error}</small>}
+    <form className="grid gap-[8px] min-w-[300px] p-[12px] rounded-[12px] border border-line [background:var(--surface-subtle)]" onSubmit={submit}>
+      <label htmlFor={`exclude-reason-${day.date}`} className="text-text-secondary text-[11px] font-[700] tracking-[.06em] uppercase">
+        Reason for leaving out the week of {shortDate(mondayOf(day.date))}
+      </label>
+      <div className="flex flex-wrap gap-[8px] items-center">
+        <input
+          id={`exclude-reason-${day.date}`}
+          type="text"
+          value={reason}
+          required
+          minLength={3}
+          maxLength={500}
+          placeholder="e.g. One-off event, store closed early"
+          className="flex-[1_1_220px] min-w-0 h-[38px] p-[0_12px]! border! border-line-strong! rounded-[10px]! [background:var(--panel)]! text-text! text-[13px]! focus:outline-none focus:border-[color:var(--accent)]! focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_18%,_transparent)]"
+          onChange={(event) => setReason(event.target.value)}
+        />
+        <button type="submit" className={`${PRIMARY} min-h-[38px]! rounded-[10px]!`} disabled={busy || reason.trim().length < 3}>{busy ? 'Excluding…' : 'Exclude'}</button>
+        <button type="button" className={`${GHOST} min-h-[38px]!`} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      <small className="text-muted text-[11.5px] leading-[1.5]">The whole week (Mon–Sun) is left out of this item's estimate. You can restore it later.</small>
+      {error && <small className="block text-danger-text">{error}</small>}
     </form>
   );
 }
@@ -329,7 +347,7 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
             </section>
           ) : (
             <section className={SECTION}>
-              <h3>How this was worked out</h3>
+              <h3 className="text-[16px]! font-[800]! tracking-[.01em] m-[0_0_12px]!">How this was worked out</h3>
               {!item?.ready ? (
                 <p className="m-0 text-text-secondary text-[13px]">{item?.not_ready_reason}. No numbers are estimated until then; nothing is guessed.</p>
               ) : (
@@ -488,10 +506,10 @@ function WorkedOutTable({ steps }) {
             const isOpen = open.has(step.title);
             return (
               <React.Fragment key={step.title}>
-                <tr className="border-t border-line first:border-t-0">
-                  <th scope="row" className="w-[34%] p-[12px_14px] text-left align-top text-text-secondary text-[12.5px] font-[800] tracking-[.08em] uppercase">{step.title}</th>
-                  <td className="p-[12px_14px] align-top text-[#f5c451] text-[15px] font-[800] leading-[1.45]">{result}</td>
-                  <td className="w-[44px] p-[8px_10px] align-top text-right">
+                <tr className={`border-t border-line first:border-t-0 ${isOpen ? '[background:rgba(245,_196,_81,_.04)]' : ''}`}>
+                  <th scope="row" className="w-[34%] p-[11px_14px] text-left align-middle text-text-secondary text-[11.5px] font-[700] tracking-[.08em] uppercase">{step.title}</th>
+                  <td className="p-[11px_14px] align-middle text-[#f5c451] text-[13.5px] font-[700] leading-[1.45]">{result}</td>
+                  <td className="w-[48px] p-[6px_10px] align-middle text-right">
                     {detail && (
                       <button
                         type="button"
@@ -499,17 +517,20 @@ function WorkedOutTable({ steps }) {
                         aria-label={`${isOpen ? 'Hide' : 'Show'} how ${step.title} was computed`}
                         title={isOpen ? 'Hide the computation' : 'Show how this was computed'}
                         onClick={() => toggle(step.title)}
-                        className={`inline-grid place-items-center w-[28px] h-[28px] rounded-full border text-[13px] font-[800] cursor-pointer ${isOpen ? 'border-[#f5c451] text-[#f5c451] [background:rgba(245,_196,_81,_.12)]' : 'border-line text-text-secondary bg-transparent hover:text-text'}`}
+                        className={`inline-grid! place-items-center! w-[30px]! h-[30px]! min-h-0! p-0! rounded-full! border! cursor-pointer transition-colors ${isOpen ? 'border-[#f5c451]! text-[#f5c451]! [background:rgba(245,_196,_81,_.14)]!' : 'border-line! text-text-secondary! bg-transparent! hover:text-[#f5c451]! hover:border-[#f5c451]!'}`}
                       >
-                        i
+                        {isOpen ? <FaArrowLeft aria-hidden="true" className="w-[12px] h-[12px]" /> : <FaArrowRight aria-hidden="true" className="w-[12px] h-[12px]" />}
                       </button>
                     )}
                   </td>
                 </tr>
                 {detail && isOpen && (
                   <tr>
-                    <td colSpan={3} className="p-[0_14px_12px] text-text text-[14px] font-[600] leading-[1.6]">
-                      <span className="block p-[10px_12px] rounded-[8px] border-l-[3px] border-[#f5c451] [background:var(--surface-subtle)]">{detail}</span>
+                    <td colSpan={3} className="p-[0_14px_14px]">
+                      <div className="grid gap-[6px] p-[12px_14px] rounded-[10px] border border-[rgba(245,_196,_81,_.28)] border-l-[3px] border-l-[#f5c451] [background:linear-gradient(90deg,_rgba(245,_196,_81,_.08),_rgba(245,_196,_81,_.02))]">
+                        <span className="text-[#c9a54a] text-[10.5px] font-[800] tracking-[.1em] uppercase">How it was computed</span>
+                        <span className="text-text text-[13.5px] font-[600] leading-[1.65] [font-variant-numeric:tabular-nums]">{detail}</span>
+                      </div>
                     </td>
                   </tr>
                 )}
