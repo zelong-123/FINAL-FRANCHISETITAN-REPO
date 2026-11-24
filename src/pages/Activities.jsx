@@ -1573,7 +1573,15 @@ export default function Activities() {
                     <li key={activity.id}>
                       <div className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-2">
                         <strong>{activityLabel(activity)}</strong>
-                        <StatusBadge value={activity.approval_status === 'rejected' ? 'Rejected' : activity.is_missed || activity.status === 'no_show' ? 'Did Not Attended' : activity.status === 'cancelled' ? 'Cancelled' : activity.status === 'completed' ? 'Completed' : activity.status} />
+                        {activity.approval_status !== 'rejected' && (activity.is_missed || activity.status === 'no_show') ? (
+                          // Red, so a missed session is never mistaken for a second live schedule.
+                          <span className="min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-[rgba(239,_68,_68,_.5)] rounded-[999px] [background:rgba(239,_68,_68,_.12)] text-[#f87171] text-[10px] font-[800] whitespace-nowrap">
+                            <span className="w-[6px] h-[6px] rounded-[50%] [background:currentColor]" aria-hidden="true" />
+                            Did Not Attend
+                          </span>
+                        ) : (
+                          <StatusBadge value={activity.approval_status === 'rejected' ? 'Rejected' : activity.status === 'cancelled' ? 'Cancelled' : activity.status === 'completed' ? 'Completed' : activity.status} />
+                        )}
                       </div>
                       <small>{formatDate(activity.starts_at, true)} · {formatDuration(activity.duration_minutes)}{activity.venue ? ` · ${activity.venue}` : ''}</small>
                       {activity.result_notes && <p>{activity.result_notes}</p>}

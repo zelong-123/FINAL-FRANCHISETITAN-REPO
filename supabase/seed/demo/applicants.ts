@@ -196,7 +196,7 @@ export async function writePeople(ctx: PeopleContext) {
     const part: Row = { id: await ids.next('schedule_session_participants'), session_id: sess.id, applicant_id: a.id, attendance_status: 'scheduled', activity_schedule_id: id, created_at: scheduledOn, updated_at: scheduledOn };
     await event(a, 'schedule_created', scheduledOn, sales, `${label} scheduled for ${slot[0]} ${slot[1]}.`, { step: type, new: { activity_id: id, starts_at: start, session_id: sess.id } });
     if (outcome === 'cancelled') {
-      const when = later(scheduledOn, 60 * 26);
+      const when = later(scheduledOn, 150); // same office day, before the session date
       Object.assign(row, { status: 'cancelled', cancelled_at: when, live_key: null, updated_at: when });
       Object.assign(part, { attendance_status: 'cancelled', updated_at: when });
       await event(a, 'schedule_cancelled', when, admin, 'The applicant asked to move the session to a later date.', { step: type });
@@ -386,7 +386,15 @@ export async function writePeople(ctx: PeopleContext) {
     // Cancelled sessions before the real one (three in November, two in October).
     const cancelledBefore: Record<string, string> = { 'Diana Rivera': '2026-11-12', 'Gilbert Aguilar': '2026-11-18', 'Kevin Torres': '2026-11-19', 'Ursula Diaz': '2026-10-19', 'Tristan Lim': '2026-10-28' };
     const fullName = `${p.first} ${p.last}`;
-    if (cancelledBefore[fullName]) await activity(p, a, 'orientation', [cancelledBefore[fullName], '09:00', 120], 'cancelled', scheduledOn(cancelledBefore[fullName], 4));
+    if (cancelledBefore[fullName]) {
+      // The cancelled session is always booked after Set Schedule and cancelled before its own date,
+      // so it reads as Cancelled (never as a missed session), and it comes before the real session.
+      const schedDay = new Date(schedAt.getTime() + 8 * 3_600_000).toISOString().slice(0, 10);
+      let day = cancelledBefore[fullName];
+      const earliest = nextWeekday(addDays(schedDay, 3));
+      if (day < earliest) day = earliest;
+      if (day < otSlot[0]) await activity(p, a, 'orientation', [day, '09:00', 120], 'cancelled', later(schedAt, 45));
+    }
 
     if (['sched_none', 'overdue_noschedule', 'stalled', 'on_hold'].includes(sc)) {
       if (sc === 'on_hold') {
