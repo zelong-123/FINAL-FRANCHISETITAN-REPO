@@ -523,14 +523,17 @@ export function TopBranchesBars({ rows, metric }) {
   const dataKey = metric === 'sales' ? 'sales' : 'quantity';
   const unit = metric === 'sales' ? 'transactions' : 'units';
 
+  // About 52 px per branch, so every name has room for two lines without touching the next one.
+  const height = Math.max(220, data.length * 52 + 40);
+
   return (
     <div className="chart-surface">
-      <ChartFrame height={300} empty={empty}>
+      <ChartFrame height={height} empty={empty}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ top: 8, right: 58, left: 8, bottom: 4 }} barCategoryGap={10}>
+          <BarChart data={data} layout="vertical" margin={{ top: 8, right: 64, left: 8, bottom: 4 }} barCategoryGap={18}>
             <CartesianGrid horizontal={false} stroke={GRID} />
             <XAxis type="number" allowDecimals={false} tick={{ fill: AXIS, fontSize: 10.5, fontWeight: 700 }} axisLine={{ stroke: GRID }} tickLine={false} />
-            <YAxis type="category" dataKey="name" tick={{ fill: '#c9d1e4', fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} width={116} />
+            <YAxis type="category" dataKey="name" tick={{ fill: '#c9d1e4', fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} width={190} interval={0} />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(102, 135, 255, .09)' }} />
             <Bar dataKey={dataKey} name={metric === 'sales' ? 'Production transactions' : 'Units produced'} radius={[0, 7, 7, 0]} maxBarSize={24}>
               {data.map((row, index) => (

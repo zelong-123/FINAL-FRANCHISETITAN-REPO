@@ -475,13 +475,26 @@ function ProductionTrendPanel({ rows, period, onPeriodChange, loading, error }) 
 
 function TopBranchesPanel({ rows, loading, error }) {
   const [metric, setMetric] = useState('quantity');
+  // Compare branches of one brand. "All brands" keeps the overall top 8.
+  const [brand, setBrand] = useState('');
+  const brands = [...new Set((rows || []).map((row) => row.brand).filter(Boolean))].sort();
+  const shown = brand ? (rows || []).filter((row) => row.brand === brand) : (rows || []).slice(0, 8);
   return (
     <PanelShell
       chart
       title="Top performing branches"
       subtitle={metric === 'quantity' ? 'Ranked by units produced' : 'Ranked by number of production transactions'}
       actions={(
-        <div className="flex flex-wrap gap-[6px] mb-[14px]" style={{ margin: 0 }}>
+        <div className="flex flex-wrap items-center gap-[6px] mb-[14px]" style={{ margin: 0 }}>
+          <select
+            aria-label="Brand"
+            value={brand}
+            onChange={(event) => setBrand(event.target.value)}
+            className="min-h-[34px] p-[0_12px] border border-line rounded-[999px] [background:var(--surface-subtle)] text-text-secondary text-[11px] font-[720] cursor-pointer"
+          >
+            <option value="">All brands</option>
+            {brands.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
           <button type="button" className={`tab min-h-[34px] p-[7px_14px] border border-line rounded-[999px] [background:var(--surface-subtle)] text-text-secondary text-[9px] font-[720] cursor-pointer [transition:.16s_ease] hover:text-text hover:border-line-strong hover:[background:var(--hover)] later:[&.active]:text-accent-text later:[&.active]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] later:[&.active]:[background:var(--active)] ${metric === 'quantity' ? ' active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''}`} onClick={() => setMetric('quantity')}>
             By volume (quantity)
           </button>
@@ -492,7 +505,7 @@ function TopBranchesPanel({ rows, loading, error }) {
       )}
     >
       <PanelBody loading={loading} error={error}>
-        <TopBranchesBars rows={rows} metric={metric} />
+        <TopBranchesBars rows={shown} metric={metric} />
       </PanelBody>
     </PanelShell>
   );
@@ -801,7 +814,7 @@ function DashboardBody({ role, panels }) {
   const needsFranchise = panels.some((panel) => FRANCHISE_PANELS.includes(panel));
   const franchising = useRemote(
     async () => (needsFranchise
-      ? (await api.get('/analytics/franchising-dashboard', { period, ...rangeQuery })).data
+      ? (await api.get('/analytics/franchising-dashboard', { period, limit: 25, ...rangeQuery })).data
       : null),
     [needsFranchise, period, rangeQuery.from, rangeQuery.to, rangeQuery.include_archived],
   );

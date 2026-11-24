@@ -77,14 +77,6 @@ function addDays(isoDate, days) {
   return date.toISOString().slice(0, 10);
 }
 const mondayOf = (iso) => addDays(iso, -((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7));
-/** The current Monday–Sunday week and the 11 before it (oldest first), for the exclusions panel. */
-function recentWeeks(today) {
-  const current = mondayOf(today || new Date().toISOString().slice(0, 10));
-  return Array.from({ length: 12 }, (_, i) => {
-    const start = addDays(current, -7 * (11 - i));
-    return { week_start: start, week_end: addDays(start, 6) };
-  });
-}
 function shortWeek(week) {
   const start = week?.week_start || '';
   const end = week?.week_end || '';
@@ -236,8 +228,8 @@ function UsageChart({ detail, predictive }) {
           <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }} />
           <Bar dataKey="gap" name="Left out (closed, excluded, no records)" fill="url(#usage-gap-hatch)" isAnimationActive={false} legendType="square" />
           <Bar dataKey="usage" name="Actual daily usage" fill="url(#usage-bar-grad)" isAnimationActive={false} />
-          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={8} strokeOpacity={0.18} dot={false} legendType="none" connectNulls isAnimationActive={false} />
-          <Line dataKey="avg7" name="7-day average" stroke="var(--accent)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
+          <Line dataKey="avg7" name="7-day rolling average (past usage)" stroke="var(--accent)" strokeWidth={8} strokeOpacity={0.18} dot={false} legendType="none" connectNulls isAnimationActive={false} />
+          <Line dataKey="avg7" name="7-day rolling average (past usage)" stroke="var(--accent)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
           {predictive && item.ready && <Line dataKey="forecast" name={methodLabel} stroke="var(--warning-text)" strokeWidth={2.5} strokeDasharray="6 4" dot={false} isAnimationActive={false} />}
           <ReferenceLine x={0} stroke="var(--accent)" strokeOpacity={0.6} strokeDasharray="2 3" label={<TodayTag text={todayText} />} />
         </ComposedChart>
@@ -341,9 +333,7 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
               {!item?.ready ? (
                 <p className="m-0 text-text-secondary text-[13px]">{item?.not_ready_reason}. No numbers are estimated until then; nothing is guessed.</p>
               ) : (
-                <ol className="m-0 pl-[20px] grid gap-[6px] text-text-secondary text-[13px] leading-[1.55] [&_b]:text-text">
-                  {(detail?.explanation?.steps || []).map((step) => <li key={step.title}><b>{step.title}.</b> {step.text}</li>)}
-                </ol>
+                <WorkedOutTable steps={detail?.explanation?.steps || []} />
               )}
               {item?.ready && <p className="m-[8px_0_0] text-muted text-[12px]">Forecast error (one-step-ahead RMSE over {formatNumber(item.error_points)} days): {plainNumber(item.forecast_error, item)} {item.unit}.</p>}
             </section>
@@ -461,6 +451,74 @@ function SettingsDialog({ editable, onClose, onSaved }) {
         </form>
       )}
     </Modal>
+  );
+}
+
+/**
+ * "How this was worked out", readable at a glance: each step shows its CATEGORY and its result;
+ * the computation behind a result opens with the info button, so nobody has to read the maths
+ * to get the answer.
+ */
+function splitStep(text) {
+  const clean = String(text || '').trim();
+  const pick = (mark) => {
+    const at = clean.lastIndexOf(mark);
+    return at >= 0 ? clean.slice(at + mark.length).trim().replace(/\.$/, '') : null;
+  };
+  const result = pick('→') ?? pick('=');
+  if (result) return { result, detail: clean };
+  const stop = clean.indexOf('. ');
+  if (stop > 0) return { result: clean.slice(0, stop), detail: clean.slice(stop + 2) };
+  return { result: clean.replace(/\.$/, ''), detail: null };
+}
+
+function WorkedOutTable({ steps }) {
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (title) => setOpen((current) => {
+    const next = new Set(current);
+    if (next.has(title)) next.delete(title); else next.add(title);
+    return next;
+  });
+  return (
+    <div className="overflow-x-auto rounded-[12px] border border-line">
+      <table className="w-full border-collapse text-[14px]">
+        <tbody>
+          {steps.map((step) => {
+            const { result, detail } = splitStep(step.text);
+            const isOpen = open.has(step.title);
+            return (
+              <React.Fragment key={step.title}>
+                <tr className="border-t border-line first:border-t-0">
+                  <th scope="row" className="w-[34%] p-[12px_14px] text-left align-top text-text-secondary text-[12.5px] font-[800] tracking-[.08em] uppercase">{step.title}</th>
+                  <td className="p-[12px_14px] align-top text-[#f5c451] text-[15px] font-[800] leading-[1.45]">{result}</td>
+                  <td className="w-[44px] p-[8px_10px] align-top text-right">
+                    {detail && (
+                      <button
+                        type="button"
+                        aria-expanded={isOpen}
+                        aria-label={`${isOpen ? 'Hide' : 'Show'} how ${step.title} was computed`}
+                        title={isOpen ? 'Hide the computation' : 'Show how this was computed'}
+                        onClick={() => toggle(step.title)}
+                        className={`inline-grid place-items-center w-[28px] h-[28px] rounded-full border text-[13px] font-[800] cursor-pointer ${isOpen ? 'border-[#f5c451] text-[#f5c451] [background:rgba(245,_196,_81,_.12)]' : 'border-line text-text-secondary bg-transparent hover:text-text'}`}
+                      >
+                        i
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {detail && isOpen && (
+                  <tr>
+                    <td colSpan={3} className="p-[0_14px_12px] text-text text-[14px] font-[600] leading-[1.6]">
+                      <span className="block p-[10px_12px] rounded-[8px] border-l-[3px] border-[#f5c451] [background:var(--surface-subtle)]">{detail}</span>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1023,26 +1081,6 @@ export default function EstimatedRequirement({ embedded = false }) {
             />
           )}
 
-          <div className="flex flex-wrap items-stretch gap-4 [&>section]:flex-1 [&>section]:basis-0 [&>section]:min-w-[300px] [&>section]:mb-0 [&>section]:h-auto">
-          {canCreateClosure && (
-            <ClosuresPanel
-              locationId={location.id}
-              canCreate={canCreateClosure}
-              canUndo={canCreateClosure}
-              closures={closuresRemote.data?.data?.closures || []}
-              onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
-            />
-          )}
-
-          {canExclude && (
-            <ExclusionsPanel
-              locationId={location.id}
-              weeks={recentWeeks(payload?.today)}
-              exclusions={exclusionsRemote.data?.data?.exclusions || []}
-              onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
-            />
-          )}
-          </div>
         </>
       )}
 

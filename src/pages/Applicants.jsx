@@ -1383,6 +1383,8 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
   const [src, setSrc] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [rotate, setRotate] = useState(0);
+  // The frame follows the picture: portrait pictures get a tall, narrow frame; landscape a wide one.
+  const [portrait, setPortrait] = useState(false);
   useEffect(() => {
     if (!open || !doc) return undefined;
     let url = null;
@@ -1412,9 +1414,13 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
   }, [open, onClose]);
   if (!open || !doc) return null;
   const isPdf = (doc.mime_type || '').includes('pdf');
-  return (
-    <div className="fixed inset-0 z-[80] grid place-items-center p-[20px] [background:rgba(4,6,12,0.82)] [animation:overlay-in_.2s_ease-out_both]" onClick={onClose}>
-      <div className="relative w-[min(1000px,_100%)] h-[min(86dvh,_100%)] grid grid-rows-[auto_1fr] gap-[10px] p-[12px] border border-[#2a3041] rounded-[13px] [background:#0c111d] [animation:modal-pop_.28s_ease-out_both] motion-reduce:[animation:none]" onClick={(e) => e.stopPropagation()}>
+  // Sideways rotation turns a portrait picture into a landscape one.
+  const tall = isPdf || (portrait !== (rotate % 180 !== 0));
+  // Rendered into <body>: inside the applicant modal (which animates with a transform) a fixed
+  // overlay would be placed relative to the modal, not the screen, and show off-center.
+  return createPortal(
+    <div className="fixed inset-0 z-[2147483600] grid place-items-center p-[20px] [background:rgba(4,6,12,0.82)] [animation:overlay-in_.2s_ease-out_both]" onClick={onClose}>
+      <div className={`relative ${tall ? 'w-[min(760px,_100%)] h-[min(92dvh,_100%)]' : 'w-[min(1100px,_100%)] h-[min(80dvh,_100%)]'} grid grid-rows-[auto_1fr] gap-[10px] p-[12px] border border-[#2a3041] rounded-[13px] [background:#0c111d] [animation:modal-pop_.28s_ease-out_both] motion-reduce:[animation:none]`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <span className="truncate text-[#edf0fa] text-[14px]">{doc.original_name}</span>
           <span className="flex items-center gap-2">
@@ -1428,10 +1434,11 @@ function RequirementPreview({ open, applicantId, requirementKey, doc, onClose, o
         </div>
         <div className="min-h-0 overflow-auto grid place-items-center">
           {!src && <span className="text-muted">Loading…</span>}
-          {src && (isPdf ? <iframe title={doc.original_name} src={src} className="w-full h-full border-0" /> : <img alt={doc.original_name} src={src} className="max-w-full max-h-full transition-transform" style={{ transform: `scale(${zoom}) rotate(${rotate}deg)` }} />)}
+          {src && (isPdf ? <iframe title={doc.original_name} src={src} className="w-full h-full border-0" /> : <img alt={doc.original_name} src={src} className="max-w-full max-h-full object-contain transition-transform" onLoad={(e) => setPortrait(e.currentTarget.naturalHeight > e.currentTarget.naturalWidth)} style={{ transform: `scale(${zoom}) rotate(${rotate}deg)` }} />)}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1994,7 +2001,7 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
               {newFlow ? 'Verify' : 'Mark Attended'}
             </button>
           )}
-          <button type="button" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}>Return to Sales</button>
+          <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[38px] p-[0_14px] border border-[rgba(251,_191,_36,_.45)] rounded-[10px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[13px] font-[700] cursor-pointer transition-colors hover:[background:rgba(251,_191,_36,_.16)] disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy} onClick={() => { setReturning(true); setReason(''); }}><FaRotateLeft aria-hidden="true" /> Return to Sales</button>
           {verifyBlocked && (
             <small className="text-[#fbbf24]" role="status">
               {newFlow && ownSubmission ? 'You encoded this submission: another Admin must verify it.' : `Open every file before ${newFlow ? 'Verify' : 'Mark Attended'} (${current.length - unviewed.length} of ${current.length} viewed).`}
@@ -2004,10 +2011,10 @@ function ActivitySubmission({ activity, isAdminRole, busy, onAttended, onReturn,
       )}
       {canReview && returning && (
         <span className="grid gap-2">
-          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
-          <span className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setReturning(false)}>Cancel</button>
-            <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(activity, reason.trim()); setReturning(false); }}>Return with reason</button>
+          <textarea rows={3} className="w-full p-[10px_12px] border border-[#2b344c] rounded-[10px] [background:rgba(255,_255,_255,_.03)] text-[#e6ebf5] text-[13px] resize-y" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What Sales must correct (at least 5 characters)" />
+          <span className="flex gap-2 justify-end">
+            <button type="button" className="inline-flex items-center justify-center min-h-[38px] p-[0_14px] border border-[#2b344c] rounded-[10px] bg-transparent text-[#c7cfe2] text-[13px] font-[700] cursor-pointer hover:[background:rgba(255,_255,_255,_.04)] disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy} onClick={() => setReturning(false)}>Cancel</button>
+            <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[38px] p-[0_14px] border border-[rgba(251,_191,_36,_.45)] rounded-[10px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[13px] font-[700] cursor-pointer transition-colors hover:[background:rgba(251,_191,_36,_.16)] disabled:opacity-40 disabled:cursor-not-allowed" disabled={busy || reason.trim().length < 5} onClick={() => { onReturn(activity, reason.trim()); setReturning(false); }}><FaRotateLeft aria-hidden="true" /> Return with reason</button>
           </span>
         </span>
       )}
@@ -4666,8 +4673,8 @@ export default function Applicants() {
                     {/* Approval itself lives in the footer (double confirmation).
                         Revise stays: it is still used to send the applicant back
                         to an earlier stage for corrections. */}
-                    <button type="button" disabled={acting} onClick={() => setReviseForm({ stage: 'scheduled', remarks: '' })}>
-                      Revise
+                    <button type="button" className="inline-flex items-center justify-center gap-[6px] min-h-[38px] p-[0_14px] border border-[rgba(251,_191,_36,_.45)] rounded-[10px] [background:rgba(251,_191,_36,_.08)] text-[#fbbf24] text-[13px] font-[700] cursor-pointer transition-colors hover:[background:rgba(251,_191,_36,_.16)] disabled:opacity-40 disabled:cursor-not-allowed" disabled={acting} onClick={() => setReviseForm({ stage: 'scheduled', remarks: '' })}>
+                      <FaRotateLeft aria-hidden="true" /> Revise
                     </button>
                   </div>
                 )}
@@ -4869,15 +4876,16 @@ export default function Applicants() {
             <fieldset className="m-0 p-[0_22px] border-0 grid gap-2 [&_legend]:p-[0_0_8px] [&_legend]:text-[#9aa6c4] [&_legend]:text-[10.5px] [&_legend]:tracking-[.05em] [&_legend]:uppercase">
               <legend>Which stage should be revisited?</legend>
               {REVISE_STAGES.map((item) => (
-                <label key={item.key} className={`flex gap-[10px] items-start p-[9px_11px] border border-[#303749] rounded-[9px] [background:#0c111d] cursor-pointer [&.selected]:border-[#8175ff] [&.selected]:[background:rgba(129,_117,_255,_.12)] [&_input]:mt-[2px] [&_input]:[accent-color:#8175ff] [&_strong]:block later:[&_strong]:text-[#edf0fa] later-2:[&_strong]:text-[12px] later-4:[&_small]:text-[#9ba5bd] later-2:[&_small]:text-[10.5px] ${reviseForm.stage === item.key ? ' selected' : ''}`}>
+                <label key={item.key} className={`flex! flex-row! gap-[12px] items-center! p-[12px_14px] transition-colors hover:border-[#4a4f86] border border-[#303749] rounded-[9px] [background:#0c111d] cursor-pointer [&.selected]:border-[#8175ff] [&.selected]:[background:rgba(129,_117,_255,_.12)] [&_input]:mt-[2px] [&_input]:[accent-color:#8175ff] [&_strong]:block later:[&_strong]:text-[#edf0fa] later-2:[&_strong]:text-[12px] later-4:[&_small]:text-[#9ba5bd] later-2:[&_small]:text-[10.5px] ${reviseForm.stage === item.key ? ' selected' : ''}`}>
                   <input
+                    className="w-[16px]! h-[16px]! min-w-[16px] p-0! m-0! flex-none cursor-pointer"
                     type="radio"
                     name="ap-revise-stage"
                     value={item.key}
                     checked={reviseForm.stage === item.key}
                     onChange={() => setReviseForm({ ...reviseForm, stage: item.key })}
                   />
-                  <span>
+                  <span className="grid gap-[2px] min-w-0">
                     <strong>{item.label}</strong>
                     <small>{item.hint}</small>
                   </span>
@@ -4885,24 +4893,24 @@ export default function Applicants() {
               ))}
             </fieldset>
             <dl className="m-0 p-[6px_22px] [.ap-pay-split_&]:p-0 max-[481px]:later:p-[4px_16px]">
-              <div className="grid grid-cols-[104px_minmax(0,_1fr)] items-center gap-3 p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1">
+              <div className="grid grid-cols-1! items-stretch gap-[6px] p-[12px_0] [border-bottom:1px_dotted_#26314a] last:border-b-0 [&_dt]:m-0 later:[&_dt]:text-[#8f9bbd] later:[&_dt]:text-[11px] [&_dt]:font-[600] [&_dt_label]:m-0 [&_dt_label]:text-[#8f9bbd] [&_dt_label]:text-[11px] [&_dt_label]:font-[600] [&_dd]:m-0 [&_dd]:min-w-0 later:[&_dd]:text-[#edf0fa] later:[&_dd]:text-[13px] [&_dd]:[overflow-wrap:anywhere] [&_input]:[box-sizing:border-box] [&_input]:w-full [&_input]:min-h-[34px] later-2:[&_input]:p-[6px_0] later-2:[&_input]:border-0 later-2:[&_input]:border-b later-2:[&_input]:border-b-[#34405c] later:[&_input]:rounded-[0] [&_input]:[outline:none] later-2:[&_input]:[background:transparent] later-2:[&_input]:text-[#edf0fa] [&_input]:[color-scheme:dark] [&_input]:[font-family:inherit] [&_input]:[font-weight:inherit] [&_input]:[font-style:inherit] [&_input]:[line-height:inherit] later-2:[&_input]:text-[13px] later-2:[&_input:focus]:border-b-[#8175ff] later:[&_input:focus]:[box-shadow:0_1px_0_0_#8175ff] max-[481px]:later:grid-cols-[1fr] max-[481px]:later-2:gap-1">
                 <dt><label htmlFor="ap-revise-remarks">Remarks</label></dt>
                 <dd>
                   <textarea
                     id="ap-revise-remarks"
                     autoFocus
-                    rows={3}
+                    rows={4}
+                    className="w-full min-h-[96px] p-[10px_12px] border border-[#303749] rounded-[10px] [background:#0c111d] text-[#e6ebf5] text-[13px] leading-[1.5] resize-y focus:outline-none focus:border-[#8175ff]"
                     value={reviseForm.remarks}
-                    placeholder="What needs to be corrected"
+                    placeholder="What needs to be corrected (required)"
                     onChange={(e) => setReviseForm({ ...reviseForm, remarks: e.target.value })}
                   />
                 </dd>
               </div>
             </dl>
             <p className="m-0 p-[4px_22px_16px] text-[#7f8aa8] text-[10.5px] leading-[1.5] max-[481px]:later:p-[4px_16px_14px]">Remarks are required; every earlier record stays in place.</p>
-            <footer className="ap-subform-actions [&_.spacer]:flex-1 flex items-center gap-2 later:mt-5">
-              <span className="flex-1" />
-              <button type="button" onClick={() => setReviseForm(null)}>Cancel</button>
+            <footer className="ap-subform-actions [&_.spacer]:flex-1 flex items-center justify-end gap-2 sticky bottom-0 z-[1] p-[14px_22px] [background:#0f1626]!">
+              <button type="button" className="inline-flex items-center justify-center min-h-[40px] p-[0_16px] border border-[#2b344c] rounded-[10px] bg-transparent text-[#c7cfe2] text-[13px] font-[700] cursor-pointer hover:[background:rgba(255,_255,_255,_.05)] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => setReviseForm(null)}>Cancel</button>
               <button
                 type="button"
                 className="primary-button [-webkit-tap-highlight-color:transparent] min-h-[42px] inline-flex items-center justify-center gap-2 p-[0_16px] border border-transparent rounded-[12px] text-[#fff] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [box-shadow:0_12px_28px_color-mix(in_srgb,_var(--accent)_20%,_transparent)] text-[12px] font-[760] tracking-[.01em] [transition:transform_.18s_ease,_box-shadow_.18s_ease,_filter_.18s_ease] [&:hover:not(:disabled)]:[transform:translateY(-2px)] [&:hover:not(:disabled)]:[box-shadow:0_17px_34px_color-mix(in_srgb,_var(--accent)_27%,_transparent)] [&:hover:not(:disabled)]:[filter:saturate(1.08)] later:[&:active:not(:disabled)]:[transform:translateY(0)]"
