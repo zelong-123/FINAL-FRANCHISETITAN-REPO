@@ -16,7 +16,9 @@
     "users:create": "node --env-file=.env scripts/create-auth-users.mjs",
     "test:lib": "node --test src/lib/*.test.mjs",
     "deploy:api": "node --no-warnings tools/deploy-api.mjs",
-    "check:imports": "node tools/check-import-case.mjs"
+    "check:imports": "node tools/check-import-case.mjs",
+    "demo:seed": "node --no-warnings supabase/seed/defense-demo.mjs",
+    "demo:today": "node --no-warnings supabase/seed/defense-demo.mjs --today"
   },
   "dependencies": {
     "@fullcalendar/core": "6.1.15",
