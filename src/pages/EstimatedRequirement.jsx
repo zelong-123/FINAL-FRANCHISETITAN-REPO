@@ -9,6 +9,8 @@ import {
   FaCalendarDays,
   FaCalendarXmark,
   FaChartLine,
+  FaChevronLeft,
+  FaChevronRight,
   FaCircleInfo,
   FaClockRotateLeft,
   FaGear,
@@ -292,7 +294,7 @@ const PATTERN_TEXT = { smooth: 'smooth', erratic: 'erratic', intermittent: 'inte
  * The selected item's detail, directly under the table (no modal). It keeps showing the last content while
  * a new horizon or dips mode loads, and re-reads quietly when the page's live refresh fires.
  */
-function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclude, liveTick, panelRef, onClose, onChanged }) {
+function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclude, liveTick, panelRef, onClose, onChanged, nav = null }) {
   const remote = useRemote(
     () => api.get('/estimated-requirement/detail', { location_id: locationId || undefined, material_id: materialId, horizon, dips }),
     [locationId, materialId, horizon, dips],
@@ -307,6 +309,10 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
   const resolvedLocation = detail?.location?.id ?? locationId;
   const afterExclude = () => { void remote.reload({ silent: true }); onChanged?.(); };
   const title = item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Loading…';
+  // Switching items (row click, Previous, Next) keeps the old chart on screen while the new one loads:
+  // dim it and say so, so it is clear the page is working.
+  const switching = remote.loading && Boolean(detail) && item?.material_id !== materialId;
+  const NAV_BUTTON = 'inline-grid! place-items-center! w-[32px]! h-[32px]! min-h-0! p-0! border! border-line! rounded-[9px]! bg-transparent! text-text-secondary! cursor-pointer hover:text-text! hover:border-line-strong! disabled:opacity-35 disabled:cursor-not-allowed';
 
   return (
     <section
@@ -317,16 +323,33 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
     >
       <header className="flex items-start justify-between gap-3 mb-[6px]">
         <div className="flex flex-wrap items-center gap-[10px] min-w-0">
-          <h2 className="m-0 text-[17px] font-[700] text-text">{title}</h2>
+          {nav && (
+            <span className="inline-flex items-center gap-[6px]">
+              <button type="button" className={NAV_BUTTON} disabled={!nav.onPrev} onClick={nav.onPrev} aria-label="Previous item" title={nav.prevName ? `Previous: ${nav.prevName}` : 'Previous item'}>
+                <FaChevronLeft aria-hidden="true" className="w-[11px] h-[11px]" />
+              </button>
+              <button type="button" className={NAV_BUTTON} disabled={!nav.onNext} onClick={nav.onNext} aria-label="Next item" title={nav.nextName ? `Next: ${nav.nextName}` : 'Next item'}>
+                <FaChevronRight aria-hidden="true" className="w-[11px] h-[11px]" />
+              </button>
+              <span className="text-muted text-[12px] font-[600] tabular-nums">{nav.index + 1} of {nav.total}</span>
+            </span>
+          )}
+          <h2 className="m-0 text-[17px] font-[700] text-text">{switching ? nav?.currentName || 'Loading…' : title}</h2>
+          {switching && (
+            <span className="inline-flex items-center gap-[6px] text-[12px] font-[600] text-accent-text" role="status">
+              <span className="w-[13px] h-[13px] rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />
+              Loading…
+            </span>
+          )}
           {predictive && item?.ready && <span className={METHOD_TAG}>{item.method_label}</span>}
-          {item && <span className="text-[13px] text-text-secondary">On hand {quantity(item.on_hand, item)} · On order {quantity(item.on_order, item)}</span>}
+          {item && !switching && <span className="text-[13px] text-text-secondary">On hand {quantity(item.on_hand, item)} · On order {quantity(item.on_order, item)}</span>}
         </div>
         <button type="button" className="inline-grid place-items-center w-[34px] h-[34px] flex-none border border-transparent rounded-[10px] [background:transparent] text-text-secondary cursor-pointer hover:text-text hover:[background:var(--hover)] hover:border-line focus-visible:[outline:2px_solid_var(--accent)]" aria-label="Close the item detail" onClick={onClose}>
           <FaXmark aria-hidden="true" />
         </button>
       </header>
       {remote.loading && !detail ? <LoadingState label="Loading the daily history…" /> : remote.error && !detail ? <Notice type="error" inline>{remote.error}</Notice> : (
-        <>
+        <div className={`transition-opacity duration-150 ${switching ? 'opacity-40 pointer-events-none select-none' : ''}`} aria-busy={switching}>
           <p className="m-[0_0_8px] text-muted text-[12px]">{detail?.freshness}</p>
           {predictive && item?.ready && item.days_of_cover !== null && (
             <p className="m-[0_0_8px] text-[13px] text-text-secondary">Days of cover {formatNumber(item.days_of_cover, 1)} (incl. on order) · {formatNumber(item.days_on_hand, 1)} on hand only (on order may not have arrived yet).</p>
@@ -403,7 +426,7 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
             )}
           </section>
           <p className="text-muted text-[12px] m-[14px_0_0]">Statistical, rule-based estimate from recorded usage (no AI). {NOTE}</p>
-        </>
+        </div>
       )}
     </section>
   );
@@ -1099,6 +1122,24 @@ export default function EstimatedRequirement({ embedded = false }) {
               panelRef={panelRef}
               onClose={() => setSelectedId(null)}
               onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
+              nav={(() => {
+                const index = sortedItems.findIndex((entry) => entry.material_id === selected);
+                if (index < 0) return null;
+                const go = (to) => {
+                  setSelectedId(sortedItems[to].material_id);
+                  setPage(Math.floor(to / TABLE_PAGE_SIZE) + 1);
+                };
+                const label = (entry) => (entry ? `${entry.name}${entry.variant ? ` · ${entry.variant}` : ''}` : null);
+                return {
+                  index,
+                  total: sortedItems.length,
+                  currentName: label(sortedItems[index]),
+                  prevName: label(sortedItems[index - 1]),
+                  nextName: label(sortedItems[index + 1]),
+                  onPrev: index > 0 ? () => go(index - 1) : null,
+                  onNext: index < sortedItems.length - 1 ? () => go(index + 1) : null,
+                };
+              })()}
             />
           )}
 
