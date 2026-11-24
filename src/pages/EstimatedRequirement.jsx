@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowDownWideShort,
+  FaArrowLeft,
+  FaArrowRight,
   FaArrowTrendUp,
   FaArrowUpWideShort,
   FaBoxesStacked,
   FaCalendarDays,
   FaCalendarXmark,
   FaChartLine,
+  FaChevronLeft,
+  FaChevronRight,
   FaCircleInfo,
   FaClockRotateLeft,
   FaGear,
@@ -259,11 +263,27 @@ function OneOffExclude({ locationId, item, day, onDone }) {
     }
   };
   return (
-    <form className="flex flex-wrap gap-[6px] items-center min-w-[240px] [&_input]:flex-[1_1_160px] [&_input]:min-w-0" onSubmit={submit}>
-      <input type="text" value={reason} required minLength={3} maxLength={500} aria-label="Reason for excluding this week" onChange={(event) => setReason(event.target.value)} />
-      <button type="submit" className={PRIMARY} disabled={busy}>Exclude</button>
-      <button type="button" className={GHOST} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
-      {error && <small className="block mt-[6px] text-danger-text">{error}</small>}
+    <form className="grid gap-[8px] min-w-[300px] p-[12px] rounded-[12px] border border-line [background:var(--surface-subtle)]" onSubmit={submit}>
+      <label htmlFor={`exclude-reason-${day.date}`} className="text-text-secondary text-[11px] font-[700] tracking-[.06em] uppercase">
+        Reason for leaving out the week of {shortDate(mondayOf(day.date))}
+      </label>
+      <div className="flex flex-wrap gap-[8px] items-center">
+        <input
+          id={`exclude-reason-${day.date}`}
+          type="text"
+          value={reason}
+          required
+          minLength={3}
+          maxLength={500}
+          placeholder="e.g. One-off event, store closed early"
+          className="flex-[1_1_220px] min-w-0 h-[38px] p-[0_12px]! border! border-line-strong! rounded-[10px]! [background:var(--panel)]! text-text! text-[13px]! focus:outline-none focus:border-[color:var(--accent)]! focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_18%,_transparent)]"
+          onChange={(event) => setReason(event.target.value)}
+        />
+        <button type="submit" className={`${PRIMARY} min-h-[38px]! rounded-[10px]!`} disabled={busy || reason.trim().length < 3}>{busy ? 'Excluding…' : 'Exclude'}</button>
+        <button type="button" className={`${GHOST} min-h-[38px]!`} disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      <small className="text-muted text-[11.5px] leading-[1.5]">The whole week (Mon–Sun) is left out of this item's estimate. You can restore it later.</small>
+      {error && <small className="block text-danger-text">{error}</small>}
     </form>
   );
 }
@@ -274,7 +294,7 @@ const PATTERN_TEXT = { smooth: 'smooth', erratic: 'erratic', intermittent: 'inte
  * The selected item's detail, directly under the table (no modal). It keeps showing the last content while
  * a new horizon or dips mode loads, and re-reads quietly when the page's live refresh fires.
  */
-function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclude, liveTick, panelRef, onClose, onChanged }) {
+function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclude, liveTick, panelRef, onClose, onChanged, nav = null }) {
   const remote = useRemote(
     () => api.get('/estimated-requirement/detail', { location_id: locationId || undefined, material_id: materialId, horizon, dips }),
     [locationId, materialId, horizon, dips],
@@ -289,6 +309,10 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
   const resolvedLocation = detail?.location?.id ?? locationId;
   const afterExclude = () => { void remote.reload({ silent: true }); onChanged?.(); };
   const title = item ? `${item.name}${item.variant ? ` · ${item.variant}` : ''}` : 'Loading…';
+  // Switching items (row click, Previous, Next) keeps the old chart on screen while the new one loads:
+  // dim it and say so, so it is clear the page is working.
+  const switching = remote.loading && Boolean(detail) && item?.material_id !== materialId;
+  const NAV_BUTTON = 'inline-grid! place-items-center! w-[32px]! h-[32px]! min-h-0! p-0! border! border-line! rounded-[9px]! bg-transparent! text-text-secondary! cursor-pointer hover:text-text! hover:border-line-strong! disabled:opacity-35 disabled:cursor-not-allowed';
 
   return (
     <section
@@ -299,16 +323,33 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
     >
       <header className="flex items-start justify-between gap-3 mb-[6px]">
         <div className="flex flex-wrap items-center gap-[10px] min-w-0">
-          <h2 className="m-0 text-[17px] font-[700] text-text">{title}</h2>
+          {nav && (
+            <span className="inline-flex items-center gap-[6px]">
+              <button type="button" className={NAV_BUTTON} disabled={!nav.onPrev} onClick={nav.onPrev} aria-label="Previous item" title={nav.prevName ? `Previous: ${nav.prevName}` : 'Previous item'}>
+                <FaChevronLeft aria-hidden="true" className="w-[11px] h-[11px]" />
+              </button>
+              <button type="button" className={NAV_BUTTON} disabled={!nav.onNext} onClick={nav.onNext} aria-label="Next item" title={nav.nextName ? `Next: ${nav.nextName}` : 'Next item'}>
+                <FaChevronRight aria-hidden="true" className="w-[11px] h-[11px]" />
+              </button>
+              <span className="text-muted text-[12px] font-[600] tabular-nums">{nav.index + 1} of {nav.total}</span>
+            </span>
+          )}
+          <h2 className="m-0 text-[17px] font-[700] text-text">{switching ? nav?.currentName || 'Loading…' : title}</h2>
+          {switching && (
+            <span className="inline-flex items-center gap-[6px] text-[12px] font-[600] text-accent-text" role="status">
+              <span className="w-[13px] h-[13px] rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />
+              Loading…
+            </span>
+          )}
           {predictive && item?.ready && <span className={METHOD_TAG}>{item.method_label}</span>}
-          {item && <span className="text-[13px] text-text-secondary">On hand {quantity(item.on_hand, item)} · On order {quantity(item.on_order, item)}</span>}
+          {item && !switching && <span className="text-[13px] text-text-secondary">On hand {quantity(item.on_hand, item)} · On order {quantity(item.on_order, item)}</span>}
         </div>
         <button type="button" className="inline-grid place-items-center w-[34px] h-[34px] flex-none border border-transparent rounded-[10px] [background:transparent] text-text-secondary cursor-pointer hover:text-text hover:[background:var(--hover)] hover:border-line focus-visible:[outline:2px_solid_var(--accent)]" aria-label="Close the item detail" onClick={onClose}>
           <FaXmark aria-hidden="true" />
         </button>
       </header>
       {remote.loading && !detail ? <LoadingState label="Loading the daily history…" /> : remote.error && !detail ? <Notice type="error" inline>{remote.error}</Notice> : (
-        <>
+        <div className={`transition-opacity duration-150 ${switching ? 'opacity-40 pointer-events-none select-none' : ''}`} aria-busy={switching}>
           <p className="m-[0_0_8px] text-muted text-[12px]">{detail?.freshness}</p>
           {predictive && item?.ready && item.days_of_cover !== null && (
             <p className="m-[0_0_8px] text-[13px] text-text-secondary">Days of cover {formatNumber(item.days_of_cover, 1)} (incl. on order) · {formatNumber(item.days_on_hand, 1)} on hand only (on order may not have arrived yet).</p>
@@ -329,7 +370,7 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
             </section>
           ) : (
             <section className={SECTION}>
-              <h3>How this was worked out</h3>
+              <h3 className="text-[16px]! font-[800]! tracking-[.01em] m-[0_0_12px]!">How this was worked out</h3>
               {!item?.ready ? (
                 <p className="m-0 text-text-secondary text-[13px]">{item?.not_ready_reason}. No numbers are estimated until then; nothing is guessed.</p>
               ) : (
@@ -385,7 +426,7 @@ function ItemDetailPanel({ locationId, materialId, horizon, dips, view, canExclu
             )}
           </section>
           <p className="text-muted text-[12px] m-[14px_0_0]">Statistical, rule-based estimate from recorded usage (no AI). {NOTE}</p>
-        </>
+        </div>
       )}
     </section>
   );
@@ -488,10 +529,10 @@ function WorkedOutTable({ steps }) {
             const isOpen = open.has(step.title);
             return (
               <React.Fragment key={step.title}>
-                <tr className="border-t border-line first:border-t-0">
-                  <th scope="row" className="w-[34%] p-[12px_14px] text-left align-top text-text-secondary text-[12.5px] font-[800] tracking-[.08em] uppercase">{step.title}</th>
-                  <td className="p-[12px_14px] align-top text-[#f5c451] text-[15px] font-[800] leading-[1.45]">{result}</td>
-                  <td className="w-[44px] p-[8px_10px] align-top text-right">
+                <tr className={`border-t border-line first:border-t-0 ${isOpen ? '[background:rgba(245,_196,_81,_.04)]' : ''}`}>
+                  <th scope="row" className="w-[34%] p-[11px_14px] text-left align-middle text-text-secondary text-[11.5px] font-[700] tracking-[.08em] uppercase">{step.title}</th>
+                  <td className="p-[11px_14px] align-middle text-[#f5c451] text-[13.5px] font-[700] leading-[1.45]">{result}</td>
+                  <td className="w-[48px] p-[6px_10px] align-middle text-right">
                     {detail && (
                       <button
                         type="button"
@@ -499,17 +540,20 @@ function WorkedOutTable({ steps }) {
                         aria-label={`${isOpen ? 'Hide' : 'Show'} how ${step.title} was computed`}
                         title={isOpen ? 'Hide the computation' : 'Show how this was computed'}
                         onClick={() => toggle(step.title)}
-                        className={`inline-grid place-items-center w-[28px] h-[28px] rounded-full border text-[13px] font-[800] cursor-pointer ${isOpen ? 'border-[#f5c451] text-[#f5c451] [background:rgba(245,_196,_81,_.12)]' : 'border-line text-text-secondary bg-transparent hover:text-text'}`}
+                        className={`inline-grid! place-items-center! w-[30px]! h-[30px]! min-h-0! p-0! rounded-full! border! cursor-pointer transition-colors ${isOpen ? 'border-[#f5c451]! text-[#f5c451]! [background:rgba(245,_196,_81,_.14)]!' : 'border-line! text-text-secondary! bg-transparent! hover:text-[#f5c451]! hover:border-[#f5c451]!'}`}
                       >
-                        i
+                        {isOpen ? <FaArrowLeft aria-hidden="true" className="w-[12px] h-[12px]" /> : <FaArrowRight aria-hidden="true" className="w-[12px] h-[12px]" />}
                       </button>
                     )}
                   </td>
                 </tr>
                 {detail && isOpen && (
                   <tr>
-                    <td colSpan={3} className="p-[0_14px_12px] text-text text-[14px] font-[600] leading-[1.6]">
-                      <span className="block p-[10px_12px] rounded-[8px] border-l-[3px] border-[#f5c451] [background:var(--surface-subtle)]">{detail}</span>
+                    <td colSpan={3} className="p-[0_14px_14px]">
+                      <div className="grid gap-[6px] p-[12px_14px] rounded-[10px] border border-[rgba(245,_196,_81,_.28)] border-l-[3px] border-l-[#f5c451] [background:linear-gradient(90deg,_rgba(245,_196,_81,_.08),_rgba(245,_196,_81,_.02))]">
+                        <span className="text-[#c9a54a] text-[10.5px] font-[800] tracking-[.1em] uppercase">How it was computed</span>
+                        <span className="text-text text-[13.5px] font-[600] leading-[1.65] [font-variant-numeric:tabular-nums]">{detail}</span>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -1078,6 +1122,24 @@ export default function EstimatedRequirement({ embedded = false }) {
               panelRef={panelRef}
               onClose={() => setSelectedId(null)}
               onChanged={() => { reloadSide(); void remote.reload({ silent: true }); }}
+              nav={(() => {
+                const index = sortedItems.findIndex((entry) => entry.material_id === selected);
+                if (index < 0) return null;
+                const go = (to) => {
+                  setSelectedId(sortedItems[to].material_id);
+                  setPage(Math.floor(to / TABLE_PAGE_SIZE) + 1);
+                };
+                const label = (entry) => (entry ? `${entry.name}${entry.variant ? ` · ${entry.variant}` : ''}` : null);
+                return {
+                  index,
+                  total: sortedItems.length,
+                  currentName: label(sortedItems[index]),
+                  prevName: label(sortedItems[index - 1]),
+                  nextName: label(sortedItems[index + 1]),
+                  onPrev: index > 0 ? () => go(index - 1) : null,
+                  onNext: index < sortedItems.length - 1 ? () => go(index + 1) : null,
+                };
+              })()}
             />
           )}
 
