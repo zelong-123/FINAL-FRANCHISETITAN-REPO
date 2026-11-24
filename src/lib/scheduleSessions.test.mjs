@@ -1,12 +1,30 @@
 // Run with: node --test src/lib/scheduleSessions.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addMinutes, brandCheck, isBeforeScheduledDay, manilaIso, minutesBetween, sessionPayload, splitManila } from './scheduleSessions.js';
+import { addMinutes, brandCheck, isBeforeScheduledDay, manilaIso, minutesBetween, participantDidNotAttend, sessionDidNotAttend, sessionPayload, splitManila } from './scheduleSessions.js';
 
 test('Manila time round trip', () => {
   assert.equal(manilaIso('2026-11-16', '13:00'), '2026-11-16T13:00:00+08:00');
   assert.deepEqual(splitManila('2026-11-16T05:00:00Z'), { date: '2026-11-16', time: '13:00' });
   assert.equal(manilaIso('', '13:00'), '');
+});
+
+test('did not attend: No Show seats, and live sessions whose start already passed', () => {
+  const start = '2026-11-24T09:00:00+08:00';
+  const afterStart = new Date('2026-11-24T09:30:00+08:00').getTime();
+  const beforeStart = new Date('2026-11-24T08:30:00+08:00').getTime();
+  const seat = (status) => ({ attendance_status: status });
+  const session = (status, participants) => ({ status, start_at: start, active_participants: participants });
+
+  assert.equal(participantDidNotAttend(session('confirmed', []), seat('no_show'), afterStart), true);
+  assert.equal(participantDidNotAttend(session('confirmed', []), seat('scheduled'), afterStart), true);
+  assert.equal(participantDidNotAttend(session('confirmed', []), seat('scheduled'), beforeStart), false);
+  assert.equal(participantDidNotAttend(session('confirmed', []), seat('attended'), afterStart), false);
+  assert.equal(participantDidNotAttend(session('confirmed', []), seat('completed'), afterStart), false);
+  assert.equal(participantDidNotAttend(session('completed', []), seat('scheduled'), afterStart), false);
+  assert.equal(sessionDidNotAttend(session('confirmed', [seat('attended'), seat('scheduled')]), afterStart), true);
+  assert.equal(sessionDidNotAttend(session('confirmed', [seat('attended'), seat('completed')]), afterStart), false);
+  assert.equal(sessionDidNotAttend({ status: 'confirmed', start_at: start }, afterStart), false);
 });
 
 test('end time follows the default duration', () => {

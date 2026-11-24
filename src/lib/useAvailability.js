@@ -21,3 +21,18 @@ export default function useAvailability(applicantId, activityType, month, durati
     })).data;
   }, [applicantId, activityType, month, durationMinutes, ignoreActivityId, ignoreSessionId]);
 }
+
+/**
+ * The same calendar for the Master Schedule's session modal, which has no single applicant:
+ * the handler picked in the form (`handler_id`, may be null) and the selected activity only.
+ * `ignoreSessionId` is the session being edited, so its own day/time is not shown as occupied.
+ */
+export function useSessionAvailability(handlerId, activityType, month, durationMinutes, ignoreSessionId = null) {
+  return useRemote(async () => {
+    if (!activityType || !month) return null;
+    return (await api.get('/schedule-sessions/availability', {
+      handler_id: handlerId || undefined, activity_type: activityType, month, duration_minutes: durationMinutes || undefined,
+      ignore_session_id: ignoreSessionId || undefined,
+    })).data;
+  }, [handlerId, activityType, month, durationMinutes, ignoreSessionId]);
+}

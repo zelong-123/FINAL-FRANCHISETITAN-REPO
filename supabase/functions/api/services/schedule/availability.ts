@@ -22,11 +22,15 @@ const handlerOf = async (db: Db, applicant: Row) => (applicant.assigned_sales_us
   : null);
 
 /** The reason one start time cannot be used (null = free). Busy = this handler (any activity, with the gap) or the facility limit. */
-export function slotReason(type: string, handlerId: number | null, start: Date, duration: number, sessions: Row[], ignore: number[] = [], now = new Date()): string | null {
+export function slotReason(type: string, handlerId: number | null, start: Date, duration: number, sessions: Row[], ignore: number[] = [], now = new Date(), requireHandler = true): string | null {
   const end = addMinutes(start, duration);
   if (start.getTime() <= now.getTime()) return 'This time has passed.';
   if (end.getTime() > atLocal(localDay(start), scheduleWindow.closes).getTime()) return endByReason(duration, type);
-  if (handlerId === null) return 'This applicant has no assigned Sales user. Assign one before scheduling.';
+  // No handler picked in the session modal: sessions may be saved without one, so only the facility limit applies.
+  if (handlerId === null) {
+    if (requireHandler) return 'This applicant has no assigned Sales user. Assign one before scheduling.';
+    return facilityReason(type, start, end, sessions, ignore);
+  }
   const busy = handlerAvailabilityReasons({ handler_id: handlerId, start_at: start, end_at: end, activity_type: type }, sessions, ignore);
   if (busy.length) return busy[0];
   return facilityReason(type, start, end, sessions, ignore);
@@ -42,20 +46,27 @@ function weekdaysOf(month: string): string[] {
 }
 
 /** Hour slots 9:00 … 5:00 PM for one day, each with its reason when it cannot be used. */
-function slotsOf(day: string, type: string, handlerId: number | null, duration: number, sessions: Row[], ignore: number[], now: Date) {
+function slotsOf(day: string, type: string, handlerId: number | null, duration: number, sessions: Row[], ignore: number[], now: Date, requireHandler = true) {
   const slots: Row[] = [];
   for (let m = scheduleWindow.opens; m <= scheduleWindow.closes; m += HOUR) {
     const start = atLocal(day, m);
-    const reason = slotReason(type, handlerId, start, duration, sessions, ignore, now);
+    const reason = slotReason(type, handlerId, start, duration, sessions, ignore, now, requireHandler);
     slots.push({ time: `${String(m / HOUR).padStart(2, '0')}:00`, start_at: iso8601(start), available: reason === null, reason });
   }
   return slots;
 }
 
-export async function availability(db: Db, applicant: Row, type: string, month: string, durationMinutes: number | null, ignoreSessionId: number | null = null) {
+/**
+ * `applicant` drives the picker in the Schedule activity modal (handler = the applicant's Sales user).
+ * The Master Schedule's "Schedule a session" modal has no applicant: it passes `forcedHandlerId`
+ * (the handler picked in the form, may be null) and gets the same calendar for that handler.
+ */
+export async function availability(db: Db, applicant: Row | null, type: string, month: string, durationMinutes: number | null, ignoreSessionId: number | null = null, forcedHandlerId: number | null = null) {
   const limits = await loadScheduleLimits(db);
   const duration = durationMinutes && durationMinutes > 0 ? durationMinutes : DEFAULT_DURATION[type] ?? 120;
-  const handler = await handlerOf(db, applicant);
+  const applicantHandler = applicant ? await handlerOf(db, applicant) : null;
+  const handler = applicantHandler
+    ?? (forcedHandlerId ? (await db.query(`select id, full_name from users where id = $1`, [forcedHandlerId]))[0] ?? null : null);
   const handlerId = handler ? Number(handler.id) : null;
   const ignore = ignoreSessionId ? [ignoreSessionId] : [];
   const now = new Date();
@@ -69,20 +80,25 @@ export async function availability(db: Db, applicant: Row, type: string, month: 
   const sessions = await liveSessions(db, from, to);
 
   // Dots: this handler's sessions of the SAME activity (other Sales users are never shown).
+  // "No Show" seats of each session: the calendar dot turns red for a session where somebody did not attend.
   const own = handlerId === null ? [] : await db.query(
     `select s.id, s.start_at, s.end_at, s.status, s.max_capacity, s.activity_type,
-       (select count(*)::int from schedule_session_participants p where p.session_id = s.id and p.attendance_status not in ('cancelled', 'removed')) as taken
+       (select count(*)::int from schedule_session_participants p where p.session_id = s.id and p.attendance_status not in ('cancelled', 'removed')) as taken,
+       (select count(*)::int from schedule_session_participants p where p.session_id = s.id and p.attendance_status = 'no_show') as no_shows
      from schedule_sessions s where s.handler_id = $1 and s.activity_type = $2 and s.status in ('pending', 'confirmed', 'completed') and s.start_at >= $3 and s.start_at < $4
      order by s.start_at`,
     [handlerId, type, monthStart, monthEnd],
   );
 
+  // Applicant-based pickers need the assigned Sales user; the session modal may be saved with no handler.
+  const requireHandler = Boolean(applicant);
   const days = weekdaysOf(month).map((day) => {
-    const slots = slotsOf(day, type, handlerId, duration, sessions, ignore, now);
+    const slots = slotsOf(day, type, handlerId, duration, sessions, ignore, now, requireHandler);
     // The session being adjusted is ignored everywhere, including its dot: its own day stays free.
     const mine = own.filter((s) => !ignore.includes(Number(s.id)) && localDay(new Date(s.start_at)) === day).map((s) => ({
       id: s.id, start_at: iso8601(s.start_at), end_at: iso8601(s.end_at), status: s.status, time: formatRange(new Date(s.start_at), new Date(s.end_at)),
       occupancy: occupancyLabel(Number(s.taken), capacityOf(s)),
+      no_show_count: Number(s.no_shows ?? 0), did_not_attend: Number(s.no_shows ?? 0) > 0,
     }));
     const available = slots.some((s) => s.available);
     let reason: string | null = null;
@@ -102,16 +118,16 @@ export async function availability(db: Db, applicant: Row, type: string, month: 
     const day = localDay(dayStart);
     for (let m = scheduleWindow.opens; m + duration <= scheduleWindow.closes; m += HOUR) {
       const start = atLocal(day, m);
-      if (slotReason(type, handlerId, start, duration, sessions, ignore, now) === null) {
+      if (slotReason(type, handlerId, start, duration, sessions, ignore, now, requireHandler) === null) {
         next = { date: day, time: `${String(m / HOUR).padStart(2, '0')}:00`, start_at: iso8601(start), label: `${weekdayMonthDay(start)} · ${formatRange(start, addMinutes(start, duration))}` };
         break;
       }
     }
   }
 
-  const [brand] = applicant.preferred_brand_id ? await db.query(`select id, name from brands where id = $1`, [applicant.preferred_brand_id]) : [];
+  const [brand] = applicant?.preferred_brand_id ? await db.query(`select id, name from brands where id = $1`, [applicant.preferred_brand_id]) : [];
   return {
-    applicant_id: applicant.id, activity_type: type, activity_label: activityLabel(type), duration_minutes: duration,
+    applicant_id: applicant?.id ?? null, activity_type: type, activity_label: activityLabel(type), duration_minutes: duration,
     // Training is for the applicant's selected brand; Orientation/Tasting is any brand.
     applicant_brand: brand ? { id: Number(brand.id), name: brand.name } : null,
     handler: handler ? { id: handlerId, full_name: handler.full_name } : null,

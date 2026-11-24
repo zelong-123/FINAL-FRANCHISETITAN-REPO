@@ -5,7 +5,7 @@ import { api, firstValidationMessage } from '../../lib/api';
 import { LoadingState, Modal, Notice } from '../ApiUi';
 import RecordCode from '../RecordCode';
 import { formatDate, titleCase } from '../../lib/format';
-import { STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../../lib/scheduleSessions';
+import { STATUS_COLORS, activityLabel, formatSessionRange, participantDidNotAttend, statusLabel } from '../../lib/scheduleSessions';
 
 /*
  * Session details: participants, history and the actions the role may take.
@@ -59,6 +59,11 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
 
   const live = ['pending', 'confirmed'].includes(session?.status);
   const participants = session?.active_participants || [];
+  // Same "did not attend" rule as the Master Schedule card, so the red status here matches the
+  // red card: No Show seats, and live sessions whose start already passed with a seat never
+  // completed. Set Again / Adjust resets the seat, so the red status clears on its own.
+  const didNotAttend = (participant) => participantDidNotAttend(session, participant);
+  const didNotAttendCount = participants.filter(didNotAttend).length;
 
   const toggleMerge = async () => {
     if (mergeTargets) {
@@ -175,7 +180,9 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
           )}
 
           <section className="grid gap-3">
-            <h4><FaUsers aria-hidden="true" className="text-muted" />Participants ({participants.length})</h4>
+            <h4><FaUsers aria-hidden="true" className="text-muted" />Participants ({participants.length}){didNotAttendCount > 0 && (
+              <em className="not-italic text-[10px] font-[700] whitespace-nowrap" style={{ color: '#ef4444' }}>{didNotAttendCount} did not attend</em>
+            )}</h4>
             {participants.length === 0 ? <p className="text-muted text-[12px]">Wala nang participant ang session na ito.</p> : (
               <ul className="grid gap-[6px] m-0 p-0 [list-style:none] [&_li]:flex [&_li]:flex-wrap [&_li]:items-center [&_li]:justify-between [&_li]:gap-2 [&_li]:p-[8px_10px] [&_li]:border [&_li]:border-line [&_li]:rounded-[9px] [&_li]:[background:var(--surface-subtle)] [&_li>div:first-child]:flex [&_li>div:first-child]:items-center [&_li>div:first-child]:gap-3 [&_small]:text-muted [&_small]:text-[11px]">
                 {participants.map((participant) => (
@@ -211,7 +218,12 @@ export default function SessionDetail({ sessionId, can, onClose, onChanged, onEd
                       <div className="grid gap-[2px] min-w-0">
                       <strong>{participant.applicant?.full_name || `Applicant`}</strong>
                       <RecordCode code={participant.applicant?.applicant_code} label="Applicant ID" />
-                      <small>{titleCase(participant.attendance_status)}{participant.admin_attended_by_name ? ` · Attended (${participant.admin_attended_by_name})` : ''}</small>
+                      <small className="flex flex-wrap items-center gap-[6px]">
+                        <span>{titleCase(participant.attendance_status)}{participant.admin_attended_by_name ? ` · Attended (${participant.admin_attended_by_name})` : ''}</span>
+                        {didNotAttend(participant) && (
+                          <em className="not-italic text-[10px] font-[700] whitespace-nowrap" style={{ color: '#ef4444' }}>Did not attend</em>
+                        )}
+                      </small>
                       </div>
                     </div>
                     {live && (

@@ -126,5 +126,25 @@ export function isBeforeScheduledDay(startsAt, now = new Date()) {
   return Boolean(scheduled && today) && today < scheduled;
 }
 
+/**
+ * One seated applicant did not attend: the activity is marked No Show, or the session is still
+ * pending/confirmed while its start time already passed and that seat was never completed (the
+ * same rule the Activities table badge uses). Adjusting that applicant's schedule activity
+ * (Set Again / Adjust) or marking the seat attended clears it, because the API rewrites the seat
+ * from the activity.
+ */
+export function participantDidNotAttend(session, participant, now = Date.now()) {
+  if (!participant) return false;
+  if (participant.attendance_status === 'no_show') return true;
+  if (!['pending', 'confirmed'].includes(session?.status) || !session?.start_at) return false;
+  return participant.attendance_status === 'scheduled' && new Date(session.start_at).getTime() < now;
+}
+
+/** True when at least one seated applicant did not attend (the red Master Schedule card). */
+export function sessionDidNotAttend(session, now = Date.now()) {
+  const seated = Array.isArray(session?.active_participants) ? session.active_participants : [];
+  return seated.some((participant) => participantDidNotAttend(session, participant, now));
+}
+
 export const EARLY_COMPLETE_MESSAGE = 'Hindi pa dumarating ang araw ng scheduled activity. Gusto mo pa rin ba itong i-mark as complete?';
 export const EARLY_COMPLETE_TASTING_NOTE = 'Mala-lock din nito ang brand preference ng applicant.';

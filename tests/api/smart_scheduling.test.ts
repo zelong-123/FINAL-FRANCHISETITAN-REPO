@@ -164,6 +164,39 @@ test('picker data: only the applicant\'s Sales user and the selected activity; b
   assert.equal((await q(`select count(*)::int n from schedule_session_participants where applicant_id = $1`, [who]))[0].n, 0);
 });
 
+test('picker data: handler_id only (Master Schedule "Schedule a session"), applicant not required', async () => {
+  const day = slot(20, '09:00').slice(0, 10);
+  const busy = await rawSession('orientation', `${day}T09:00:00+08:00`, 2, salesUser.id);
+  await rawSession('training', `${day}T13:00:00+08:00`, 1, salesUser.id, brandA.id, 'confirmed', 1);
+  const picker = await call('GET', `/schedule-sessions/availability?handler_id=${salesUser.id}&activity_type=orientation&month=${day.slice(0, 7)}&duration_minutes=120`, { token: admin });
+  assert.equal(picker.status, 200, JSON.stringify(picker.json));
+  const data = picker.json.data;
+  assert.equal(data.applicant_id, null, 'no applicant is needed for the session modal');
+  assert.equal(data.handler.id, salesUser.id);
+  const target = data.days.find((d: any) => d.date === day);
+  assert.deepEqual(target.sessions.map((s: any) => s.id), [busy], 'dots: the handler\'s sessions of this activity');
+  const slotAt = (time: string) => target.slots.find((s: any) => s.time === time);
+  assert.match(slotAt('10:00').reason, /already has Orientation\/Tasting 9:00–11:00 AM/);
+  assert.match(slotAt('12:00').reason, /already has Training 1:00–2:00 PM/);
+  assert.equal(slotAt('15:00').available, true);
+  // A marked No Show turns that session's calendar dot red (no applicant is passed to the picker).
+  const absent = await applicant();
+  await seat(busy, absent);
+  await q(`update schedule_session_participants set attendance_status = 'no_show' where session_id = $1 and applicant_id = $2`, [busy, absent]);
+  const afterNoShow = (await call('GET', `/schedule-sessions/availability?handler_id=${salesUser.id}&activity_type=orientation&month=${day.slice(0, 7)}&duration_minutes=120`, { token: admin })).json.data;
+  const flagged = afterNoShow.days.find((d: any) => d.date === day).sessions.find((s: any) => s.id === busy);
+  assert.deepEqual([flagged.did_not_attend, flagged.no_show_count], [true, 1]);
+  assert.equal(target.sessions.find((s: any) => s.id === busy).did_not_attend, false, 'before the No Show the dot is normal');
+  // No handler at all: a session can be saved without one, so only the facility limit applies
+  // (the handler's bookings do not block anything here).
+  const noHandler = await call('GET', `/schedule-sessions/availability?activity_type=orientation&month=${day.slice(0, 7)}&duration_minutes=120`, { token: admin });
+  assert.equal(noHandler.status, 200, JSON.stringify(noHandler.json));
+  assert.equal(noHandler.json.data.handler, null);
+  const openDay = noHandler.json.data.days.find((d: any) => d.date === day);
+  assert.equal(openDay.slots.find((s: any) => s.time === '10:00').available, true, 'no handler = no handler clash');
+  assert.ok(noHandler.json.data.next_available, 'a date can still be picked without a handler');
+});
+
 test('Sessions panel: Join this session allowed and refused with the reason', async () => {
   const start = slot(12, '09:00');
   const seated = await applicant();
