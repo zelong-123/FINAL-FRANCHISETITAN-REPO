@@ -2898,7 +2898,18 @@ export default function Applicants() {
     const section = document.getElementById(FOLLOW_UP_SECTION_ID);
     if (!section) return false;
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    section.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    // Scroll only the modal's own scrolling body. scrollIntoView would also scroll the modal box
+    // itself, pushing its header (and the close button) out of view.
+    let scroller = section.parentElement;
+    while (scroller && scroller !== document.body) {
+      const { overflowY } = window.getComputedStyle(scroller);
+      if (/(auto|scroll)/.test(overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
+      scroller = scroller.parentElement;
+    }
+    if (scroller && scroller !== document.body) {
+      const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 12;
+      scroller.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' });
+    } else section.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'nearest' });
     section.focus({ preventScroll: true });
     setFollowUpFlash(true);
     window.setTimeout(() => setFollowUpFlash(false), 1600);
