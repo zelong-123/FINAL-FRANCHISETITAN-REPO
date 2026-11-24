@@ -211,17 +211,20 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
 
   const events = useMemo(() => chartSessions.map((session) => {
     const color = STATUS_COLORS[session.status] || '#6b7488';
+    // Red card while a seated applicant did not attend (No Show, or the schedule passed unmarked).
+    const didNotAttend = sessionDidNotAttend(session);
     return {
       id: String(session.id),
       start: session.start_at,
       end: session.end_at,
       // Dark pinned cards (EventBody); the status colour stays as the left edge accent only.
+      // One stroke only: red replaces the status colour completely while an applicant did not attend.
       backgroundColor: '#1f2533',
-      borderColor: color,
-      classNames: [`ms-event`, `is-${session.status}`],
+      borderColor: didNotAttend ? DID_NOT_ATTEND_RED : color,
+      classNames: ['ms-event', `is-${session.status}`, ...(didNotAttend ? ['is-did-not-attend'] : [])],
       // Only live sessions can be dragged (reschedule; Admin may also merge).
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
-      extendedProps: { session },
+      extendedProps: { session, didNotAttend },
     };
   }), [chartSessions, permissions.schedule]);
 
@@ -547,10 +550,14 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           eventDurationEditable={false}
           eventDidMount={(info) => {
             if (info.isMirror) return;
+            const { session, didNotAttend } = info.event.extendedProps;
             info.el.dataset.sessionId = info.event.id;
-            info.el.title = eventTooltip(info.event.extendedProps.session);
-            // Status accent on the left edge; the card tint stays the same.
-            info.el.style.borderLeftColor = STATUS_COLORS[info.event.extendedProps.session.status] || '#6b7488';
+            info.el.title = eventTooltip(session, didNotAttend);
+            // Status accent on the left edge; a card with an applicant who did not attend is red all around.
+            const edge = didNotAttend ? DID_NOT_ATTEND_RED : (STATUS_COLORS[session.status] || '#6b7488');
+            info.el.style.borderColor = edge;
+            info.el.style.borderLeftColor = edge;
+            info.el.style.setProperty('--fc-event-border-color', edge);
             eventEls.current.set(info.event.id, info.el);
           }}
           eventWillUnmount={(info) => {
@@ -559,7 +566,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
+          eventContent={(info) => <EventBody session={info.event.extendedProps.session} didNotAttend={info.event.extendedProps.didNotAttend} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
         />
         </div>
         {outsideHours.length > 0 && (
@@ -630,7 +637,7 @@ function sessionTime(startIso, endIso) {
 }
 
 /** Hover tooltip: the whole story without opening the session. */
-function eventTooltip(session) {
+function eventTooltip(session, didNotAttend = false) {
   return [
     `${activityLabel(session.activity_type)} · ${statusLabel(session.status)}`,
     formatSessionRange(session.start_at, session.end_at),
@@ -638,14 +645,33 @@ function eventTooltip(session) {
     session.handler?.full_name || 'No handler',
     session.venue,
     session.occupancy,
+    didNotAttend ? 'An applicant did not attend — adjust their schedule activity.' : '',
   ].filter(Boolean).join('\n');
+}
+
+/** Red outline for a pinned session that has an applicant who did not attend. */
+const DID_NOT_ATTEND_RED = '#ef4444';
+
+/**
+ * True while a seated applicant did not attend: the activity is marked No Show, or the session is
+ * still live while a seat was never completed (the same "did not attend" rule the Activities table
+ * uses). Editing that applicant's schedule activity (Set Again / Adjust) resets the seat to
+ * scheduled with a new time, so the red outline clears by itself once the schedule is adjusted.
+ */
+function sessionDidNotAttend(session) {
+  const seated = Array.isArray(session?.active_participants) ? session.active_participants : [];
+  if (!seated.length) return false;
+  if (seated.some((participant) => participant.attendance_status === 'no_show')) return true;
+  if (!['pending', 'confirmed'].includes(session?.status)) return false;
+  if (!session.start_at || new Date(session.start_at).getTime() >= Date.now()) return false;
+  return seated.some((participant) => participant.attendance_status === 'scheduled');
 }
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
 /** Sessions shorter than this start with the summary only; longer ones always show everything. */
 const SHORT_SESSION_MS = 120 * 60 * 1000;
 
-function EventBody({ session, isAdmin, menu, short }) {
+function EventBody({ session, didNotAttend = false, isAdmin, menu, short }) {
   const taken = session.participant_count ?? 0;
   const capacity = session.max_capacity ?? 5;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -653,7 +679,7 @@ function EventBody({ session, isAdmin, menu, short }) {
   const collapsed = short && !expanded;
   const items = menu ? menu(session) : [];
   return (
-    <div className="ms-event-body relative grid content-start gap-[6px] min-w-0 p-[12px_14px] rounded-[16px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#0a0e18] border border-[#2a3d5c] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[12px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+    <div className={`ms-event-body relative grid content-start gap-[6px] min-w-0 p-[12px_14px] rounded-[16px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#0a0e18] border ${didNotAttend ? 'border-transparent shadow-[0_0_0_1px_rgba(239,68,68,0.45),0_0_18px_rgba(239,68,68,0.32)]' : 'border-[#2a3d5c]'} [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[12px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase`}>
       <span className="flex items-center justify-between gap-[6px] pr-[18px] text-[#c9d1e0] text-[10px] font-[600] whitespace-nowrap overflow-hidden">
         <span className="ms-event-time overflow-hidden text-ellipsis">{sessionTime(session.start_at, session.end_at)}</span>
         <span className="shrink-0">{session.start_at ? manilaDate.format(new Date(session.start_at)).split(' ').slice(-2).join(' ').toUpperCase() : ''}</span>

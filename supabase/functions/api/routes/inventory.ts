@@ -347,7 +347,9 @@ inventoryRoutes.patch('/inventories/:inventory/thresholds', central, async (c) =
   const { db } = c.get('deps');
   const i = await load(c);
   if (roleName(c) === 'admin' && i.location?.type === 'franchise') abort(403, 'Branch inventory is read-only for Admin.');
-  const v = await validate(db, await readInput(c), { reorder_level: ['required', 'integer', 'min:0'], critical_level: ['required', 'integer', 'min:0', 'lte:reorder_level'] });
+  // numeric, not integer: Add Product already accepts decimal levels and stock is decimal too,
+  // so an existing 2.5 level must be saveable from the threshold editor.
+  const v = await validate(db, await readInput(c), { reorder_level: ['required', 'numeric', 'min:0'], critical_level: ['required', 'numeric', 'min:0', 'lte:reorder_level'] });
   const keys = ['reorder_level', 'critical_level'];
   const saved = await updateRow(db, 'inventories', i.id, { ...v, updated_by_user_id: c.get('user').id });
   await audit(c, db, 'inventory.thresholds_updated', { type: MODEL, id: i.id }, pick(i, keys), pick(saved!, keys));

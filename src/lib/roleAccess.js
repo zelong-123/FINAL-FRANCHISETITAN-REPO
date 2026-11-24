@@ -217,6 +217,8 @@ export const PERMISSIONS = {
   'inventory.view': ['admin', 'logistics'],
   'inventory.add': ['admin', 'logistics'],
   'inventory.adjust': ['logistics'],
+  // Warehouse stock thresholds (Low / Critical). Admin only.
+  'inventory.thresholds': ['admin'],
 };
 
 /** True when the signed-in role holds the permission. */

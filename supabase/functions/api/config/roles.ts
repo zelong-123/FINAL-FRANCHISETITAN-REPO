@@ -78,6 +78,8 @@ export const PERMISSIONS: Record<string, string[]> = {
   'inventory.view': ['admin', 'logistics'],
   'inventory.add': ['admin', 'logistics'],
   'inventory.adjust': ['logistics'],
+  // Warehouse stock thresholds (Low / Critical). Admin only.
+  'inventory.thresholds': ['admin'],
 };
 
 // config/applicant_pipeline.php

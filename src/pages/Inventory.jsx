@@ -61,6 +61,8 @@ function WarehouseInventory({ role }) {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [adjustItem, setAdjustItem] = useState(null);
+  // Admin only: the row whose Low / Critical thresholds are being set.
+  const [thresholdItem, setThresholdItem] = useState(null);
   // Delete (Logistics): the row being confirmed, the request in flight and the result toast.
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -136,10 +138,11 @@ function WarehouseInventory({ role }) {
   const filtered = Boolean(query || status || range !== 'all');
   const summary = remote.data?.summary;
   const meta = remote.data?.meta;
-  // Admin: view and Add Product. Logistics: also Adjust, Import CSV, Export CSV and Delete.
-  // The API enforces the same rules (routes/inventory.ts).
+  // Admin: view, Add Product and the Low / Critical thresholds. Logistics: Adjust quantities,
+  // Import CSV, Export CSV and Delete. The API enforces the same rules (routes/inventory.ts).
   const canAdd = can(role, 'inventory.add');
   const canAdjust = can(role, 'inventory.adjust');
+  const canThresholds = can(role, 'inventory.thresholds');
   const canImportExport = role === 'logistics';
   const canDelete = role === 'logistics';
 
@@ -329,7 +332,7 @@ function WarehouseInventory({ role }) {
                     {columns.status && <th>Status</th>}
                     {columns.last_activity && <th>Last activity</th>}
                     {columns.added && <th>Date added</th>}
-                    {(canAdjust || canDelete) && <th>Action</th>}
+                    {(canThresholds || canAdjust || canDelete) && <th>Action</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -343,9 +346,19 @@ function WarehouseInventory({ role }) {
                       {columns.status && <td><StatusBadge value={item.status} /></td>}
                       {columns.last_activity && <td>{item.last_activity_at ? formatDate(item.last_activity_at, true) : '—'}</td>}
                       {columns.added && <td>{item.added_at ? formatDate(item.added_at) : '—'}</td>}
-                      {(canAdjust || canDelete) && (
+                      {(canThresholds || canAdjust || canDelete) && (
                         <td>
                           <div className="flex items-center gap-2 whitespace-nowrap">
+                            {canThresholds && (
+                              <button
+                                type="button"
+                                className="min-w-[72px]"
+                                onClick={() => { setActionError(''); setSuccess(''); setThresholdItem(item); }}
+                                title={`Set the Low and Critical thresholds for ${item.name || 'this item'} (Admin only)`}
+                              >
+                                Adjust
+                              </button>
+                            )}
                             {canAdjust && (
                               <button type="button" className="min-w-[72px]" onClick={() => { setActionError(''); setSuccess(''); setAdjustItem(item); }}>
                                 Adjust
@@ -449,6 +462,19 @@ function WarehouseInventory({ role }) {
             setAdjustItem(null);
             setActionError('');
             setSuccess('Quantity adjusted.');
+            await reload();
+          }}
+        />
+      )}
+
+      {thresholdItem && (
+        <ThresholdModal
+          item={thresholdItem}
+          onClose={() => setThresholdItem(null)}
+          onSaved={async () => {
+            setThresholdItem(null);
+            setActionError('');
+            setSuccess(`Thresholds updated for “${thresholdItem.name || 'item'}”.`);
             await reload();
           }}
         />
@@ -886,6 +912,143 @@ function AdjustQuantityModal({ item, onClose, onSaved }) {
           />
           <div className="mt-1 text-right text-[11.5px] text-muted">{note.length} / 255</div>
         </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Adjust thresholds (Admin only): the Low and Critical levels that decide a warehouse row's
+ * status — Low at or below the reorder level, Critical at or below the critical level.
+ * Saves through PATCH /inventories/:id/thresholds.
+ */
+function ThresholdModal({ item, onClose, onSaved }) {
+  const [low, setLow] = useState(String(Number(item.reorder_level ?? 0)));
+  const [critical, setCritical] = useState(String(Number(item.critical_level ?? 0)));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const unit = item.unit || '';
+  const onHand = Number(item.quantity) || 0;
+  const lowValue = low.trim() === '' ? NaN : Number(low);
+  const criticalValue = critical.trim() === '' ? NaN : Number(critical);
+  const validLow = Number.isFinite(lowValue) && lowValue >= 0;
+  const validCritical = Number.isFinite(criticalValue) && criticalValue >= 0;
+  const ordered = validLow && validCritical && criticalValue <= lowValue;
+  const ready = ordered && !saving;
+  const preview = ordered ? (onHand <= criticalValue ? 'critical' : onHand <= lowValue ? 'low' : 'normal') : null;
+  const message = !validLow || !validCritical
+    ? 'Both levels must be zero or more.'
+    : !ordered
+      ? `Critical (${formatNumber(criticalValue, 2)}) cannot be above Low (${formatNumber(lowValue, 2)}).`
+      : null;
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!ready) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.patch(`/inventories/${item.id}/thresholds`, { reorder_level: lowValue, critical_level: criticalValue });
+      await onSaved();
+    } catch (caught) {
+      setError(firstValidationMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldClass = 'grid gap-[6px] rounded-[14px] border border-line [background:var(--surface-subtle)] p-[12px_14px]';
+  const inputClass = 'min-h-[46px] w-full min-w-0 rounded-[12px] border-2 border-input-line [background:var(--input-bg)] p-[0_12px] text-[18px] font-[800] leading-none tabular-nums text-text [appearance:textfield] [outline:none] [transition:border-color_.16s_ease,_box-shadow_.16s_ease] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-[color:var(--accent)] focus:[box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_18%,_transparent)]';
+
+  return (
+    <Modal
+      title={<span className="block text-[20px] font-[750] leading-[1.25] tracking-[-.01em] text-text">Adjust thresholds · {item.name || 'item'}</span>}
+      onClose={onClose}
+      size="small"
+      footer={(
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="min-h-[42px]! inline-flex items-center justify-center gap-2 rounded-[12px]! border-2! border-line-strong! [background:transparent]! p-[0_16px]! text-[14px]! font-[700]! text-text-secondary! cursor-pointer [transition:color_.16s_ease,_background_.16s_ease,_border-color_.16s_ease] hover:text-text! hover:border-accent! hover:[background:var(--hover)]! focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[520px]:flex-1"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="threshold-form"
+            disabled={!ready}
+            className="min-h-[42px]! inline-flex items-center justify-center gap-2 rounded-[12px]! border-2! border-transparent! p-[0_16px]! text-[14px]! font-[700]! text-[#fff]! cursor-pointer [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))]! [transition:filter_.16s_ease,_opacity_.16s_ease] enabled:hover:[filter:brightness(1.06)] disabled:opacity-[.55]! disabled:cursor-not-allowed focus-visible:[outline:2px_solid_var(--accent)] focus-visible:[outline-offset:2px] max-[520px]:flex-1"
+          >
+            {saving ? 'Saving…' : 'Save thresholds'}
+          </button>
+        </>
+      )}
+    >
+      <Notice type="error">{error}</Notice>
+      <p className="m-0 mb-[12px] text-[12.5px] leading-[1.5] text-muted">
+        Only Admin can set warehouse thresholds. A row reads{' '}
+        <strong className="text-[color:var(--warning-text)]">Low</strong> at or below the low level, and{' '}
+        <strong className="text-[color:var(--danger-text)]">Critical</strong> at or below the critical level.
+      </p>
+
+      <div className="mb-[14px] flex items-center justify-between gap-3 rounded-[14px] border border-line [background:var(--surface-subtle)] p-[12px_16px]" aria-live="polite" aria-atomic="true">
+        <div className="min-w-0">
+          <span className="block text-[12.5px] font-[600] text-muted">On hand</span>
+          <strong className="mt-1 block text-[22px] font-[800] leading-none tabular-nums text-text">{formatNumber(onHand, 2)} {unit}</strong>
+        </div>
+        <div className="min-w-0 text-right">
+          <span className="block text-[12.5px] font-[600] text-muted">Status with these levels</span>
+          <span className="mt-1 inline-flex">
+            {preview ? <StatusBadge value={preview} /> : <span className="text-[13px] text-muted">—</span>}
+          </span>
+        </div>
+      </div>
+
+      <form id="threshold-form" onSubmit={submit} className="grid gap-[12px]">
+        <div className="grid grid-cols-2 gap-3 max-[520px]:grid-cols-1">
+          <label htmlFor="threshold-low" className={fieldClass}>
+            <span className="flex items-center gap-[7px] text-[14px] font-[700] leading-[1.3] text-text">
+              <span aria-hidden="true" className="h-[8px] w-[8px] flex-none rounded-full [background:var(--warning)]" />
+              Low
+            </span>
+            <span className="text-[11.5px] leading-[1.4] text-muted">At or below this, the item shows Low.</span>
+            <input
+              id="threshold-low"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={low}
+              onChange={(event) => setLow(event.target.value)}
+              aria-invalid={!validLow && low.trim() !== '' ? true : undefined}
+              className={inputClass}
+            />
+          </label>
+          <label htmlFor="threshold-critical" className={fieldClass}>
+            <span className="flex items-center gap-[7px] text-[14px] font-[700] leading-[1.3] text-text">
+              <span aria-hidden="true" className="h-[8px] w-[8px] flex-none rounded-full [background:var(--danger)]" />
+              Critical
+            </span>
+            <span className="text-[11.5px] leading-[1.4] text-muted">At or below this, the item shows Critical.</span>
+            <input
+              id="threshold-critical"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={critical}
+              onChange={(event) => setCritical(event.target.value)}
+              aria-invalid={!validCritical && critical.trim() !== '' ? true : undefined}
+              className={inputClass}
+            />
+          </label>
+        </div>
+        {message && (
+          <p role="alert" className="m-0 text-[12px] font-[600] leading-[1.45] text-[color:var(--danger-text)]">{message}</p>
+        )}
       </form>
     </Modal>
   );

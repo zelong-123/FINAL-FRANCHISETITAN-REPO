@@ -891,13 +891,15 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
-/* Applicants > Application Detail tab: roomier spacing, larger text, darker canvas so cards stand out. Dark mode only for the background. */
-.ap-detail-panel { padding: 16px 18px 18px !important; }
-.ap-detail-panel > div:first-child { padding: 0 0 4px; gap: 12px; }
+/* Applicants > Application Detail tab: no outer panel. The folder tabs, the Grid/List toggle and the
+   record cards sit straight on the page canvas and share one 16px vertical rhythm (the section is a
+   flex column with gap 16). Only the small controls keep a background of their own. */
+.ap-detail-panel { padding: 0 !important; }
+.ap-detail-panel > div:first-child { padding: 0; gap: 12px; }
 .ap-detail-panel > div:first-child [role='tablist'],
 .ap-detail-panel > div:first-child [role='group'] { padding: 5px; }
 .ap-detail-panel > div:first-child button { font-size: 13px; padding: 7px 12px; min-height: 34px; }
-.ap-detail-panel [role='list'] { gap: 12px; padding: 4px 0 12px; }
+.ap-detail-panel [role='list'] { gap: 12px; padding: 0; }
 .ap-detail-panel [role='listitem'] { padding: 14px; gap: 5px; font-size: 12px; border-radius: 8px !important; min-height: 0 !important; }
 .ap-detail-panel [role='listitem'] strong { font-size: 14px; }
 .ap-detail-panel [role='listitem'] span { font-size: 12px; }
@@ -905,7 +907,6 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 .ap-detail-panel [role='listitem'] .ap-folder-remarks { font-size: 12px; }
 .ap-detail-panel table td { font-size: 13px; }
 .ap-detail-panel table th { font-size: 11px; }
-:root:not([data-theme='light']) .ap-detail-panel { background: #0a0e18 !important; }
 :root:not([data-theme='light']) .ap-detail-panel [role='listitem'] { background: #161d2e !important; border-color: #2e3850 !important; }
 :root:not([data-theme='light']) .ap-detail-panel [role='listitem']:hover { background: #1c2539 !important; }
 :root[data-theme='light'] .ap-detail-panel [role='listitem'] { background: #fff !important; }
