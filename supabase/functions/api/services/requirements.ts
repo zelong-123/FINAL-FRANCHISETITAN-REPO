@@ -4,7 +4,7 @@ import type { Db, Row } from '../lib/db.ts';
 import { fail, manilaToday } from '../lib/http.ts';
 import { formatLocation, readLocation } from './psgc.ts';
 
-export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select' | 'location'; required?: boolean; placeholder?: string; barangay_label?: string; options?: { value: string; label: string }[]; min_length?: number; not_future?: boolean; letters_only?: boolean; show_when?: { key: string; value: string } };
+export type FieldDef = { key: string; label: string; type: 'text' | 'textarea' | 'date' | 'select' | 'location'; required?: boolean; placeholder?: string; barangay_label?: string; options?: { value: string; label: string }[]; min_length?: number; max_length?: number; not_future?: boolean; letters_only?: boolean; id_number?: boolean; show_when?: { key: string; value: string } };
 export type FileDef = { key: string; label: string; required: boolean; multiple?: boolean; accept: string };
 export type RequirementDef = { key: string; stage: string; label: string; help: string; fields: FieldDef[]; files: FileDef[] };
 
@@ -34,6 +34,9 @@ export const REQUIREMENTS: RequirementDef[] = [
       ],
     }, {
       key: 'id_type_other', label: 'Other government ID name', type: 'text', required: true, letters_only: true, show_when: { key: 'id_type', value: 'other' },
+    }, {
+      // The number printed on the ID, so Admin can match the copy against the record.
+      key: 'id_number', label: 'ID number', type: 'text', required: true, id_number: true, min_length: 4, max_length: 40, placeholder: 'As printed on the ID',
     }],
     files: [{ key: 'id_copy', label: 'ID copy', required: true, accept: DOCS }],
   },
@@ -91,6 +94,8 @@ export function readFields(def: RequirementDef, input: Row, choices: Record<stri
     if (field.show_when && String(input[field.show_when.key] ?? '').trim() !== field.show_when.value) continue;
     if (field.required && !value) fail(field.key, `${field.label} is required.`);
     if (field.letters_only && value && !/^[A-Za-z][A-Za-z .'-]*$/.test(value)) fail(field.key, `${field.label} must contain letters only.`);
+    if (field.id_number && value && !/^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(value)) fail(field.key, `${field.label} may contain only letters, numbers, spaces and dashes.`);
+    if (field.max_length && value.length > field.max_length) fail(field.key, `${field.label} may not be longer than ${field.max_length} characters.`);
     if (!value) continue;
     if (field.type === 'select' && !(choices[field.key] ?? field.options ?? []).some((o) => o.value === value)) fail(field.key, `Choose a valid ${field.label.toLowerCase()}.`);
     if (field.type === 'date') {
@@ -161,12 +166,17 @@ export function legacyStage(a: Row, stage: string, rows: Row[]): boolean {
  * The LOI requirement is read from the LOI record itself: no scan = Pending, a scan waiting =
  * Submitted, Verified = Accepted, a scan Admin returned (and not replaced since) = Returned.
  */
-export async function loiRequirement(db: Db, a: Row): Promise<Row> {
+export async function loiRequirement(db: Db, a: Row, viewerId: number | null = null): Promise<Row> {
   const [scan] = await db.query(
     `select id, original_name, created_at, uploaded_by_user_id from documents
      where documentable_type = 'App\\Models\\Applicant' and documentable_id = $1 and type = 'loi' and removed_at is null and replaced_at is null order by id desc limit 1`,
     [a.id],
   );
+  // With a viewer (an Admin), whether that Admin opened this scan: Verify needs it opened.
+  if (scan && viewerId !== null) {
+    const [seen] = await db.query(`select 1 from activity_document_views where document_id = $1 and user_id = $2`, [scan.id, viewerId]);
+    scan.viewed_by_me = Boolean(seen);
+  }
   let status = 'pending';
   if (a.loi_verification_status === 'verified' && scan) status = 'accepted';
   else if (scan && a.loi_returned_at && new Date(a.loi_returned_at) >= new Date(scan.created_at)) status = 'returned';

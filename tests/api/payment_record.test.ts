@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
+import { openAll } from '../support/files.ts';
 import { createStaff } from '../support/accounts.ts';
 
 const { pg, call, login } = await setup();
@@ -49,6 +50,8 @@ const submit = (id: number, form: FormData, token = sales) => call('POST', `/app
 const entryOf = async (id: number, name: string) => (await record(id)).required.find((r: any) => r.name === name).entry;
 const verify = async (id: number, entryId: number, token = admin, revision?: number) => {
   const rev = revision ?? (await q(`select revision from payments where id = $1`, [entryId]))[0].revision;
+  // Admin opens every receipt first (the Verify gate); a token that cannot open them simply skips this.
+  await openAll(call, token, id).catch(() => {});
   return call('POST', `/applicants/${id}/payment-entries/${entryId}/verify`, { token, body: { revision: rev } });
 };
 const reject = async (id: number, entryId: number, reason: string, token = admin, revision?: number) => {

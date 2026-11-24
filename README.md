@@ -162,6 +162,19 @@ Actions:
 - Every reminder, hold, release, close and follow-up is in the applicant's Follow-up log, the action
   history and the audit log. The Executive dashboard (Inquiries tab) shows **Follow-up by Sales**.
 
+### Verification proofs (open before you verify)
+
+- **Admin opens every file first.** Accept (every requirement), Verify (LOI scan, payment receipts) and
+  Attended (Training, like Orientation/Tasting) are refused until the Admin doing it has opened each current
+  file. Each open is recorded per file and per Admin (`activity_document_views`); another Admin's open does
+  not count. The page marks each file Viewed / Not viewed and keeps the button off until all are opened.
+  A small thumbnail the page draws is not an open; only [View] / Preview counts.
+- **Files are checked by their contents.** Requirement files, the LOI scan, receipts and attendance proofs must
+  really be PDF, JPG or PNG (first bytes), not a renamed file.
+- **No permanent delete of verified work.** An applicant with an accepted requirement, a verified LOI, a
+  verified payment, a verified activity or an approval cannot be deleted: archive it instead.
+- **Government ID** asks Sales for the ID number (letters, numbers, spaces and dashes; 4–40 characters).
+
 ## Deploy to Supabase (first setup)
 
 The steps for a new project:

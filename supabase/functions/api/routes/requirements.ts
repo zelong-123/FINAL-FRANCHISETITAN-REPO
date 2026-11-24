@@ -6,7 +6,8 @@ import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, ok, routeId, updateRow } from '../lib/http.ts';
 import { readInput, validate } from '../lib/validate.ts';
-import { downloadDocument, MAX_UPLOAD_KB, storeDocument } from '../lib/files.ts';
+import { downloadDocument, MAX_UPLOAD_KB, sniffFileType, storeDocument } from '../lib/files.ts';
+import { assertFilesOpened, recordAdminView, viewedIds } from '../services/documentViews.ts';
 import { requireFound, role, roleName } from '../lib/middleware.ts';
 import { audit } from '../services/users.ts';
 import { notifyRoles } from '../services/notifications.ts';
@@ -68,6 +69,11 @@ export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Ro
      from documents where documentable_type = $1 and documentable_id = any($2::bigint[]) and removed_at is null order by id`,
     [REQUIREMENT_MODEL, `{${rows.map((r) => r.id).join(',')}}`],
   ) : [];
+  // Admin must open every current file before Accept: each file says whether this Admin opened it.
+  if (user.role?.name === 'admin') {
+    const opened = await viewedIds(db, files.map((d) => Number(d.id)), Number(user.id));
+    for (const d of files) d.viewed_by_me = opened.has(Number(d.id));
+  }
   const items = REQUIREMENTS.map((def) => {
     const row = rows.find((r) => r.requirement_key === def.key);
     return {
@@ -89,11 +95,11 @@ export async function requirementsPayload(db: Db, a: Row, user: Row): Promise<Ro
       open: a.status === REQUIREMENT_STAGES[stage].applicant_status && !a.archived_at,
     };
   }
-  return { config: { stages: REQUIREMENT_STAGES, requirements: await requirementsConfig(db) }, items, summary, loi: await loiRequirement(db, a), files_visible: showFiles };
+  return { config: { stages: REQUIREMENT_STAGES, requirements: await requirementsConfig(db) }, items, summary, loi: await loiRequirement(db, a, user.role?.name === 'admin' ? Number(user.id) : null), files_visible: showFiles };
 }
 
 /** Uploaded files for one file slot: one or several (`key` or `key[]`), type and size checked. */
-function filesFor(input: Row, slot: { key: string; label: string; accept: string; multiple?: boolean }): File[] {
+async function filesFor(input: Row, slot: { key: string; label: string; accept: string; multiple?: boolean }): Promise<File[]> {
   const raw = input[slot.key] ?? input[`${slot.key}[]`];
   const list = (Array.isArray(raw) ? raw : raw === undefined || raw === null || raw === '' ? [] : [raw]).filter((f) => f instanceof File) as File[];
   if (!slot.multiple && list.length > 1) fail(slot.key, `Attach only one file for ${slot.label}.`);
@@ -102,6 +108,10 @@ function filesFor(input: Row, slot: { key: string; label: string; accept: string
     const ext = (file.name.split('.').pop() ?? '').toLowerCase();
     if (!allowed.includes(ext)) fail(slot.key, `${slot.label} must be a ${allowed.join(', ').toUpperCase()} file.`);
     if (file.size / 1024 > MAX_UPLOAD_KB) fail(slot.key, `${slot.label} may not be larger than ${MAX_UPLOAD_KB / 1024} MB.`);
+    // The contents must really be what the name says: a renamed file is refused.
+    const real = await sniffFileType(file);
+    const expected = ext === 'pdf' ? 'application/pdf' : ext === 'png' ? 'image/png' : 'image/jpeg';
+    if (real !== expected) fail(slot.key, `${slot.label} "${file.name}" is not a real ${ext.toUpperCase()} file (its contents do not match its type).`);
   }
   return list;
 }
@@ -123,7 +133,8 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key', staff, async 
   const input = await readInput(c);
   const choices = def.key === 'initial_interview' ? { interviewer: await interviewerOptions(db) } : {};
   const data = { ...readFields(def, input, choices), ...(await readLocationFields(db, def, input)) };
-  const uploads = Object.fromEntries(def.files.map((slot) => [slot.key, filesFor(input, slot)]));
+  const uploads: Record<string, File[]> = {};
+  for (const slot of def.files) uploads[slot.key] = await filesFor(input, slot);
   const existing = current ? await db.query(
     `select id, type, original_name from documents where documentable_type = $1 and documentable_id = $2 and replaced_at is null and removed_at is null`, [REQUIREMENT_MODEL, current.id],
   ) : [];
@@ -179,6 +190,7 @@ requirementRoutes.post('/applicants/:applicant/requirements/:key/accept', staff,
   const note = v.note ? String(v.note).trim() || null : null;
   const [current] = await db.query(`select * from applicant_requirements where applicant_id = $1 and requirement_key = $2`, [a.id, def.key]);
   if (!current || current.status !== 'submitted') fail('requirement', `${def.label} has no submission waiting for review.`);
+  await assertFilesOpened(db, { model: REQUIREMENT_MODEL, ownerId: Number(current.id) }, Number(user.id), 'requirement', `accept ${def.label}`);
   await db.tx(async (tx) => {
     await updateRow(tx, 'applicant_requirements', current.id, { status: 'accepted', reviewed_by_user_id: user.id, reviewed_at: new Date(), return_reason: null });
     await logEvent(tx, a, 'requirement_accepted', user.id, { requirement_key: def.key, requirement_id: current.id }, note, {
@@ -266,5 +278,7 @@ requirementRoutes.get('/applicants/:applicant/requirements/:key/documents/:docum
      where d.id = $1 and d.documentable_type = $2 and r.applicant_id = $3 and r.requirement_key = $4`,
     [routeId(c, 'document'), REQUIREMENT_MODEL, a.id, def.key],
   );
-  return downloadDocument(c, requireFound(d));
+  const response = await downloadDocument(c, requireFound(d));
+  await recordAdminView(db, c.get('user'), d, response);
+  return response;
 });

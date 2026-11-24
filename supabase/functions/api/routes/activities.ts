@@ -24,6 +24,7 @@ import {
   activityDocumentsSql, assertCount, assertUpload, ATTENDANCE_TYPE, BRAND_DOC_TYPE, currentDocuments, FILE_LIMITS, filesOf, isLegacyOrientation, keepIdsOf,
   recordView, unviewedDocuments,
 } from '../services/orientationTasting.ts';
+import { assertFilesOpened } from '../services/documentViews.ts';
 
 export const activityRoutes = new Hono<AppEnv>();
 const MODEL = 'App\\Models\\ActivitySchedule';
@@ -400,6 +401,8 @@ activityRoutes.post('/activities/:activity/complete', role('sales'), async (c) =
     notes = String(v.result_notes ?? '').trim();
     if (notes.length < 10) fail('result_notes', 'Write notes of at least 10 characters about what happened.');
     if (!orientation && !v.proof) fail('proof', 'Attach the attendance proof (sign-in sheet or photo).');
+    // The contents must really be what the name says: a renamed file is refused.
+    if (!orientation && v.proof instanceof File) await assertUpload(v.proof, 'proof', 'attendance proof');
     changes = {
       status: 'completed', attended: true, actual_started_at: actual, handler_name: handler, result_notes: notes, no_show_reason: null,
       ...(orientation ? { selected_brand_id: orientation.brandId } : {}),
@@ -486,6 +489,9 @@ activityRoutes.post('/activities/:activity/attended', admin, async (c) => {
     }
     const unviewed = await unviewedDocuments(db, activity, user.id);
     if (unviewed.length) fail('verify', `Open every submitted file before verifying. Not opened yet: ${unviewed.map((d) => d.original_name).join(', ')}.`);
+  } else {
+    // Training (and an older Orientation): the attendance proof Sales attached must be opened first.
+    await assertFilesOpened(db, { model: PROOF_MODEL, ownerId: Number(activity.id), types: [PROOF_TYPE], since: activity.completion_submitted_at ?? null }, Number(user.id), 'verify', 'mark it Attended');
   }
   const selectedBrand = newFlow ? Number(activity.selected_brand_id) : null;
   const [brands] = selectedBrand ? await db.query(

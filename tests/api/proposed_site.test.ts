@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { ADMIN, SALES, setup } from '../support/harness.ts';
+import { openAll, realFile } from '../support/files.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
 import { removeEarlyProposedSite } from '../../supabase/scripts/remove_early_proposed_site.ts';
 
@@ -26,12 +27,12 @@ const detail = async (id: number, token = admin) => (await call('GET', `/applica
 const site = (id: number, form = requirementForm('proposed_site', 'loi'), token = sales) => call('POST', `/applicants/${id}/requirements/proposed_site`, { token, form });
 const loiFile = (name = 'loi.pdf') => {
   const f = new FormData();
-  f.set('file', new File([new Uint8Array([1, 2, 3])], name, { type: 'application/pdf' }));
+  f.set('file', realFile(name));
   f.set('submission_type', 'physical');
   f.set('submission_date', '2026-11-01');
   return f;
 };
-const verifyLoi = (id: number) => { const f = new FormData(); f.set('verification_status', 'verified'); return call('POST', `/applicants/${id}/loi`, { token: admin, form: f }); };
+const verifyLoi = async (id: number) => { await openAll(call, admin, id); const f = new FormData(); f.set('verification_status', 'verified'); return call('POST', `/applicants/${id}/loi`, { token: admin, form: f }); };
 const complete = (id: number) => call('POST', `/applicants/${id}/loi/complete`, { token: admin, body: {} });
 
 test('Qualification has 4 requirements; Confirm Qualified passes with those 4 Accepted', async () => {
@@ -99,6 +100,7 @@ test('Proposed site at LOI Submission: save, reload, Admin return with reason, r
 
   assert.equal((await site(id, requirementForm('proposed_site', 'loi'))).status, 201, 'the encoder corrects and resubmits');
   assert.equal((await call('POST', `${path}/accept`, { token: sales, body: {} })).status, 403, 'Sales cannot verify');
+  await openAll(call, admin, id);
   assert.equal((await call('POST', `${path}/accept`, { token: admin, body: {} })).status, 200);
   assert.match((await site(id)).json.errors.requirement[0], /already Accepted/, 'verified data is read-only for the encoder');
   const history = (await call('GET', `/applicants/${id}/history?page=loi`, { token: admin })).json.data.map((h: any) => h.event);
@@ -110,6 +112,7 @@ test('LOI → Payment Record is blocked unless both the LOI and the Proposed sit
   // Proposed site first.
   const a = await applicant('loi_submitted', { loi_confirmed_at: new Date() });
   await site(a);
+  await openAll(call, admin, a);
   await call('POST', `/applicants/${a}/requirements/proposed_site/accept`, { token: admin, body: {} });
   const onlySite = await complete(a);
   assert.equal(onlySite.status, 422);
@@ -128,6 +131,7 @@ test('LOI → Payment Record is blocked unless both the LOI and the Proposed sit
   assert.doesNotMatch(onlyLoi.json.errors.loi[0], /Mark the LOI/);
   await site(b);
   assert.match((await complete(b)).json.errors.loi[0], /waiting for Admin review/);
+  await openAll(call, admin, b);
   await call('POST', `/applicants/${b}/requirements/proposed_site/accept`, { token: admin, body: {} });
   assert.equal((await complete(b)).status, 200);
 
@@ -151,6 +155,7 @@ test('applicants already past LOI Submission are not blocked, even with no LOI f
   form.set('or_number', 'OR-PAST-LOI-1');
   form.set('receipt', new File([new TextEncoder().encode('%PDF-1.4 r')], 'r.pdf', { type: 'application/pdf' }));
   const entry = (await call('POST', `/applicants/${id}/payment-entries`, { token: sales, form })).json.data.entry;
+  await openAll(call, admin, id);
   await call('POST', `/applicants/${id}/payment-entries/${entry.id}/verify`, { token: admin, body: { revision: entry.revision } });
   const moved = await call('POST', `/applicants/${id}/payments/complete`, { token: admin, body: {} });
   assert.equal(moved.status, 200, JSON.stringify(moved.json));

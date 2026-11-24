@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, MARKETING, SALES, setup } from '../support/harness.ts';
+import { openAll, realFile } from '../support/files.ts';
 import { completeStage, requirementForm } from '../support/requirements.ts';
 import { createStaff, signInInvited } from '../support/accounts.ts';
 
@@ -161,7 +162,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal((await call('POST', `${path}/loi`, { token: sales, form: future })).status, 422);
   const loiForm = () => {
     const f = new FormData();
-    f.set('file', new File([new Uint8Array([1, 2, 3])], 'loi.pdf', { type: 'application/pdf' }));
+    f.set('file', realFile('loi.pdf'));
     f.set('submission_type', 'digital');
     f.set('submission_date', '2026-11-01');
     return f;
@@ -184,7 +185,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal((await q(`select status from applicants where id = $1`, [applicantId]))[0].status, 'loi_submitted');
   const download = await call('GET', `${path}/documents/${upload.json.data.id}/download`, { token: admin });
   assert.equal(download.status, 200);
-  assert.deepEqual([...new Uint8Array(await download.res.arrayBuffer())], [1, 2, 3]);
+  assert.deepEqual([...new Uint8Array(await download.res.arrayBuffer())], [...new Uint8Array(await realFile('loi.pdf').arrayBuffer())]);
   assert.match(download.res.headers.get('content-disposition')!, /loi\.pdf/);
   const wrongType = new FormData();
   wrongType.set('file', new File(['x'], 'virus.exe'));
@@ -203,11 +204,14 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.match(notYet, /Proposed site must be verified by Admin \(it has not been submitted yet\)/);
   const verify = new FormData();
   verify.set('verification_status', 'verified');
+  assert.match((await call('POST', `${path}/loi`, { token: admin, form: verify })).json.errors.verification_status[0], /Not opened yet: loi\.pdf/, 'the replacement scan must be opened first');
+  await openAll(call, admin, applicantId);
   assert.equal((await call('POST', `${path}/loi`, { token: admin, form: verify })).status, 200);
   assert.equal((await call('POST', `/applicants/${applicantId}/requirements/proposed_site`, { token: sales, form: requirementForm('proposed_site', 'loi') })).status, 201);
   const siteWaiting = await call('POST', `${path}/loi/complete`, { token: admin, body: {} });
   assert.equal(siteWaiting.status, 422);
   assert.match(siteWaiting.json.errors.loi[0], /Proposed site must be verified by Admin \(it is waiting for Admin review\)/);
+  await openAll(call, admin, applicantId);
   assert.equal((await call('POST', `/applicants/${applicantId}/requirements/proposed_site/accept`, { token: admin, body: {} })).status, 200);
   const completed = await call('POST', `${path}/loi/complete`, { token: admin, body: {} });
   assert.equal(completed.status, 200, JSON.stringify(completed.json));
@@ -242,6 +246,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
   assert.equal(first.json.data.entry.status, 'for_verification');
   const firstId = first.json.data.entry.id;
   assert.equal((await call('POST', `${path}/payment-entries/${firstId}/verify`, { token: sales, body: { revision: 1 } })).status, 403, 'Sales cannot verify');
+  await openAll(call, admin, applicantId);
   const verified = await call('POST', `${path}/payment-entries/${firstId}/verify`, { token: admin, body: { revision: 1 } });
   assert.equal(verified.json.data.verified_count, 1);
   assert.equal(verified.json.data.required_count, 2);
@@ -253,6 +258,7 @@ test('full pipeline: endorse, convert, qualify, schedule, LOI, payment, approve,
 
   const rest = await call('POST', `${path}/payment-entries`, { token: sales, form: entry(fullId, 'OR-1002') });
   assert.equal(rest.status, 201);
+  await openAll(call, admin, applicantId);
   await call('POST', `${path}/payment-entries/${rest.json.data.entry.id}/verify`, { token: admin, body: { revision: 1 } });
   assert.equal((await call('GET', path, { token: admin })).json.data.payment_record.badge_label, 'Completed');
 

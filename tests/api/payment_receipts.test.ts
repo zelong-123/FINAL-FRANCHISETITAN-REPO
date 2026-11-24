@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ADMIN, SALES, setup } from '../support/harness.ts';
+import { openAll } from '../support/files.ts';
 
 const { pg, call, login, files } = await setup();
 const admin = await login(ADMIN);
@@ -139,6 +140,7 @@ test('a rejected entry keeps its receipts; Sales keeps one for the resubmission;
   assert.equal(original.length, 2, 'the rejected entry still has both receipts');
   assert.ok(files.store.has(`${original[0].disk}/${original[0].path}`));
 
+  await openAll(call, admin, id);
   assert.equal((await call('POST', `/applicants/${id}/payment-entries/${again.json.data.entry.id}/verify`, { token: admin, body: { revision: await revisionOf(again.json.data.entry.id) } })).status, 200);
   const locked = entryWith(full, [receiptFile('late.jpg')]);
   locked.set('keep_receipt_ids', '');

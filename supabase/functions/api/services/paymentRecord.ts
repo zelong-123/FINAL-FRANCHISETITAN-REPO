@@ -8,6 +8,7 @@ import type { AppEnv } from '../lib/env.ts';
 import type { Db, Row } from '../lib/db.ts';
 import { abort, fail, insertRow, manilaToday, updateRow, ValidationError } from '../lib/http.ts';
 import { MAX_UPLOAD_KB, sniffFileType, storeDocument } from '../lib/files.ts';
+import { assertFilesOpened, viewedIds } from './documentViews.ts';
 import { APPLICANT_MODEL, loadPlan } from './applicantModel.ts';
 import { fileRef, logEvent } from './applicantStage.ts';
 import { actionLabel } from './applicationDetail.ts';
@@ -383,6 +384,8 @@ async function loadForReview(db: Db, applicantId: number, paymentId: number, act
 export async function verifyEntry(db: Db, applicantId: number, paymentId: number, actor: Row, revision: unknown): Promise<Row> {
   const result = await db.tx(async (tx) => {
     const { a, p, item } = await loadForReview(tx, applicantId, paymentId, actor, revision, 'verify');
+    // Every receipt of the entry must be opened by this Admin first (an older entry without a receipt has none).
+    await assertFilesOpened(tx, { model: PAYMENT_MODEL, ownerId: Number(p.id) }, Number(actor.id), 'receipt', 'verify this payment');
     const saved = (await updateRow(tx, 'payments', p.id, { status: 'verified', verified_by_user_id: actor.id, verified_at: new Date() }))!;
     await syncLedger(tx, saved);
     const progress = await paymentProgress(tx, applicantId);
@@ -471,6 +474,11 @@ export async function recordPayload(db: Db, a: Row, user: Row, filesVisible: boo
          from documents d where d.documentable_type = 'App\\Models\\Payment' and d.documentable_id = p.id and d.removed_at is null), '[]'::jsonb) as receipts
      from payments p where p.applicant_id = $1 order by p.id`, [a.id],
   );
+  // Admin must open every receipt before Verify: each receipt says whether this Admin opened it.
+  if (isAdmin) {
+    const opened = await viewedIds(db, rows.flatMap((p) => (p.receipts ?? []).map((d: Row) => Number(d.id))), Number(user.id));
+    for (const p of rows) p.receipts = (p.receipts ?? []).map((d: Row) => ({ ...d, viewed_by_me: opened.has(Number(d.id)) }));
+  }
   const json = (p: Row) => entryJson({ ...p, archived: Boolean(a.archived_at) }, user, isAdmin, isAssigned, open, filesVisible);
   const required = progress.items.map((item) => {
     const own = rows.filter((p) => Number(p.required_payment_id) === Number(item.id));
