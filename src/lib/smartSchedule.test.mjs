@@ -27,6 +27,21 @@ test('calendar: Mon–Fri only, dots capped at 3 plus "+N", unavailable days car
   assert.deepEqual(dotSummary(4), { dots: 3, more: 1 });
 });
 
+test('the day dot is red when a session there had an applicant who did not attend', () => {
+  const weeks = calendarWeeks('2026-11', [
+    { date: '2026-11-23', available: true, sessions: [{ time: '9:00–11:00 AM', occupancy: '3/5', did_not_attend: true }] },
+    { date: '2026-11-24', available: true, sessions: [{ time: '9:00–11:00 AM', occupancy: '2/5', did_not_attend: false }] },
+  ]);
+  const cells = weeks.flat().filter(Boolean);
+  const mon = cells.find((c) => c.date === '2026-11-23');
+  const tue = cells.find((c) => c.date === '2026-11-24');
+  assert.equal(mon.hasNoShow, true);
+  assert.equal(tue.hasNoShow, false);
+  assert.equal(cells.find((c) => c.date === '2026-11-25').hasNoShow, false, 'a day with no session has no red dot');
+  assert.match(dayTitle(mon, 'Orientation/Tasting'), /did not attend/);
+  assert.doesNotMatch(dayTitle(tue, 'Orientation/Tasting'), /did not attend/);
+});
+
 test('months, slots and the evaluate window', () => {
   assert.equal(monthOfDate('2026-12-04'), '2026-12');
   assert.equal(shiftMonth('2026-12', 1), '2027-01');

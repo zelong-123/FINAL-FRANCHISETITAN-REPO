@@ -69,7 +69,7 @@ export function RecordFolderCard({ folder, row, onOpen }) {
 
 export function RecordFolderGrid({ folder, rows, onOpen }) {
   return (
-    <div className="grid grid-cols-[repeat(5,_minmax(0,_1fr))] [grid-auto-rows:1fr] gap-3 p-[4px_0_14px] max-[1281px]:later:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[861px]:later-2:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[521px]:later-3:grid-cols-[minmax(0,_1fr)]" role="list">
+    <div className="grid grid-cols-[repeat(5,_minmax(0,_1fr))] [grid-auto-rows:1fr] gap-3 max-[1281px]:later:grid-cols-[repeat(3,_minmax(0,_1fr))] max-[861px]:later-2:grid-cols-[repeat(2,_minmax(0,_1fr))] max-[521px]:later-3:grid-cols-[minmax(0,_1fr)]" role="list">
       {rows.map((row) => <RecordFolderCard key={row.id} folder={folder} row={row} onOpen={onOpen} />)}
     </div>
   );

@@ -392,6 +392,24 @@
 .activities-page:has(.master-schedule.is-embedded) { width: 100%; max-width: none; padding-left: 12px; padding-right: 12px; }
 @media (max-width: 640px) { .ms-calendar .fc .fc-toolbar-title { flex: 1 1 100%; margin: 0; text-align: center; } }
 
+/* Schedule form (Set Again / create / edit): the native date and time pickers sit on the page's
+   darkest surface, and the native picker popup + icon follow the dark scheme. Light mode keeps
+   the normal input surface so the text stays readable. */
+.ms-form input[type='date'],
+.ms-form input[type='time'] { background: #070a13; color-scheme: dark; }
+:root[data-theme='light'] .ms-form input[type='date'],
+:root[data-theme='light'] .ms-form input[type='time'] { background: var(--input-bg); color-scheme: light; }
+
+/* Applicants combobox in the session modal: `Field` styles every input it contains, which made the
+   old search box and checkboxes heavy. These two stay plain inside that styled container. */
+.ms-form .ms-applicant-input { min-height: 30px; padding: 0 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.ms-form .ms-applicant-input:hover { border: 0; }
+.ms-form .ms-applicant-input:focus { border: 0; background: transparent; box-shadow: none; }
+.ms-form .ms-pick { appearance: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; border: 1px solid var(--input-border); border-radius: 4px; background: var(--input-bg); box-shadow: none; cursor: pointer; display: inline-grid; place-content: center; }
+.ms-form .ms-pick:checked { background: var(--accent); border-color: var(--accent); }
+.ms-form .ms-pick:checked::after { content: ''; width: 9px; height: 5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translate(1px, -1px); }
+.ms-form .ms-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Global rules with class-level specificity or more compete with utilities, so they are not in base. */
 @layer utilities {
 body,
@@ -891,13 +909,15 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
   }
 }
 
-/* Applicants > Application Detail tab: roomier spacing, larger text, darker canvas so cards stand out. Dark mode only for the background. */
-.ap-detail-panel { padding: 16px 18px 18px !important; }
-.ap-detail-panel > div:first-child { padding: 0 0 4px; gap: 12px; }
+/* Applicants > Application Detail tab: no outer panel. The folder tabs, the Grid/List toggle and the
+   record cards sit straight on the page canvas and share one 16px vertical rhythm (the section is a
+   flex column with gap 16). Only the small controls keep a background of their own. */
+.ap-detail-panel { padding: 0 !important; }
+.ap-detail-panel > div:first-child { padding: 0; gap: 12px; }
 .ap-detail-panel > div:first-child [role='tablist'],
 .ap-detail-panel > div:first-child [role='group'] { padding: 5px; }
 .ap-detail-panel > div:first-child button { font-size: 13px; padding: 7px 12px; min-height: 34px; }
-.ap-detail-panel [role='list'] { gap: 12px; padding: 4px 0 12px; }
+.ap-detail-panel [role='list'] { gap: 12px; padding: 0; }
 .ap-detail-panel [role='listitem'] { padding: 14px; gap: 5px; font-size: 12px; border-radius: 8px !important; min-height: 0 !important; }
 .ap-detail-panel [role='listitem'] strong { font-size: 14px; }
 .ap-detail-panel [role='listitem'] span { font-size: 12px; }
@@ -905,7 +925,6 @@ td button:hover:not(:disabled) { color: var(--text); border-color: var(--border-
 .ap-detail-panel [role='listitem'] .ap-folder-remarks { font-size: 12px; }
 .ap-detail-panel table td { font-size: 13px; }
 .ap-detail-panel table th { font-size: 11px; }
-:root:not([data-theme='light']) .ap-detail-panel { background: #0a0e18 !important; }
 :root:not([data-theme='light']) .ap-detail-panel [role='listitem'] { background: #161d2e !important; border-color: #2e3850 !important; }
 :root:not([data-theme='light']) .ap-detail-panel [role='listitem']:hover { background: #1c2539 !important; }
 :root[data-theme='light'] .ap-detail-panel [role='listitem'] { background: #fff !important; }

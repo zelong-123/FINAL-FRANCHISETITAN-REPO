@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FaXmark } from 'react-icons/fa6';
 import { api, ApiError, firstValidationMessage } from '../../lib/api';
 import { Field, Modal } from '../ApiUi';
 import RecordCode from '../RecordCode';
@@ -7,8 +8,11 @@ import {
   ACTIVITY_TYPES, BRANDED_TYPES, DEFAULT_DURATION_MINUTES, NO_BRAND_PREFERENCE, VENUE_OPTIONS,
   activityLabel, addMinutes, brandCheck, formatSessionRange, minutesBetween, sessionPayload, splitManila,
 } from '../../lib/scheduleSessions';
-import { closesMinutes, lastStartMinutes, minutesLabel, opensMinutes } from '../../lib/scheduleConfig';
+import { closesMinutes, minutesLabel } from '../../lib/scheduleConfig';
 import useScheduleConfig from '../../lib/useScheduleConfig';
+import { useSessionAvailability } from '../../lib/useAvailability';
+import { monthOfDate } from '../../lib/smartSchedule';
+import { SmartStartPicker } from './SmartSchedule';
 
 /*
  * Schedule form for the Master Schedule — create a session, edit one, or
@@ -58,6 +62,11 @@ export default function SessionForm({ mode = 'create', session = null, applicant
   const [searchError, setSearchError] = useState('');
   const [picked, setPicked] = useState({}); // id → row, kept when it leaves the results
   const searchNo = useRef(0);
+  // Typable combobox: the list only opens once something is typed, never on its own.
+  const [listOpen, setListOpen] = useState(false);
+  const [resultsTerm, setResultsTerm] = useState('');
+  const pickerRef = useRef(null);
+  const applicantInputRef = useRef(null);
   const [rawEvaluation, setEvaluation] = useState(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState('');
@@ -71,6 +80,13 @@ export default function SessionForm({ mode = 'create', session = null, applicant
 
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
   const branded = BRANDED_TYPES.includes(form.activity_type);
+  // The calendar picker replaces the native date/time inputs: month shown, and the data it shows.
+  const [pickerMonth, setPickerMonth] = useState(() => monthOfDate(form.date));
+  const spanMinutes = minutesBetween(form.start, form.end);
+  const durationMinutes = spanMinutes > 0 ? spanMinutes : defaultDuration;
+  const availability = useSessionAvailability(
+    form.handler_id || null, form.activity_type, pickerMonth, durationMinutes, mode === 'edit' ? session.id : null,
+  );
 
   const chosen = useMemo(() => {
     if (mode === 'setAgain') return [applicant];
@@ -80,15 +96,18 @@ export default function SessionForm({ mode = 'create', session = null, applicant
 
   useEffect(() => {
     if (mode !== 'create') return undefined;
+    const term = search.trim();
+    // Nothing typed yet: no request and no list (the list is only a typed search result).
+    if (!term) return undefined;
     const ticket = ++searchNo.current;
     const timer = window.setTimeout(async () => {
       setSearching(true);
       setSearchError('');
       try {
-        const response = await api.get('/applicants', { search: search.trim(), eligible_for_scheduling: 1, per_page: 20 });
-        if (ticket === searchNo.current) setResults(response.data || []);
+        const response = await api.get('/applicants', { search: term, eligible_for_scheduling: 1, per_page: 20 });
+        if (ticket === searchNo.current) { setResults(response.data || []); setResultsTerm(term); }
       } catch (error) {
-        if (ticket === searchNo.current) setSearchError(firstValidationMessage(error));
+        if (ticket === searchNo.current) { setSearchError(firstValidationMessage(error)); setResultsTerm(term); }
       } finally {
         if (ticket === searchNo.current) setSearching(false);
       }
@@ -96,10 +115,30 @@ export default function SessionForm({ mode = 'create', session = null, applicant
     return () => window.clearTimeout(timer);
   }, [mode, search]);
 
+  // Close the suggestions when the click lands outside the picker.
+  useEffect(() => {
+    if (!listOpen) return undefined;
+    const onDown = (event) => { if (!pickerRef.current?.contains(event.target)) setListOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [listOpen]);
+
   const togglePick = (row) => {
     const isPicked = form.applicant_ids.includes(row.id);
     setPicked((current) => ({ ...current, [row.id]: row }));
     set({ applicant_ids: isPicked ? form.applicant_ids.filter((id) => id !== row.id) : [...form.applicant_ids, row.id] });
+  };
+  const unpick = (id) => set({ applicant_ids: form.applicant_ids.filter((applicantId) => applicantId !== id) });
+  // The dropdown is only the typed search: no query → closed, no results.
+  const query = search.trim();
+  const open = listOpen && query.length > 0;
+  const options = resultsTerm === query ? results : [];
+  const onSearchKey = (event) => {
+    if (event.key === 'Escape') { setListOpen(false); return; }
+    if (event.key === 'Enter' && open) {
+      const next = options.find((row) => !form.applicant_ids.includes(row.id));
+      if (next) { event.preventDefault(); togglePick(next); }
+    }
   };
   const brands_ = brandCheck(form.activity_type, form.brand_id, chosen);
 
@@ -191,6 +230,25 @@ export default function SessionForm({ mode = 'create', session = null, applicant
   };
   const editTime = (patch) => { setFromSuggestion(false); set(patch); };
 
+  // A calendar day or hour slot: the duration is kept, so the end time moves with the start.
+  const pickSlot = ({ date, hour, month: nextMonth }) => {
+    if (nextMonth) setPickerMonth(nextMonth);
+    const patch = { date: date || form.date };
+    if (Number.isFinite(hour)) {
+      patch.start = `${String(hour).padStart(2, '0')}:00`;
+      patch.end = addMinutes(patch.start, durationMinutes);
+    }
+    setEndTouched(true);
+    set(patch);
+  };
+  // What SmartStartPicker reads: the same field names the Schedule activity modal uses.
+  const pickerForm = {
+    start_date: form.date,
+    start_hour: form.start ? Number(form.start.slice(0, 2)) : null,
+    start_minute: form.start ? Number(form.start.slice(3, 5)) : 0,
+    duration_choice: String(Math.round(durationMinutes / 60)),
+  };
+
   const title = mode === 'create' ? 'Schedule a session'
     : mode === 'edit' ? `Edit ${activityLabel(session.activity_type)} session`
       : `Set Again — ${applicant.full_name}`;
@@ -250,27 +308,53 @@ export default function SessionForm({ mode = 'create', session = null, applicant
       <div className="ms-form grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[12px_14px] later-2:[&_.full]:col-span-full max-[681px]:later:grid-cols-[minmax(0,_1fr)]">
         {mode === 'create' ? (
           <Field label="Applicants" full required hint="Only Qualified or Scheduling applicants are listed.">
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by ID, name, email, or phone" aria-label="Search applicants" />
-            {chosen.length > 0 && (
-              <p className="m-[6px_0_0] text-text-secondary text-[11.5px]">Selected: {chosen.map((row) => row.full_name).join(', ')}</p>
-            )}
-            <ul className="grid max-h-[210px] m-[6px_0_0] p-1 overflow-auto border border-input-line rounded-[9px] [background:var(--input-bg)] [list-style:none] [&_label]:grid [&_label]:grid-cols-[auto_1fr_auto] [&_label]:items-center [&_label]:gap-[2px_8px] [&_label]:p-[6px_8px] [&_label]:rounded-[7px] [&_label]:cursor-pointer [&_label:hover]:[background:var(--hover)] [&_label.is-picked]:[background:var(--active)] [&_small]:col-[2_/_-1] [&_small]:text-muted [&_small]:text-[11px]" role="listbox" aria-multiselectable="true" aria-busy={searching}>
-              {searchError && <li className="text-muted text-[12px]">{searchError}</li>}
-              {!searchError && results.length === 0 && <li className="text-muted text-[12px]">{searching ? 'Searching…' : 'No eligible applicants match.'}</li>}
-              {results.map((row) => {
-                const isPicked = form.applicant_ids.includes(row.id);
-                return (
-                  <li key={row.id}>
-                    <label className={isPicked ? 'is-picked' : ''}>
-                      <input type="checkbox" checked={isPicked} onChange={() => togglePick(row)} />
-                      <span className="text-text">{row.full_name}</span>
-                      <RecordCode code={row.applicant_code} label="Applicant ID" copyable={false} />
-                      <small>{row.preferred_brand?.name || 'No brand preference'}{row.phone ? ` · ${row.phone}` : ''}</small>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
+            <div ref={pickerRef} className="relative">
+              {/* Typable combobox: picked applicants are chips inside the box, the list hangs under it. */}
+              <div
+                className={`flex flex-wrap items-center gap-[6px] min-h-[44px] p-[6px_10px] border rounded-[11px] [background:var(--input-bg)] [transition:border-color_.18s_ease,_box-shadow_.18s_ease] ${open ? 'border-accent [box-shadow:0_0_0_4px_color-mix(in_srgb,_var(--accent)_11%,_transparent)]' : 'border-input-line'}`}
+                onClick={() => applicantInputRef.current?.focus()}
+              >
+                {chosen.map((row) => (
+                  <span key={row.id} className="inline-flex items-center gap-[4px] max-w-full h-[26px] pl-[9px] pr-[5px] rounded-[7px] border border-[color:color-mix(in_srgb,_var(--accent)_45%,_transparent)] [background:color-mix(in_srgb,_var(--accent)_14%,_transparent)] text-text text-[12.5px] font-[620]">
+                    <span className="truncate">{row.full_name}</span>
+                    <button type="button" aria-label={`Remove ${row.full_name}`} className="w-[18px] h-[18px] shrink-0 inline-grid place-items-center border-0 rounded-[5px] [background:transparent] text-muted cursor-pointer hover:text-text hover:[background:var(--hover)]" onClick={(event) => { event.stopPropagation(); unpick(row.id); }}><FaXmark aria-hidden="true" /></button>
+                  </span>
+                ))}
+                <input
+                  ref={applicantInputRef}
+                  value={search}
+                  onChange={(event) => { setSearch(event.target.value); setListOpen(true); }}
+                  onFocus={() => { if (query) setListOpen(true); }}
+                  onKeyDown={onSearchKey}
+                  placeholder={chosen.length ? 'Add another applicant…' : 'Search by ID, name, email, or phone'}
+                  aria-label="Search applicants"
+                  aria-expanded={open}
+                  aria-controls="ms-applicant-options"
+                  autoComplete="off"
+                  className="ms-applicant-input flex-1 min-w-[150px]"
+                />
+              </div>
+              {open && (
+                <ul id="ms-applicant-options" className="absolute left-0 right-0 top-[calc(100%+5px)] z-30 grid max-h-[240px] m-0 p-1 overflow-auto border border-line-strong rounded-[10px] [background:var(--panel-2)] [box-shadow:var(--shadow-md)] [list-style:none]" role="listbox" aria-multiselectable="true" aria-busy={searching}>
+                  {searchError ? (
+                    <li className="p-[8px_10px] text-danger text-[12px]" role="alert">{searchError}</li>
+                  ) : options.length === 0 ? (
+                    <li className="p-[8px_10px] text-muted text-[12px]">{searching || query !== resultsTerm ? 'Searching…' : 'No eligible applicants match.'}</li>
+                  ) : options.map((row) => {
+                    const isPicked = form.applicant_ids.includes(row.id);
+                    return (
+                      <li key={row.id}>
+                        <label className={`flex items-center gap-[10px] p-[8px_10px] rounded-[8px] cursor-pointer ${isPicked ? '[background:var(--active)]' : 'hover:[background:var(--hover)]'}`}>
+                          <input type="checkbox" className="ms-pick" checked={isPicked} onChange={() => togglePick(row)} />
+                          <span className="text-text text-[13.5px]">{row.full_name}</span>
+                          <span className="ml-auto shrink-0"><RecordCode code={row.applicant_code} label="Applicant ID" copyable={false} /></span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </Field>
         ) : (
           <div className="[&_span]:text-muted [&_span]:text-[11px] [&_p]:m-[2px_0_0] [&_p]:text-text full [.ap-grid_&]:col-span-full">
@@ -309,21 +393,30 @@ export default function SessionForm({ mode = 'create', session = null, applicant
             {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
           </select>
         </Field>
-        <Field label="Date" required>
-          <input type="date" value={form.date} onChange={(event) => editTime({ date: event.target.value })} />
-        </Field>
-        <Field label="Start time" required hint={`${window_.days_label}, ${minutesLabel(opensMinutes())}–${minutesLabel(lastStartMinutes())}, on :00 or :30.`}>
-          <input type="time" step="1800" min={window_.opens_at} max={window_.last_start} value={form.start} onChange={(event) => editTime({ start: event.target.value })} />
-        </Field>
-        <Field label="End time" required hint={`Default ${durationFor(form.activity_type) / 60} h — editable (whole hours), ends by ${minutesLabel(closesMinutes())}.`}>
-          <input type="time" step="1800" min={window_.opens_at} max={window_.closes_at} value={form.end} onChange={(event) => { setEndTouched(true); editTime({ end: event.target.value }); }} />
-        </Field>
-        <Field label="Handler">
+        <Field label="Handler" hint="The calendar shows this handler's own free days and start times.">
           <select value={form.handler_id} onChange={(event) => set({ handler_id: event.target.value })}>
             <option value="">No handler</option>
             {handlers.map((user) => <option key={user.id} value={user.id}>{user.full_name}{user.role ? ` (${user.role})` : ''}</option>)}
           </select>
         </Field>
+
+        {/* Date + free start times, the same calendar the Schedule activity modal uses. */}
+        <SmartStartPicker
+          availability={availability}
+          month={pickerMonth}
+          setMonth={setPickerMonth}
+          form={pickerForm}
+          onPick={pickSlot}
+          activityLabel={activityLabel(form.activity_type)}
+          noHandlerText="No handler picked yet — without one, the calendar only checks the facility limit. Pick a handler to see their own free times."
+          slotsLocked={mode === 'create' && form.applicant_ids.length === 0}
+          slotsLockedHint="View only while no applicant is selected: the free days and hours are shown, but a start time cannot be picked yet."
+          durationField={(
+            <Field label="End time" required hint={`${Math.round(durationMinutes / 60)} h from the start — editable (whole hours), ends by ${minutesLabel(closesMinutes())}.`}>
+              <input type="time" step="1800" min={window_.opens_at} max={window_.closes_at} value={form.end} onChange={(event) => { setEndTouched(true); editTime({ end: event.target.value }); }} />
+            </Field>
+          )}
+        />
         <Field label="Venue">
           <select value={form.venue} onChange={(event) => set({ venue: event.target.value })}>
             <option value="">Not set</option>

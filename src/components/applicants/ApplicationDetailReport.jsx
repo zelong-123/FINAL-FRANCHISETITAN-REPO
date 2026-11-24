@@ -74,6 +74,45 @@ function NotStarted({ note }) {
   );
 }
 
+/**
+ * Skeleton shown inside the Application Detail modal while the report loads. Same shimmer as the
+ * applicant Update modal's skeleton (`.ap-skeleton`, see src/tailwind.css) and the same blocks as a
+ * real report page — page heading, label/value card, row card — so the modal never flashes empty text.
+ */
+function ReportSkeleton() {
+  const bar = 'ap-skeleton block rounded-[6px]';
+  const pair = (index) => (
+    <React.Fragment key={index}>
+      <span className={`${bar} h-[11px] w-[72%] max-w-[170px]`} />
+      <span className={`${bar} h-[11px] w-[56%]`} />
+    </React.Fragment>
+  );
+  return (
+    <div className="flex flex-col gap-[14px]" role="status" aria-live="polite" aria-label="Loading the Application Detail">
+      <div className="flex items-center justify-between gap-4">
+        <span className={`${bar} h-[18px] w-[38%] max-w-[260px]`} />
+        <span className={`${bar} h-[24px] w-[92px] rounded-[999px]!`} />
+      </div>
+      <section className="flex flex-col gap-[12px] p-[14px_16px] border border-[#2a3041] [background:#141a28]">
+        <span className={`${bar} h-[11px] w-[28%] max-w-[180px]`} />
+        <div className="grid grid-cols-[minmax(100px,_180px)_minmax(0,_1fr)] items-center gap-[10px_14px] max-[640px]:grid-cols-[minmax(90px,_140px)_minmax(0,_1fr)]">
+          {[0, 1, 2, 3, 4, 5].map(pair)}
+        </div>
+      </section>
+      <section className="flex flex-col gap-[10px] p-[14px_16px] border border-[#2a3041] [background:#141a28]">
+        <span className={`${bar} h-[11px] w-[34%] max-w-[220px]`} />
+        {[0, 1, 2].map((i) => <span key={i} className={`${bar} h-[34px] w-full rounded-[8px]!`} />)}
+      </section>
+      <section className="flex flex-col gap-[10px] p-[14px_16px] border border-[#2a3041] [background:#141a28]">
+        <span className={`${bar} h-[11px] w-[22%] max-w-[150px]`} />
+        <span className={`${bar} h-[10px] w-[78%]`} />
+        <span className={`${bar} h-[10px] w-[62%]`} />
+        <span className={`${bar} h-[10px] w-[44%]`} />
+      </section>
+    </div>
+  );
+}
+
 /** One attached file: images preview on a ~2s hover (tap to open/close on touch); others open on click. */
 function Attachment({ name, mime, path, note }) {
   const [preview, setPreview] = useState(null);
@@ -513,10 +552,22 @@ export default function ApplicationDetailReport({ report, onClose }) {
           <header className="flex flex-none items-start justify-between gap-4 p-[16px_20px] border-b border-b-[#1f2842] [background:#070A13] print:hidden">
             <div className="min-w-0">
               <span className="block text-[#8f9bbd] text-[12px] font-[700] tracking-[.12em] uppercase">Application Detail{a ? ` · Current stage: ${a.status_label}` : ''}</span>
-              <h2 className="m-[2px_0_0] text-[19px] text-[#f1f3fb]">{a ? `${a.full_name}${a.applicant_code ? ` · ${a.applicant_code}` : ''}` : 'Loading…'}</h2>
+              <h2 className="m-[2px_0_0] text-[19px] text-[#f1f3fb]">
+                {a
+                  ? `${a.full_name}${a.applicant_code ? ` · ${a.applicant_code}` : ''}`
+                  : <span className="ap-skeleton mt-[3px] block h-[16px] w-[min(240px,_60%)] rounded-[6px]" aria-hidden="true" />}
+              </h2>
             </div>
             <button type="button" aria-label="Close" onClick={onClose} className="grid place-items-center w-[36px] h-[36px] rounded-[10px] border border-[#353e57] [background:#1a2133]"><FaXmark aria-hidden="true" /></button>
           </header>
+          {!data && report?.loading && (
+            <nav className="flex-none p-[10px_20px] border-b border-b-[#1f2842] print:hidden" aria-hidden="true">
+              <div className="flex flex-wrap gap-[6px] max-[640px]:hidden">
+                {PAGES.map((item) => <span key={item.key} className="ap-skeleton block h-[36px] w-[96px] rounded-[9px]" />)}
+              </div>
+              <span className="ap-skeleton hidden max-[640px]:block h-[42px] w-full rounded-[10px]" />
+            </nav>
+          )}
           {data && (
             <nav className="flex-none p-[10px_20px] border-b border-b-[#1f2842] print:hidden" aria-label="Report pages">
               <div className="flex flex-wrap gap-[6px] max-[640px]:hidden" role="tablist">
@@ -540,7 +591,7 @@ export default function ApplicationDetailReport({ report, onClose }) {
           )}
           <div className="flex-[1_1_auto] min-h-0 overflow-y-auto p-[16px_20px] print:overflow-visible">
             <div key={index} className={slideDir < 0 ? 'animate-cal-slide-from-left' : 'animate-cal-slide-from-right'}>
-            {report?.loading && <p className="text-[15px]">Loading the Application Detail…</p>}
+            {report?.loading && <ReportSkeleton />}
             {report?.error && <p className="text-[15px] text-[#ff9ca3]" role="alert">{report.error}</p>}
             {data && (
               <>

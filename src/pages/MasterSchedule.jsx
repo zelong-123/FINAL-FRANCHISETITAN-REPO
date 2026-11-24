@@ -15,7 +15,7 @@ import { MiniCalendar, MonthYearWheel, StatusPanel, WeekSidePanels } from '../co
 import { addDays, isOutsideHours, manilaToday, mondayOf, monthOf, panelCounts, panelRange, sessionsInRange, shiftBusinessDay } from '../lib/masterScheduleDays';
 import SessionDetail from '../components/schedule/SessionDetail';
 import DropDialog from '../components/schedule/DropDialog';
-import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, statusLabel } from '../lib/scheduleSessions';
+import { ACTIVITY_TYPES, SESSION_STATUSES, STATUS_COLORS, activityLabel, formatSessionRange, sessionDidNotAttend, statusLabel } from '../lib/scheduleSessions';
 
 /*
  * Master Schedule — every Orientation/Tasting and Training session on
@@ -176,7 +176,8 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
   // "Show Pinned Activity" checkboxes: a session shows on the chart only when its group is checked.
   // The Status "Completed" legend toggles the Completed checkbox, so both stay in sync.
   const PINNED_GROUPS = { completed: ['completed'], scheduled: ['pending', 'confirmed'], cancelled: ['cancelled', 'rescheduled'] };
-  const [pinnedShown, setPinnedShown] = useState({ completed: false, scheduled: true, cancelled: true });
+  // Default feed shows only the live schedules; Completed and Cancelled stay hidden until ticked.
+  const [pinnedShown, setPinnedShown] = useState({ completed: false, scheduled: true, cancelled: false });
   const [pinnedOpen, setPinnedOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const customRef = useRef(null);
@@ -211,17 +212,20 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
 
   const events = useMemo(() => chartSessions.map((session) => {
     const color = STATUS_COLORS[session.status] || '#6b7488';
+    // Red card while a seated applicant did not attend (No Show, or the schedule passed unmarked).
+    const didNotAttend = sessionDidNotAttend(session);
     return {
       id: String(session.id),
       start: session.start_at,
       end: session.end_at,
       // Dark pinned cards (EventBody); the status colour stays as the left edge accent only.
+      // One stroke only: red replaces the status colour completely while an applicant did not attend.
       backgroundColor: '#1f2533',
-      borderColor: color,
-      classNames: [`ms-event`, `is-${session.status}`],
+      borderColor: didNotAttend ? DID_NOT_ATTEND_RED : color,
+      classNames: ['ms-event', `is-${session.status}`, ...(didNotAttend ? ['is-did-not-attend'] : [])],
       // Only live sessions can be dragged (reschedule; Admin may also merge).
       editable: permissions.schedule && ['pending', 'confirmed'].includes(session.status),
-      extendedProps: { session },
+      extendedProps: { session, didNotAttend },
     };
   }), [chartSessions, permissions.schedule]);
 
@@ -547,10 +551,14 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           eventDurationEditable={false}
           eventDidMount={(info) => {
             if (info.isMirror) return;
+            const { session, didNotAttend } = info.event.extendedProps;
             info.el.dataset.sessionId = info.event.id;
-            info.el.title = eventTooltip(info.event.extendedProps.session);
-            // Status accent on the left edge; the card tint stays the same.
-            info.el.style.borderLeftColor = STATUS_COLORS[info.event.extendedProps.session.status] || '#6b7488';
+            info.el.title = eventTooltip(session, didNotAttend);
+            // Status accent on the left edge; a card with an applicant who did not attend is red all around.
+            const edge = didNotAttend ? DID_NOT_ATTEND_RED : (STATUS_COLORS[session.status] || '#6b7488');
+            info.el.style.borderColor = edge;
+            info.el.style.borderLeftColor = edge;
+            info.el.style.setProperty('--fc-event-border-color', edge);
             eventEls.current.set(info.event.id, info.el);
           }}
           eventWillUnmount={(info) => {
@@ -559,7 +567,7 @@ export default function MasterSchedule({ embedded = false, refreshKey = 0, sessi
           eventDragStart={(info) => void onDragStart(info)}
           eventDragStop={onDragStop}
           eventDrop={onDrop}
-          eventContent={(info) => <EventBody session={info.event.extendedProps.session} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
+          eventContent={(info) => <EventBody session={info.event.extendedProps.session} didNotAttend={info.event.extendedProps.didNotAttend} isAdmin={isAdmin} menu={cardMenu} short={Boolean(info.event.end) && info.event.end - info.event.start < SHORT_SESSION_MS} />}
         />
         </div>
         {outsideHours.length > 0 && (
@@ -630,7 +638,7 @@ function sessionTime(startIso, endIso) {
 }
 
 /** Hover tooltip: the whole story without opening the session. */
-function eventTooltip(session) {
+function eventTooltip(session, didNotAttend = false) {
   return [
     `${activityLabel(session.activity_type)} · ${statusLabel(session.status)}`,
     formatSessionRange(session.start_at, session.end_at),
@@ -638,22 +646,59 @@ function eventTooltip(session) {
     session.handler?.full_name || 'No handler',
     session.venue,
     session.occupancy,
+    didNotAttend ? 'An applicant did not attend — adjust their schedule activity.' : '',
   ].filter(Boolean).join('\n');
 }
+
+/** Red outline for a pinned session that has an applicant who did not attend (`sessionDidNotAttend`). */
+const DID_NOT_ATTEND_RED = '#ef4444';
 
 /** Time · activity · brand + "3/5 applicants" (+ "Merge" for Admin). */
 /** Sessions shorter than this start with the summary only; longer ones always show everything. */
 const SHORT_SESSION_MS = 120 * 60 * 1000;
 
-function EventBody({ session, isAdmin, menu, short }) {
+/** A pinned card only keeps the applicant row when the slot is tall enough to hold it. */
+const CARD_APPLICANTS_MIN_HEIGHT = 150;
+/** Below this the handler line goes too: the card keeps the time, activity and 3/5 only. */
+const CARD_HANDLER_MIN_HEIGHT = 104;
+/** Narrow week/day columns shrink the padding and the avatars a little. */
+const CARD_NARROW_WIDTH = 196;
+
+function EventBody({ session, didNotAttend = false, isAdmin, menu, short }) {
   const taken = session.participant_count ?? 0;
   const capacity = session.max_capacity ?? 5;
   const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // The same card renders at every zoom level, so it measures itself and drops the lower rows
+  // (avatars, then the handler) instead of spilling out of a short 30-minute slot.
+  const bodyRef = useRef(null);
+  const [box, setBox] = useState({ narrow: false, withApplicants: true, withHandler: true });
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    // Measure the calendar slot, not the card: the card grows with its content, the slot keeps the
+    // real room a short session gives it.
+    const slot = el.closest('.fc-event') || el;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const size = Array.isArray(entry?.borderBoxSize) ? entry.borderBoxSize[0] : entry?.borderBoxSize;
+      const rect = slot.getBoundingClientRect();
+      const width = size?.inlineSize ?? rect.width;
+      const height = size?.blockSize ?? rect.height;
+      const next = {
+        narrow: width < CARD_NARROW_WIDTH,
+        withApplicants: height >= CARD_APPLICANTS_MIN_HEIGHT,
+        withHandler: height >= CARD_HANDLER_MIN_HEIGHT,
+      };
+      setBox((current) => (current.narrow === next.narrow && current.withApplicants === next.withApplicants && current.withHandler === next.withHandler ? current : next));
+    });
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, []);
   const collapsed = short && !expanded;
   const items = menu ? menu(session) : [];
   return (
-    <div className="ms-event-body relative grid content-start gap-[6px] min-w-0 p-[12px_14px] rounded-[16px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#0a0e18] border border-[#2a3d5c] [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[12px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase">
+    <div ref={bodyRef} className={`ms-event-body relative grid content-start gap-[6px] min-w-0 rounded-[16px] text-[#f5f7fb] text-[11px] leading-[1.25] [background:#0a0e18] border ${box.narrow ? 'p-[10px_10px]' : 'p-[12px_14px]'} ${didNotAttend ? 'border-transparent shadow-[0_0_0_1px_rgba(239,68,68,0.45),0_0_18px_rgba(239,68,68,0.32)]' : 'border-[#2a3d5c]'} [&_strong]:overflow-hidden [&_strong]:font-[800] [&_strong]:text-[12px] [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:uppercase`}>
       <span className="flex items-center justify-between gap-[6px] pr-[18px] text-[#c9d1e0] text-[10px] font-[600] whitespace-nowrap overflow-hidden">
         <span className="ms-event-time overflow-hidden text-ellipsis">{sessionTime(session.start_at, session.end_at)}</span>
         <span className="shrink-0">{session.start_at ? manilaDate.format(new Date(session.start_at)).split(' ').slice(-2).join(' ').toUpperCase() : ''}</span>
@@ -669,17 +714,22 @@ function EventBody({ session, isAdmin, menu, short }) {
       </span>
       <div className={`grid min-h-0 transition-[grid-template-rows,opacity] duration-300 ease-out ${collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'}`}>
       <div className="grid content-start gap-[6px] min-h-0 overflow-hidden">
-      <span className="overflow-hidden text-[#8a94a6] text-[10px] text-ellipsis whitespace-nowrap">Handler({session.handler?.full_name || 'No handler'})</span>
+      {box.withHandler && <span className="overflow-hidden text-[#8a94a6] text-[10px] text-ellipsis whitespace-nowrap">Handler({session.handler?.full_name || 'No handler'})</span>}
+      {box.withApplicants && (
+      <div className="grid gap-[6px] min-w-0">
       <span className="ms-card-divider mt-[12px] border-t border-[#2a3d5c]" aria-hidden="true" />
-      <span className="ms-applicant-row flex flex-nowrap gap-[8px] pt-[10px]" aria-label={`${taken} of ${capacity} applicants`}>
+      {/* Every applicant circle stays reachable: the row scrolls sideways instead of clipping. */}
+      <span className={`ms-applicant-row flex flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain [touch-action:pan-x] pt-[10px] pb-[2px] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-[5px] [&::-webkit-scrollbar-thumb]:rounded-[999px] [&::-webkit-scrollbar-thumb]:[background:rgba(148,163,184,0.45)] [&::-webkit-scrollbar-track]:[background:transparent] ${box.narrow ? 'gap-[6px]' : 'gap-[8px]'}`} aria-label={`${taken} of ${capacity} applicants`}>
         {Array.from({ length: capacity }, (_, index) => {
           const applicant = session.active_participants?.[index]?.applicant;
           const initials = applicant?.full_name ? applicant.full_name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() : '';
           return (
-            <i key={index} className={`grid place-items-center shrink-0 w-[36px] h-[36px] rounded-[50%] text-[13px] font-[700] not-italic ${initials ? 'bg-[#3d4f8a] text-[#f5f7fb]' : 'border border-[#2a3d5c] bg-[#0d1322]'}`} aria-hidden="true">{initials}</i>
+            <i key={index} className={`grid place-items-center shrink-0 rounded-[50%] font-[700] not-italic ${box.narrow ? 'w-[30px] h-[30px] text-[11px]' : 'w-[36px] h-[36px] text-[13px]'} ${initials ? 'bg-[#3d4f8a] text-[#f5f7fb]' : 'border border-[#2a3d5c] bg-[#0d1322]'}`} aria-hidden="true">{initials}</i>
           );
         })}
       </span>
+      </div>
+      )}
       </div>
       </div>
       {short && (

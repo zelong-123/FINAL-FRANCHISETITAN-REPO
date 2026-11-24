@@ -4034,8 +4034,10 @@ export default function Applicants() {
           <ApplicantPagination meta={remote.data?.franchiseeMeta} page={page} onPage={setPage} noun="franchisees" />
         </section>
       ) : tab === 'detail' ? (
-        <section className="ap-detail-panel data-panel overflow-hidden mb-[18px] border border-line rounded-[19px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">
-          <div className="flex flex-wrap items-center justify-between gap-[10px] mb-3">
+        // No outer panel: the folder tabs, the Grid/List toggle and the records sit straight on the
+        // page canvas, separated by one even vertical rhythm (16px) so nothing looks boxed twice.
+        <section className="ap-detail-panel flex flex-col gap-4 min-w-0 mt-1 mb-0">
+          <div className="flex flex-wrap items-center justify-between gap-[10px]">
             <div className="inline-flex flex-wrap gap-1 p-[3px] border border-[#2a3041] rounded-[10px] [background:#111726] [&_button]:inline-flex [&_button]:items-center later:[&_button]:gap-[6px] later-2:[&_button]:p-[6px_11px] later-3:[&_button]:border-0 later-4:[&_button]:rounded-[7px] later-3:[&_button]:[background:transparent] later-3:[&_button]:text-[#9ba5bd] [&_button]:[font-family:inherit] later-4:[&_button]:[font-weight:inherit] [&_button]:[font-style:inherit] later-2:[&_button]:[line-height:inherit] later-5:[&_button]:text-[11.5px] later:[&_button]:cursor-pointer [&_button:hover]:text-[#fff] later-2:[&_button.active]:[background:#232b40] [&_button.active]:text-[#fff] later-3:[&_button:focus-visible]:[outline:2px_solid_#8175ff] later-3:[&_button:focus-visible]:[outline-offset:1px]" role="tablist" aria-label="Record folders">
               {RECORD_FOLDERS.map((item) => {
                 const count = remote.data?.detailMeta?.folder_counts?.[item.key];
@@ -4054,7 +4056,7 @@ export default function Applicants() {
                 );
               })}
             </div>
-            <div className="inline-flex flex-wrap gap-1 p-[3px] border border-[#2a3041] rounded-[10px] [background:#111726] [&_button]:inline-flex [&_button]:items-center later:[&_button]:gap-[6px] later-2:[&_button]:p-[6px_11px] later-3:[&_button]:border-0 later-4:[&_button]:rounded-[7px] later-3:[&_button]:[background:transparent] later-3:[&_button]:text-[#9ba5bd] [&_button]:[font-family:inherit] later-4:[&_button]:[font-weight:inherit] [&_button]:[font-style:inherit] later-2:[&_button]:[line-height:inherit] later-5:[&_button]:text-[11.5px] later:[&_button]:cursor-pointer [&_button:hover]:text-[#fff] later-2:[&_button.active]:[background:#232b40] [&_button.active]:text-[#fff] later-3:[&_button:focus-visible]:[outline:2px_solid_#8175ff] later-3:[&_button:focus-visible]:[outline-offset:1px]" role="group" aria-label="Record view">
+            <div className="ml-auto inline-flex flex-wrap gap-1 p-[3px] border border-[#2a3041] rounded-[10px] [background:#111726] [&_button]:inline-flex [&_button]:items-center later:[&_button]:gap-[6px] later-2:[&_button]:p-[6px_11px] later-3:[&_button]:border-0 later-4:[&_button]:rounded-[7px] later-3:[&_button]:[background:transparent] later-3:[&_button]:text-[#9ba5bd] [&_button]:[font-family:inherit] later-4:[&_button]:[font-weight:inherit] [&_button]:[font-style:inherit] later-2:[&_button]:[line-height:inherit] later-5:[&_button]:text-[11.5px] later:[&_button]:cursor-pointer [&_button:hover]:text-[#fff] later-2:[&_button.active]:[background:#232b40] [&_button.active]:text-[#fff] later-3:[&_button:focus-visible]:[outline:2px_solid_#8175ff] later-3:[&_button:focus-visible]:[outline-offset:1px]" role="group" aria-label="Record view">
               <button type="button" className={detailView === 'grid' ? 'active [&.branch-selector-card]:border-[color:color-mix(in_srgb,_var(--accent)_46%,_var(--border))] [&.branch-selector-card]:[background:linear-gradient(145deg,_color-mix(in_srgb,_var(--accent)_7%,_var(--panel)),_var(--panel))] [&.branch-selector-card]:[box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--accent)_8%,_transparent),_var(--shadow-md)] [&.duration-preset]:text-accent-text [&.duration-preset]:border-[color:color-mix(in_srgb,_var(--accent)_42%,_transparent)] [&.duration-preset]:[background:var(--active)] [&.inventory-chip]:text-[#fff] [&.inventory-chip]:border-transparent [&.inventory-chip]:[background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [&.inventory-chip]:[box-shadow:0_8px_18px_color-mix(in_srgb,_var(--accent)_26%,_transparent)] [.ap-tabs_&.ap-tab]:[background:rgba(123,_136,_255,_.18)] [.ap-tabs_&.ap-tab]:text-[#aeb6ff] [.ap-tabs_&.ap-tab]:border-transparent [.ap-tabs_&.ap-tab]:[box-shadow:none]' : ''} aria-pressed={detailView === 'grid'} onClick={() => changeDetailView('grid')}>
                 <FaTableCellsLarge aria-hidden="true" /> Grid
               </button>
@@ -4077,12 +4079,16 @@ export default function Applicants() {
           ) : (
             <RecordFolderGrid folder={detailFolder} rows={remote.data.detailRows} onOpen={(id) => void openReport(id)} />
           )}
-          <ApplicantPagination
-            meta={remote.data?.detailMeta}
-            page={page}
-            onPage={setPage}
-            noun="records"
-          />
+          {/* The pagination normally draws its own in-panel divider; on the open canvas it loses
+              that line and the side padding so it lines up with the cards. */}
+          <div className="[&>nav]:p-[0_0_6px]! [&>nav]:border-t-0!">
+            <ApplicantPagination
+              meta={remote.data?.detailMeta}
+              page={page}
+              onPage={setPage}
+              noun="records"
+            />
+          </div>
         </section>
       ) : (
         <section className="data-panel overflow-hidden mb-[18px] border border-line rounded-[13px] [background:color-mix(in_srgb,_var(--panel)_96%,_transparent)] [box-shadow:var(--shadow-sm)] [transition:border-color_.2s_ease,_box-shadow_.2s_ease] hover:border-line-strong hover:[box-shadow:var(--shadow-md)] [.branch-detail-grid_&]:m-0 [.branch-portal-financial>&]:p-[18px] [.branch-portal-financial>section&]:p-[18px] [.branch-portal-financial_&>h2]:m-[0_0_8px] [.branch-portal-financial_&>h2]:text-text [.branch-portal-financial_&>h2]:text-[14px] [.branch-portal-financial_&>h2]:tracking-[-.02em] [.branch-portal-financial_&>p]:m-[0_0_14px] [.branch-portal-financial_&>p]:text-muted [.branch-portal-financial_&>p]:text-[10px] [.branch-portal-financial_&>p]:leading-[1.65]">

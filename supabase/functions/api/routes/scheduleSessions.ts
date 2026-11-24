@@ -164,23 +164,30 @@ sessionRoutes.put('/schedule-sessions/config', role('admin'), async (c) => {
 
 const pickerRules = { applicant_id: ['required', 'integer', 'exists:applicants,id'], activity_type: ['required', `in:${TRACKED_TYPES.join(',')}`] };
 
-/** Calendar picker: the applicant's Sales user only, the selected activity only. */
+/**
+ * Calendar picker. Applicant-based (Schedule activity): the applicant's Sales user only.
+ * Handler-based (Master Schedule's "Schedule a session"): pass `handler_id` instead of
+ * `applicant_id` — both are optional so older callers keep working unchanged.
+ */
 sessionRoutes.get('/schedule-sessions/availability', gate, async (c) => {
   can(c, 'activities.schedule');
   const { db } = c.get('deps');
   const v = await validate(db, c.req.query(), {
-    ...pickerRules, month: ['required', /^\d{4}-(0[1-9]|1[0-2])$/], duration_minutes: ['nullable', 'integer', 'min:60', 'max:600'],
+    ...pickerRules, applicant_id: ['nullable', 'integer', 'exists:applicants,id'],
+    handler_id: ['nullable', 'integer', 'exists:users,id'],
+    month: ['required', /^\d{4}-(0[1-9]|1[0-2])$/], duration_minutes: ['nullable', 'integer', 'min:60', 'max:600'],
     ignore_session_id: ['nullable', 'integer'],
     // Adjust (Edit) ignores the session the activity already sits in, so its own day/hour is not shown as busy.
     ignore_activity_id: ['nullable', 'integer', 'min:1'],
   });
-  const [applicant] = await db.query(`select * from applicants where id = $1`, [v.applicant_id]);
+  const [applicant] = v.applicant_id ? await db.query(`select * from applicants where id = $1`, [v.applicant_id]) : [null];
+  const handlerId = v.handler_id ? Number(v.handler_id) : null;
   let ignoreSessionId = v.ignore_session_id ? Number(v.ignore_session_id) : null;
   if (!ignoreSessionId && v.ignore_activity_id) {
     const [seat] = await db.query(`select session_id from schedule_session_participants where activity_schedule_id = $1 limit 1`, [Number(v.ignore_activity_id)]);
     ignoreSessionId = seat?.session_id ? Number(seat.session_id) : null;
   }
-  return ok(c, await availability(db, applicant, v.activity_type, v.month, v.duration_minutes ? Number(v.duration_minutes) : null, ignoreSessionId));
+  return ok(c, await availability(db, applicant ?? null, v.activity_type, v.month, v.duration_minutes ? Number(v.duration_minutes) : null, ignoreSessionId, handlerId));
 });
 
 /** Sessions panel: upcoming sessions of the activity by the applicant's Sales user, each joinable or with its reason. */

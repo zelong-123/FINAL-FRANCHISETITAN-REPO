@@ -54,12 +54,15 @@ export function calendarWeeks(month, days = []) {
     if (weekday > 5) continue;
     if (weekday === 1 && week.some(Boolean)) { weeks.push(week); week = [null, null, null, null, null]; }
     const day = byDate.get(date) ?? null;
+    const sessions = day?.sessions ?? [];
     week[weekday - 1] = {
       date, day: d,
       available: day ? Boolean(day.available) : false,
       reason: day?.reason ?? null,
-      sessions: day?.sessions ?? [],
-      ...dotSummary(day?.sessions?.length ?? 0),
+      sessions,
+      // A session on this day where an applicant did not attend: its dot is red.
+      hasNoShow: sessions.some((session) => session.did_not_attend === true),
+      ...dotSummary(sessions.length),
     };
   }
   if (week.some(Boolean)) weeks.push(week);
@@ -70,7 +73,7 @@ export function calendarWeeks(month, days = []) {
 export function dayTitle(cell, activityLabel = 'this activity') {
   if (!cell) return '';
   const lines = [];
-  if (cell.sessions.length) lines.push(`${cell.sessions.length} ${activityLabel} session${cell.sessions.length === 1 ? '' : 's'}: ${cell.sessions.map((s) => `${s.time} (${s.occupancy})`).join(', ')}`);
+  if (cell.sessions.length) lines.push(`${cell.sessions.length} ${activityLabel} session${cell.sessions.length === 1 ? '' : 's'}: ${cell.sessions.map((s) => `${s.time} (${s.occupancy})${s.did_not_attend ? ' — did not attend' : ''}`).join(', ')}`);
   if (!cell.available && cell.reason) lines.push(cell.reason);
   return lines.join('\n');
 }

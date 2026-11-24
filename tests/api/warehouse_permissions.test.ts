@@ -67,6 +67,39 @@ test('Delete is refused while the product is used in an active product recipe', 
   assert.equal((await q(`select is_active from products where id = $1`, [productId]))[0].is_active, true, 'nothing archived');
 });
 
+test('Thresholds: Admin sets Low and Critical and the row status follows', async () => {
+  const created = await call('POST', '/inventories/items', { token: admin, body: product('Perm Threshold Syrup') });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const id = created.json.data.id;
+  // Quantity stays Logistics work; the thresholds are the Admin's Adjust action.
+  const stocked = await call('POST', `/inventories/${id}/quantity`, { token: logistics, body: { direction: 'increase', quantity: 5 } });
+  assert.equal(stocked.status, 200, JSON.stringify(stocked.json));
+
+  const statusOf = async () => (await call('GET', `/inventories/grouped?brand_id=${brand.id}&search=Perm Threshold Syrup`, { token: admin })).json.data.items[0].status;
+  assert.equal(await statusOf(), 'low', '5 on hand against Low 10 / Critical 2');
+
+  const set = (token: string, reorder_level: number, critical_level: number) =>
+    call('PATCH', `/inventories/${id}/thresholds`, { token, body: { reorder_level, critical_level } });
+
+  const normal = await set(admin, 3, 1);
+  assert.equal(normal.status, 200, JSON.stringify(normal.json));
+  assert.equal(Number(normal.json.data.reorder_level), 3);
+  assert.equal(await statusOf(), 'normal', '5 on hand is above Low 3');
+
+  assert.equal((await set(admin, 5, 4)).status, 200);
+  assert.equal(await statusOf(), 'low', '5 on hand is at the Low level');
+
+  assert.equal((await set(admin, 5, 5)).status, 200);
+  assert.equal(await statusOf(), 'critical', '5 on hand is at the Critical level');
+
+  assert.equal((await set(admin, 5.5, 4.5)).status, 200, 'decimal levels save (numeric column, like Add Product)');
+  const refused = await set(admin, 2, 3);
+  assert.equal(refused.status, 422, 'Critical must not exceed Low');
+  assert.equal(await statusOf(), 'low', 'a refused save changes nothing');
+
+  for (const token of [sales, marketing]) assert.equal((await set(token, 10, 2)).status, 403);
+});
+
 test('List: date range by stock activity or by date added, and server-side sort', async () => {
   const names = ['Range Old Quiet', 'Range Old Moved', 'Range New'];
   const ids: Record<string, any> = {};
