@@ -19,7 +19,7 @@ import {
   FaTriangleExclamation,
   FaUsers,
 } from 'react-icons/fa6';
-import { FaXmark } from 'react-icons/fa6';
+import { FaChevronDown, FaChevronUp, FaXmark } from 'react-icons/fa6';
 import { initialsOf } from '../lib/initials';
 import { api, firstValidationMessage } from '../lib/api';
 import useRemote from '../lib/useRemote';
@@ -90,24 +90,28 @@ const blankForm = () => ({
 });
 
 /**
- * A long note in a table cell (e.g. Admin's return reason): kept narrow so it never stretches the
- * table, cut to two lines with Show more / Show less. Expanded, it still wraps at the same width.
+ * A long note in a table cell (e.g. Admin's return reason). Collapsed it is one short line (about
+ * the first two words, then "…") with a down arrow; the arrow opens the full note, wrapped at the
+ * same narrow width so the table never stretches, and an up arrow closes it again.
  */
 function ClampedNote({ label, text, className = 'text-[#fbbf24]' }) {
   const [open, setOpen] = useState(false);
-  const full = `${label}${text ?? ''}`;
-  const long = full.length > 60;
+  const full = `${label}${text ?? ''}`.trim();
+  const long = full.length > 24;
+  const Arrow = open ? FaChevronUp : FaChevronDown;
   return (
-    <span className={`grid gap-[2px] w-full max-w-[15rem] text-[12px] leading-[1.5] [overflow-wrap:anywhere] ${className}`}>
-      <span className={long && !open ? 'line-clamp-2' : ''}>{full}</span>
+    <span className={`inline-flex items-start gap-[6px] max-w-[14rem] text-[12px] leading-[1.5] ${className}`}>
+      <span className={open || !long ? '[overflow-wrap:anywhere]' : 'block max-w-[8.5rem] truncate'} title={open ? undefined : full}>{full}</span>
       {long && (
         <button
           type="button"
-          className="justify-self-start p-0 border-0 bg-transparent text-[#9aa6ff] text-[11.5px] font-[700] cursor-pointer hover:underline"
+          className="inline-grid! place-items-center! flex-none w-[20px]! h-[20px]! min-w-0! min-h-0! p-0! m-0! mt-[1px]! border-0! rounded-full! bg-transparent! shadow-none! text-current cursor-pointer opacity-80 hover:opacity-100 hover:[background:rgba(251,_191,_36,_.14)]!"
           aria-expanded={open}
+          aria-label={open ? 'Show less' : 'Show more'}
+          title={open ? 'Show less' : 'Show more'}
           onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}
         >
-          {open ? 'Show less' : 'Show more'}
+          <Arrow aria-hidden="true" className="w-[11px] h-[11px]" />
         </button>
       )}
     </span>
