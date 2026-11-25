@@ -118,6 +118,15 @@ function ClampedNote({ label, text, className = 'text-[#fbbf24]' }) {
   );
 }
 
+/** "Did not attend" shows only once the session ended more than this long ago without a completion. */
+const MISSED_GRACE_MINUTES = 60;
+function missedLive(activity) {
+  if (!activity?.starts_at) return false;
+  const start = new Date(activity.starts_at).getTime();
+  const end = activity.ends_at ? new Date(activity.ends_at).getTime() : start + Number(activity.duration_minutes || 0) * 60000;
+  return end + MISSED_GRACE_MINUTES * 60000 < Date.now();
+}
+
 function formatDuration(minutes) {
   const value = Number(minutes || 0);
   if (value < 60) return `${value} min`;
@@ -1110,7 +1119,7 @@ export default function Activities() {
                   {pagedGroups.map((group) => {
                     const activity = group.current;
                     // Missed only once the session has ENDED (or it was a No Show / cancelled after it started).
-                    const overdue = Boolean(activity) && (['pending', 'confirmed'].includes(activity.status) ? Boolean(activity.is_overdue) : Boolean(activity.is_missed));
+                    const overdue = Boolean(activity) && (['pending', 'confirmed'].includes(activity.status) ? missedLive(activity) : Boolean(activity.is_missed));
                     const accomplished = activity?.status === 'completed';
                     const finishedAll = allMilestonesDone(group);
                     const setAgainType = nextActivityTypeFor(group);
@@ -1190,7 +1199,7 @@ export default function Activities() {
                                 ) : (
                                   <>
                                     <button type="button" className="inline-flex items-center gap-[6px] h-[32px] px-[12px] rounded-[10px] border border-[#394259] [background:transparent] text-[#d5dbec] text-[12px] font-[600] whitespace-nowrap cursor-pointer hover:border-[#7b88ff] hover:text-[#fff]" onClick={() => openEdit(activity)}><FaPen aria-hidden="true" /> Adjust</button>
-                                    {canComplete && !activity.is_missed && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
+                                    {canComplete && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
                                       <button
                                         type="button"
                                         disabled={nowMs < new Date(activity.starts_at).getTime()}
@@ -1574,7 +1583,7 @@ export default function Activities() {
                     <li key={activity.id}>
                       <div className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-2">
                         <strong>{activityLabel(activity)}</strong>
-                        {activity.approval_status !== 'rejected' && (activity.status === 'no_show' || (['pending', 'confirmed'].includes(activity.status) ? activity.is_overdue : activity.is_missed)) ? (
+                        {activity.approval_status !== 'rejected' && (activity.status === 'no_show' || (['pending', 'confirmed'].includes(activity.status) ? missedLive(activity) : activity.is_missed)) ? (
                           // Red, so a missed session is never mistaken for a second live schedule.
                           <span className="min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-[rgba(239,_68,_68,_.5)] rounded-[999px] [background:rgba(239,_68,_68,_.12)] text-[#f87171] text-[10px] font-[800] whitespace-nowrap">
                             <span className="w-[6px] h-[6px] rounded-[50%] [background:currentColor]" aria-hidden="true" />
