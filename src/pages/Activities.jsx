@@ -1109,7 +1109,8 @@ export default function Activities() {
                 <tbody>
                   {pagedGroups.map((group) => {
                     const activity = group.current;
-                    const overdue = activity?.is_missed;
+                    // Missed only once the session has ENDED (or it was a No Show / cancelled after it started).
+                    const overdue = Boolean(activity) && (['pending', 'confirmed'].includes(activity.status) ? Boolean(activity.is_overdue) : Boolean(activity.is_missed));
                     const accomplished = activity?.status === 'completed';
                     const finishedAll = allMilestonesDone(group);
                     const setAgainType = nextActivityTypeFor(group);
@@ -1573,7 +1574,7 @@ export default function Activities() {
                     <li key={activity.id}>
                       <div className="[.activities-page_&]:flex [.activities-page_&]:items-center [.activities-page_&]:justify-between [.activities-page_&]:gap-2">
                         <strong>{activityLabel(activity)}</strong>
-                        {activity.approval_status !== 'rejected' && (activity.is_missed || activity.status === 'no_show') ? (
+                        {activity.approval_status !== 'rejected' && (activity.status === 'no_show' || (['pending', 'confirmed'].includes(activity.status) ? activity.is_overdue : activity.is_missed)) ? (
                           // Red, so a missed session is never mistaken for a second live schedule.
                           <span className="min-h-[24px] inline-flex items-center gap-[6px] p-[4px_9px] border border-[rgba(239,_68,_68,_.5)] rounded-[999px] [background:rgba(239,_68,_68,_.12)] text-[#f87171] text-[10px] font-[800] whitespace-nowrap">
                             <span className="w-[6px] h-[6px] rounded-[50%] [background:currentColor]" aria-hidden="true" />
