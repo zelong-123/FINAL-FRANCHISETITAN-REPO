@@ -1190,7 +1190,7 @@ export default function Activities() {
                                 ) : (
                                   <>
                                     <button type="button" className="inline-flex items-center gap-[6px] h-[32px] px-[12px] rounded-[10px] border border-[#394259] [background:transparent] text-[#d5dbec] text-[12px] font-[600] whitespace-nowrap cursor-pointer hover:border-[#7b88ff] hover:text-[#fff]" onClick={() => openEdit(activity)}><FaPen aria-hidden="true" /> Adjust</button>
-                                    {canComplete && !activity.is_missed && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
+                                    {canComplete && activity.approval_status !== 'pending_admin' && activity.approval_status !== 'rejected' && !['cancelled', 'no_show'].includes(activity.status) && (
                                       <button
                                         type="button"
                                         disabled={nowMs < new Date(activity.starts_at).getTime()}
